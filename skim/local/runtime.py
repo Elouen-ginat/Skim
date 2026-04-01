@@ -32,11 +32,13 @@ class LocalRuntime:
         app: Any,               # skim.App — avoid circular import
         host: str = "127.0.0.1",
         port: int = 8000,
+        backend_overrides: dict[str, Any] | None = None,
     ) -> None:
         self.app = app
         self.host = host
         self.port = port
-        self._backends: dict[str, LocalMap] = {}
+        self._backends: dict[str, Any] = {}
+        self._backend_overrides = backend_overrides or {}
         self._patch_storage()
 
     # ── Setup ──────────────────────────────────────────────────────────────
@@ -47,9 +49,34 @@ class LocalRuntime:
         all_resources = self.app._collect_all()
         for qname, obj in all_resources.items():
             if isinstance(obj, type) and hasattr(obj, "__skim_storage__"):
-                backend = LocalMap()
+                # Use override backend if provided, otherwise create a new LocalMap
+                backend = self._backend_overrides.get(qname) or self._backend_overrides.get(obj.__name__)
+                if backend is None:
+                    backend = LocalMap()
                 self._backends[qname] = backend
                 patch_storage_class(obj, backend)
+
+    # ── Factory methods ────────────────────────────────────────────────────
+
+    @classmethod
+    def from_redis(
+        cls,
+        app: Any,
+        redis_url: str,
+        host: str = "127.0.0.1",
+        port: int = 8000,
+    ) -> "LocalRuntime":
+        """Create a LocalRuntime that uses Redis backends for all storage classes."""
+        from skim.backends.redis_backend import RedisBackend
+
+        backends: dict[str, Any] = {}
+        all_resources = app._collect_all()
+        for qname, obj in all_resources.items():
+            if isinstance(obj, type) and hasattr(obj, "__skim_storage__"):
+                # Use the qualified name as the namespace so keys don't collide
+                namespace = qname.replace(".", "_").lower()
+                backends[qname] = RedisBackend(url=redis_url, namespace=namespace)
+        return cls(app, host=host, port=port, backend_overrides=backends)
 
     # ── HTTP dispatch ──────────────────────────────────────────────────────
 

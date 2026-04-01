@@ -21,6 +21,11 @@ def run(
     ),
     host: str = typer.Option("127.0.0.1", "--host", "-H", help="Bind address."),
     port: int = typer.Option(8000, "--port", "-p", help="Port to listen on."),
+    redis: str = typer.Option(
+        "",
+        "--redis",
+        help="Use Redis backend with this URL, e.g. redis://localhost:6379.",
+    ),
 ) -> None:
     """
     Run a Skim app locally.
@@ -61,7 +66,11 @@ def run(
 
     from skim.local.runtime import LocalRuntime
 
-    runtime = LocalRuntime(skim_app, host=host, port=port)
+    if redis:
+        typer.echo(f"Using Redis backend: {redis}")
+        runtime = LocalRuntime.from_redis(skim_app, redis_url=redis, host=host, port=port)
+    else:
+        runtime = LocalRuntime(skim_app, host=host, port=port)
     try:
         asyncio.run(runtime.serve())
     except KeyboardInterrupt:

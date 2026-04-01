@@ -10,8 +10,9 @@ durability    = ["ephemeral", "persistent"]   # persistent = AOF or RDB
 max_size_gb   = 500
 access_patterns = ["random-read", "random-write", "pub-sub"]
 cost_per_gb_month = 3.50   # USD, approximate cache.r6g.large
+requires_vpc  = true
 regions = ["all"]
-notes = "Preferred for read_latency < 5ms + persistent"
+notes = "Preferred for read_latency < 5ms + persistent; requires VPC"
 
 [storage.rds-postgres]
 display_name = "Amazon RDS (PostgreSQL 16)"
@@ -43,19 +44,21 @@ durability    = ["ephemeral"]
 max_size_gb   = 300
 access_patterns = ["random-read", "random-write"]
 cost_per_gb_month = 2.80
+requires_vpc  = true
 regions = ["all"]
-notes = "Ephemeral-only; no persistence"
+notes = "Ephemeral-only; no persistence; requires VPC"
 
 [storage.dynamodb]
 display_name = "Amazon DynamoDB"
 read_latency  = { min = 1.0, max = 10.0, unit = "ms" }
 write_latency = { min = 1.0, max = 10.0, unit = "ms" }
-durability    = ["durable"]
+durability    = ["persistent", "durable"]
 max_size_gb   = 0
 access_patterns = ["random-read", "random-write"]
 cost_per_gb_month = 0.25
+serverless    = true
 regions = ["all"]
-notes = "Key-value at scale with single-digit ms latency"
+notes = "Key-value at scale with single-digit ms latency; serverless-native, no VPC"
 
 [storage.msk-kafka]
 display_name = "Amazon MSK (Kafka)"
