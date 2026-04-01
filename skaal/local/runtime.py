@@ -78,6 +78,27 @@ class LocalRuntime:
                 backends[qname] = RedisBackend(url=redis_url, namespace=namespace)
         return cls(app, host=host, port=port, backend_overrides=backends)
 
+    @classmethod
+    def from_sqlite(
+        cls,
+        app: Any,
+        db_path: "str | Path" = "skaal_local.db",
+        host: str = "127.0.0.1",
+        port: int = 8000,
+    ) -> "LocalRuntime":
+        """Create a LocalRuntime backed by SQLite for persistent local development."""
+        from pathlib import Path as _Path
+
+        from skaal.backends.sqlite_backend import SqliteBackend
+
+        backends: dict[str, Any] = {}
+        all_resources = app._collect_all()
+        for qname, obj in all_resources.items():
+            if isinstance(obj, type) and hasattr(obj, "__skim_storage__"):
+                backend = SqliteBackend(_Path(db_path), namespace=qname)
+                backends[qname] = backend
+        return cls(app, host=host, port=port, backend_overrides=backends)
+
     # ── HTTP dispatch ──────────────────────────────────────────────────────
 
     def _collect_functions(self) -> dict[str, Any]:

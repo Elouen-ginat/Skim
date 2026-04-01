@@ -11,6 +11,7 @@ Patterns are registered with a module via ``module.pattern(p)`` and attach
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field
 from typing import Any, AsyncIterator, Generic, Literal, TypeVar
 
@@ -55,6 +56,7 @@ class EventLog(Generic[T]):
         partitions: int = 1,
         throughput: Throughput | str | None = None,
         durability: Durability = Durability.DURABLE,
+        _backend: Any | None = None,
     ) -> None:
         self.retention = retention
         self.partitions = partitions
@@ -62,6 +64,13 @@ class EventLog(Generic[T]):
         if isinstance(throughput, str):
             throughput = Throughput(throughput)
         self.throughput = throughput
+
+        # Lazily import to avoid circular imports at module level
+        if _backend is not None:
+            self._backend = _backend
+        else:
+            from skaal.local.storage import LocalMap
+            self._backend = LocalMap()
 
         # Metadata consumed by solver — mirrors __skim_storage__
         from skaal.types import AccessPattern
@@ -76,29 +85,58 @@ class EventLog(Generic[T]):
             },
         }
 
-    # ── Runtime API (stubs — implemented by skaal-mesh in Phase 4) ──────────
+    # ── Runtime API ──────────────────────────────────────────────────────────
 
     async def append(self, event: T) -> int:
-        """Append *event* to the log. Returns the assigned offset."""
-        raise NotImplementedError("EventLog.append() requires the Skim runtime mesh (Phase 4).")
+        """Append *event* to the log. Returns the assigned offset (0-based)."""
+        raw = await self._backend.get("meta:next_offset")
+        offset = int(raw) if raw is not None else 0
+        await self._backend.set(f"event:{offset:020d}", event)
+        await self._backend.set("meta:next_offset", offset + 1)
+        return offset
 
     async def replay(
         self, from_offset: int = 0
     ) -> AsyncIterator[tuple[int, T]]:
         """Replay events starting from *from_offset*. Yields (offset, event) tuples."""
-        raise NotImplementedError("EventLog.replay() requires the Skim runtime mesh (Phase 4).")
-        yield  # make mypy happy — this is an async generator stub  # type: ignore[misc]
+        entries = await self._backend.scan("event:")
+        for key, value in sorted(
+            (e for e in entries if e[0] >= f"event:{from_offset:020d}")
+        ):
+            offset = int(key.split(":")[-1])
+            yield offset, value
 
     async def subscribe(
-        self, consumer_group: str, *, from_beginning: bool = False
+        self,
+        consumer_group: str,
+        *,
+        from_beginning: bool = False,
+        poll_interval: float = 0.1,
     ) -> AsyncIterator[tuple[int, T]]:
         """
-        Subscribe to live events under *consumer_group*.
+        Poll-based subscription for local mode.
+
         Multiple subscribers in the same group share the load; different groups
         each receive all events independently.
+
+        Production mode uses Kafka/Redis Streams instead.
         """
-        raise NotImplementedError("EventLog.subscribe() requires the Skim runtime mesh (Phase 4).")
-        yield  # type: ignore[misc]
+        raw = await self._backend.get(f"consumer:{consumer_group}:offset")
+        offset = 0 if from_beginning else (int(raw) if raw is not None else 0)
+        while True:
+            entries = await self._backend.scan(f"event:{offset:020d}")
+            sorted_entries = sorted(
+                (e for e in entries if e[0] >= f"event:{offset:020d}")
+            )
+            for key, value in sorted_entries:
+                current_offset = int(key.split(":")[-1])
+                await self._backend.set(
+                    f"consumer:{consumer_group}:offset", current_offset + 1
+                )
+                offset = current_offset + 1
+                yield current_offset, value
+            if not sorted_entries:
+                await asyncio.sleep(poll_interval)
 
     def __repr__(self) -> str:
         return (

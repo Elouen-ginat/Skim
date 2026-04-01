@@ -26,6 +26,12 @@ def run(
         "--redis",
         help="Use Redis backend with this URL, e.g. redis://localhost:6379.",
     ),
+    persist: bool = typer.Option(
+        False, "--persist", help="Use SQLite for persistent local storage."
+    ),
+    db: str = typer.Option(
+        "skaal_local.db", "--db", help="SQLite database path (with --persist)."
+    ),
 ) -> None:
     """
     Run a Skim app locally.
@@ -36,6 +42,7 @@ def run(
     Example:
 
         skaal run examples.counter:app
+        skaal run examples.counter:app --persist
         curl -s localhost:8000/increment -d '{"name": "hits"}' | jq
     """
     if ":" not in target:
@@ -69,6 +76,9 @@ def run(
     if redis:
         typer.echo(f"Using Redis backend: {redis}")
         runtime = LocalRuntime.from_redis(skim_app, redis_url=redis, host=host, port=port)
+    elif persist:
+        typer.echo(f"Using SQLite backend: {db}")
+        runtime = LocalRuntime.from_sqlite(skim_app, db_path=db, host=host, port=port)
     else:
         runtime = LocalRuntime(skim_app, host=host, port=port)
     try:

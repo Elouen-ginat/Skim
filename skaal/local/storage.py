@@ -33,6 +33,9 @@ class LocalMap:
     async def scan(self, prefix: str = "") -> list[tuple[str, Any]]:
         return [(k, v) for k, v in self._data.items() if k.startswith(prefix)]
 
+    async def close(self) -> None:
+        """No-op for in-memory backend; satisfies the StorageBackend protocol."""
+
     def __len__(self) -> int:
         return len(self._data)
 
