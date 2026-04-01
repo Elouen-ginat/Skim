@@ -3,7 +3,7 @@ Counter — a simple Skim app demonstrating storage and functions.
 
 Run locally:
 
-    skim run examples.counter:app
+    skaal run examples.counter:app
 
 Then try:
 
@@ -15,7 +15,7 @@ Then try:
     curl -s http://localhost:8000/reset -d '{"name": "hits"}' | jq
 """
 
-from skim import App
+from skaal import App
 
 app = App("counter")
 

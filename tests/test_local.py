@@ -7,9 +7,9 @@ import json
 
 import pytest
 
-from skim import App
-from skim.local.runtime import LocalRuntime
-from skim.local.storage import LocalMap, patch_storage_class
+from skaal import App
+from skaal.local.runtime import LocalRuntime
+from skaal.local.storage import LocalMap, patch_storage_class
 
 
 # ── Storage tests ──────────────────────────────────────────────────────────────

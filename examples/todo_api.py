@@ -3,7 +3,7 @@ Todo API — a simple Skim app demonstrating persistent storage and CRUD functio
 
 Run locally:
 
-    skim run examples.todo_api:app
+    skaal run examples.todo_api:app
 
 Then try:
 
@@ -17,7 +17,7 @@ Then try:
 
 from __future__ import annotations
 
-from skim import App
+from skaal import App
 
 app = App("todos")
 

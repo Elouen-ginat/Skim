@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import pytest
 
-from skim import App
-from skim.types import AccessPattern, Durability, Latency
-from skim.solver.solver import load_catalog, solve
-from skim.solver.storage import UnsatisfiableConstraints, select_backend
+from skaal import App
+from skaal.types import AccessPattern, Durability, Latency
+from skaal.solver.solver import load_catalog, solve
+from skaal.solver.storage import UnsatisfiableConstraints, select_backend
 
 
 # ── Catalog loading ────────────────────────────────────────────────────────────
@@ -156,7 +156,7 @@ def _make_counter_app() -> App:
 
 def test_solve_returns_plan_file():
     """solve() returns a valid PlanFile with storage entries."""
-    from skim.plan import PlanFile
+    from skaal.plan import PlanFile
 
     catalog = load_catalog()
     app = _make_counter_app()
@@ -207,13 +207,13 @@ def test_solve_lambda_target():
 
 def test_solve_serialization_roundtrip(tmp_path):
     """PlanFile from solve() can be written and re-read."""
-    from skim.plan import PlanFile
+    from skaal.plan import PlanFile
 
     catalog = load_catalog()
     app = _make_counter_app()
     plan = solve(app, catalog)
 
-    out_path = tmp_path / "plan.skim.lock"
+    out_path = tmp_path / "plan.skaal.lock"
     plan.write(out_path)
 
     loaded = PlanFile.read(out_path)
