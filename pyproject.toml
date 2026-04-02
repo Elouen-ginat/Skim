@@ -25,6 +25,15 @@ aws = [
     "pulumi-aws>=6.0",
     "asyncpg>=0.29",
 ]
+gcp = [
+    "google-cloud-firestore>=2.16",
+    "google-cloud-storage>=2.16",
+    "asyncpg>=0.29",
+    "cloud-sql-python-connector[asyncpg]>=1.9",
+    "pulumi>=3.0",
+    "pulumi-gcp>=7.0",
+    "uvicorn>=0.29",
+]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",

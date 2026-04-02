@@ -23,13 +23,13 @@ def deploy(
         "aws",
         "--target",
         "-t",
-        help="Deploy target: aws (Lambda + DynamoDB), k8s, ecs.",
+        help="Deploy target: aws (Lambda + DynamoDB), gcp (Cloud Run + Firestore), k8s, ecs.",
     ),
     region: str = typer.Option(
         "us-east-1",
         "--region",
         "-r",
-        help="AWS region for deployment.",
+        help="Cloud region for deployment (e.g. us-east-1 for AWS, us-central1 for GCP).",
     ),
     out: Path = typer.Option(
         Path("artifacts"),
@@ -56,9 +56,18 @@ def deploy(
       - requirements.txt
       - README.md (deployment instructions)
 
+    For --target=gcp this generates:
+      - main.py (Cloud Run entry point)
+      - Dockerfile
+      - pulumi/__main__.py (Pulumi infrastructure stack)
+      - pulumi/Pulumi.yaml
+      - requirements.txt
+      - README.md (deployment instructions)
+
     Example:
 
         skaal deploy examples.counter:app --target=aws --out=artifacts/
+        skaal deploy examples.counter:app --target=gcp --region=us-central1 --out=artifacts/
     """
     if target_app is None:
         typer.echo("Error: missing required argument MODULE:APP.", err=True)
@@ -97,7 +106,12 @@ def deploy(
 
     # Load or generate plan
     plan_path = Path(PLAN_FILE_NAME)
-    solver_target = "aws-lambda" if target == "aws" else target
+    if target == "aws":
+        solver_target = "aws-lambda"
+    elif target == "gcp":
+        solver_target = "gcp-cloudrun"
+    else:
+        solver_target = target
 
     if plan_path.exists() and not preview:
         typer.echo(f"Loading existing plan from {plan_path} ...")
@@ -126,20 +140,37 @@ def deploy(
         plan_file.write()
         typer.echo(f"Wrote {PLAN_FILE_NAME}")
 
-    if target not in ("aws", "aws-lambda"):
-        typer.echo(f"Error: deploy target {target!r} not yet supported. Use --target=aws.", err=True)
+    if target in ("aws", "aws-lambda"):
+        from skaal.deploy.aws_lambda import generate_artifacts as _gen
+
+        typer.echo(f"Generating artifacts in {out}/ ...")
+        generated = _gen(
+            app=skim_app,
+            plan=plan_file,
+            output_dir=out,
+            source_module=module_path,
+            app_var=var_name,
+        )
+    elif target in ("gcp", "gcp-cloudrun"):
+        from skaal.deploy.gcp_cloudrun import generate_artifacts as _gen  # type: ignore[assignment]
+
+        gcp_region = region if region != "us-east-1" else "us-central1"
+        typer.echo(f"Generating artifacts in {out}/ ...")
+        generated = _gen(
+            app=skim_app,
+            plan=plan_file,
+            output_dir=out,
+            source_module=module_path,
+            app_var=var_name,
+            region=gcp_region,
+        )
+    else:
+        typer.echo(
+            f"Error: deploy target {target!r} not yet supported. "
+            "Use --target=aws or --target=gcp.",
+            err=True,
+        )
         raise typer.Exit(1)
-
-    from skaal.deploy.aws_lambda import generate_artifacts
-
-    typer.echo(f"Generating artifacts in {out}/ ...")
-    generated = generate_artifacts(
-        app=skim_app,
-        plan=plan_file,
-        output_dir=out,
-        source_module=module_path,
-        app_var=var_name,
-    )
 
     typer.echo(f"\nGenerated {len(generated)} files:")
     for path in generated:

@@ -16,12 +16,21 @@ class UnsatisfiableConstraints(Exception):
         )
 
 
-def _requires_vpc(backend_name: str, spec: dict) -> bool:
-    """True if this backend needs a VPC (bad for Lambda), from catalog flag or name heuristics."""
+# Backends that require VPC per target family
+_VPC_PATTERNS_AWS = ("rds-", "rds_", "elasticache", "memcached")
+_VPC_PATTERNS_GCP = ("cloud-sql", "memorystore")
+
+
+def _requires_vpc(backend_name: str, spec: dict, target: str = "generic") -> bool:
+    """True if this backend needs a VPC for the given target, from catalog flag or name heuristics."""
     if spec.get("requires_vpc"):
         return True
     name_lower = backend_name.lower()
-    return any(p in name_lower for p in ("rds-", "rds_", "elasticache", "memcached"))
+    if target in ("aws-lambda", "aws"):
+        return any(p in name_lower for p in _VPC_PATTERNS_AWS)
+    if target in ("gcp-cloudrun", "gcp"):
+        return any(p in name_lower for p in _VPC_PATTERNS_GCP)
+    return False
 
 
 def select_backend(
@@ -103,8 +112,10 @@ def select_backend(
         var = sel_vars[name]
         # Base cost: cost_per_gb_month * 100 as integer
         cost = int(spec.get("cost_per_gb_month", 0) * 100)
-        # Add VPC penalty for aws-lambda target
-        if target == "aws-lambda" and _requires_vpc(name, spec):
+        # Add VPC penalty for serverless targets (Lambda, Cloud Run)
+        if target in ("aws-lambda", "aws", "gcp-cloudrun", "gcp") and _requires_vpc(
+            name, spec, target=target
+        ):
             cost += 1000
         cost_terms.append(If(var, cost, 0))
 
@@ -148,9 +159,13 @@ def select_backend(
     if durability is not None:
         dur_val = durability.value if hasattr(durability, "value") else str(durability)
         reason_parts.append(f"durability={dur_val}")
-    if target == "aws-lambda" and _requires_vpc(selected, spec):
+    if target in ("aws-lambda", "aws") and _requires_vpc(selected, spec, target=target):
         reason_parts.append("WARNING: requires VPC in Lambda context")
-    elif target == "aws-lambda":
+    elif target in ("aws-lambda", "aws"):
+        reason_parts.append("serverless-compatible (no VPC)")
+    elif target in ("gcp-cloudrun", "gcp") and _requires_vpc(selected, spec, target=target):
+        reason_parts.append("WARNING: requires VPC Connector in Cloud Run context")
+    elif target in ("gcp-cloudrun", "gcp"):
         reason_parts.append("serverless-compatible (no VPC)")
 
     cost = spec.get("cost_per_gb_month", 0)
