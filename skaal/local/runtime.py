@@ -133,6 +133,38 @@ class LocalRuntime:
                 backends[qname] = backend
         return cls(app, host=host, port=port, backend_overrides=backends)
 
+    @classmethod
+    def from_postgres(
+        cls,
+        app: Any,
+        dsn: str,
+        host: str = "127.0.0.1",
+        port: int = 8000,
+        min_size: int = 1,
+        max_size: int = 5,
+    ) -> "LocalRuntime":
+        """
+        Create a LocalRuntime backed by PostgreSQL for persistent local development.
+
+        Args:
+            app:      The Skim App.
+            dsn:      asyncpg connection string, e.g.
+                      ``"postgresql://user:pass@localhost/mydb"``.
+            host:     HTTP bind address.
+            port:     HTTP port.
+            min_size: Connection pool minimum size.
+            max_size: Connection pool maximum size.
+        """
+        from skaal.backends.postgres_backend import PostgresBackend
+
+        backends: dict[str, Any] = {}
+        all_resources = app._collect_all()
+        for qname, obj in all_resources.items():
+            if isinstance(obj, type) and hasattr(obj, "__skim_storage__"):
+                backend = PostgresBackend(dsn=dsn, namespace=qname, min_size=min_size, max_size=max_size)
+                backends[qname] = backend
+        return cls(app, host=host, port=port, backend_overrides=backends)
+
     # ── HTTP dispatch ──────────────────────────────────────────────────────
 
     def _collect_functions(self) -> dict[str, Any]:

@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from skaal.catalog.loader import load_catalog  # noqa: F401 — re-exported for compat
-from skaal.plan import ComputeSpec, PlanFile, StorageSpec
+from skaal.plan import ComponentSpec, ComputeSpec, PlanFile, StorageSpec
 from skaal.solver.storage import UnsatisfiableConstraints, select_backend
 
 if TYPE_CHECKING:
@@ -36,6 +36,7 @@ def solve(app: "App", catalog: dict[str, Any], target: str = "generic") -> "Plan
 
     storage_specs: dict[str, StorageSpec] = {}
     compute_specs: dict[str, ComputeSpec] = {}
+    component_specs: dict[str, ComponentSpec] = {}
 
     # ── Solve storage ──────────────────────────────────────────────────────
     for qname, obj in all_resources.items():
@@ -65,12 +66,25 @@ def solve(app: "App", catalog: dict[str, Any], target: str = "generic") -> "Plan
         )
 
     # ── Solve compute ──────────────────────────────────────────────────────
+    from skaal.solver.compute import UnsatisfiableComputeConstraints, encode_compute
+
     for qname, obj in all_resources.items():
         if not (callable(obj) and hasattr(obj, "__skim_compute__")):
             continue
 
         compute_constraint = obj.__skim_compute__
-        instance_type, reason = _select_compute(qname, compute_constraint, compute_backends, target)
+        try:
+            instance_type, reason = encode_compute(
+                qname, compute_constraint, compute_backends, target=target
+            )
+        except UnsatisfiableComputeConstraints:
+            # Fall back to cheapest available instance rather than failing
+            if compute_backends:
+                instance_type = min(compute_backends, key=lambda n: compute_backends[n].get("cost_per_hour", 9999))
+                reason = f"fallback: cheapest available ({instance_type})"
+            else:
+                instance_type = "c5-large"
+                reason = "default compute (empty catalog)"
 
         compute_specs[qname] = ComputeSpec(
             function_name=qname,
@@ -80,6 +94,18 @@ def solve(app: "App", catalog: dict[str, Any], target: str = "generic") -> "Plan
             reason=reason,
         )
 
+    # ── Solve components ───────────────────────────────────────────────────
+    from skaal.components import ComponentBase
+    from skaal.solver.components import encode_component
+
+    for comp_name, comp_obj in app._components.items():
+        if isinstance(comp_obj, ComponentBase):
+            try:
+                spec = encode_component(comp_name, comp_obj, catalog, target=target)
+                component_specs[comp_name] = spec
+            except Exception:  # noqa: BLE001
+                pass  # non-critical — components don't block the plan
+
     return PlanFile(
         app_name=app.name,
         version=1,
@@ -87,47 +113,5 @@ def solve(app: "App", catalog: dict[str, Any], target: str = "generic") -> "Plan
         deploy_target=target,
         storage=storage_specs,
         compute=compute_specs,
+        components=component_specs,
     )
-
-
-def _select_compute(
-    fn_name: str,
-    compute: Any,
-    compute_backends: dict[str, Any],
-    target: str,
-) -> tuple[str, str]:
-    """
-    Select a compute instance type for a function.
-
-    Simple heuristic: pick cheapest instance that satisfies compute_type
-    and latency requirements.
-    """
-    if target == "aws-lambda":
-        return "lambda", "serverless Lambda; no persistent compute needed"
-
-    compute_type = "cpu"
-    if hasattr(compute, "compute_type"):
-        ct = compute.compute_type
-        compute_type = ct.value if hasattr(ct, "value") else str(ct)
-
-    # Filter by compute_type
-    candidates = []
-    for name, spec in compute_backends.items():
-        spec_types = spec.get("compute_types", ["cpu"])
-        if compute_type in spec_types or compute_type == "any":
-            candidates.append((name, spec))
-
-    if not candidates:
-        candidates = list(compute_backends.items())
-
-    # Sort by cost (cheapest first)
-    candidates.sort(key=lambda x: x[1].get("cost_per_hour", 9999))
-
-    if not candidates:
-        return "c5-large", "default compute"
-
-    selected_name, selected_spec = candidates[0]
-    cost = selected_spec.get("cost_per_hour", 0)
-    display = selected_spec.get("display_name", selected_name)
-    reason = f"cheapest {compute_type} instance: {display} @ ${cost}/hr"
-    return selected_name, reason
