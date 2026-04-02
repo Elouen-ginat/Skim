@@ -13,7 +13,7 @@ from skaal.solver.storage import UnsatisfiableConstraints, select_backend
 # ── Catalog loading ────────────────────────────────────────────────────────────
 
 def test_load_catalog():
-    """load_catalog() successfully loads catalog/aws.toml."""
+    """load_catalog() successfully loads catalogs/aws.toml."""
     catalog = load_catalog()
     assert "storage" in catalog
     assert "compute" in catalog

@@ -28,7 +28,7 @@ def plan(
     catalog: Optional[Path] = typer.Option(
         None,
         "--catalog",
-        help="Path to catalog TOML. Defaults to catalog/aws.toml.",
+        help="Path to catalog TOML. Defaults to catalogs/aws.toml.",
     ),
     reoptimize: bool = typer.Option(False, "--reoptimize", help="Force re-solving all backend choices."),
     pin: list[str] = typer.Option([], "--pin", help="Pin a variable to a backend, e.g. profiles=redis."),

@@ -40,7 +40,7 @@ def deploy(
     catalog: Path | None = typer.Option(
         None,
         "--catalog",
-        help="Path to catalog TOML. Defaults to catalog/aws.toml.",
+        help="Path to catalog TOML. Defaults to catalogs/aws.toml.",
     ),
     preview: bool = typer.Option(False, "--preview", help="Dry run — show what would change."),
     rollback: bool = typer.Option(False, "--rollback", help="Roll back to the previous version."),
