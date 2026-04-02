@@ -1,5 +1,5 @@
 """
-Skim — Infrastructure as Constraints.
+Skaal — Infrastructure as Constraints.
 
 Write it once. Scale it with a word.
 """

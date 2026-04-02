@@ -11,7 +11,7 @@ from skaal.cli.infra_cmd import app as infra_app
 
 app = typer.Typer(
     name="skaal",
-    help="Skim — Infrastructure as Constraints. Write it once. Scale it with a word.",
+    help="Skaal — Infrastructure as Constraints. Write it once. Scale it with a word.",
     no_args_is_help=True,
 )
 

@@ -1,7 +1,7 @@
 """
-Skim distributed system patterns.
+Skaal distributed system patterns.
 
-Higher-level primitives that compose existing Skim storage/channel/agent
+Higher-level primitives that compose existing Skaal storage/channel/agent
 declarations into well-known distributed system patterns.
 
 Patterns are registered with a module via ``module.pattern(p)`` and attach
@@ -69,7 +69,7 @@ class EventLog(Generic[T]):
         if _backend is not None:
             self._backend = _backend
         else:
-            from skaal.local.storage import LocalMap
+            from skaal.backends.local_backend import LocalMap
             self._backend = LocalMap()
 
         # Metadata consumed by solver — mirrors __skim_storage__

@@ -81,7 +81,11 @@ def encode_compute(
 
     opt = Optimize()
     names = list(instance_types.keys())
-    sel: dict[str, Any] = {n: Bool(f"sel_{n}") for n in names}
+
+    def _z3_var(name: str) -> str:
+        return "sel_" + name.replace("-", "_").replace(".", "_")
+
+    sel: dict[str, Any] = {n: Bool(_z3_var(n)) for n in names}
 
     # Exactly one instance type selected
     opt.add(Sum([If(sel[n], 1, 0) for n in names]) == 1)

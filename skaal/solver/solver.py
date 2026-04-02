@@ -6,7 +6,6 @@ import hashlib
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from skaal.catalog.loader import load_catalog  # noqa: F401 — re-exported for compat
 from skaal.plan import ComponentSpec, ComputeSpec, PlanFile, StorageSpec
 from skaal.solver.storage import UnsatisfiableConstraints, select_backend
 
@@ -20,7 +19,7 @@ def solve(app: "App", catalog: dict[str, Any], target: str = "generic") -> "Plan
     declarations, producing a concrete infrastructure plan.
 
     Args:
-        app:     The Skim App whose decorators define the constraints.
+        app:     The Skaal App whose decorators define the constraints.
         catalog: Parsed TOML catalog entries (backends and their characteristics).
         target:  Deploy target: "generic" | "aws-lambda" | "k8s" | "ecs"
 

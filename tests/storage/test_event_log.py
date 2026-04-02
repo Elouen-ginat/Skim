@@ -6,7 +6,7 @@ import asyncio
 
 import pytest
 
-from skaal.local.storage import LocalMap
+from skaal.backends.local_backend import LocalMap
 from skaal.patterns import EventLog
 
 

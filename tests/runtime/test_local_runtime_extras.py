@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from skaal import App
-from skaal.local.runtime import LocalRuntime
+from skaal.runtime.local import LocalRuntime
 
 
 @pytest.fixture
@@ -32,7 +32,7 @@ def counter_app() -> App:
 
 def test_runtime_default_in_memory(counter_app):
     """Default LocalRuntime uses in-memory LocalMap."""
-    from skaal.local.storage import LocalMap
+    from skaal.backends.local_backend import LocalMap
     rt = LocalRuntime(counter_app)
     backends = list(rt._backends.values())
     assert all(isinstance(b, LocalMap) for b in backends)
@@ -49,7 +49,7 @@ def test_runtime_from_sqlite(counter_app, tmp_path):
 
 def test_runtime_backend_override(counter_app):
     """Explicit backend_overrides replace default LocalMap."""
-    from skaal.local.storage import LocalMap
+    from skaal.backends.local_backend import LocalMap
 
     custom = LocalMap()
     custom._data["seed"] = 42

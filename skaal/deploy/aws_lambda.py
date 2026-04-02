@@ -21,7 +21,7 @@ def generate_artifacts(
     Generate Lambda + Pulumi deployment artifacts.
 
     Args:
-        app:           The Skim App instance.
+        app:           The Skaal App instance.
         plan:          The solved PlanFile (plan.skaal.lock).
         output_dir:    Directory to write files into.
         source_module: Python module path, e.g. "examples.counter".
@@ -67,8 +67,8 @@ def generate_artifacts(
         _app = _user_module.{app_var}
 
         from skaal.backends.dynamodb_backend import DynamoBackend
-        from skaal.local.storage import patch_storage_class
-        from skaal.local.runtime import LocalRuntime
+        from skaal.backends.local_backend import patch_storage_class
+        from skaal.runtime.local import LocalRuntime
 
         # Wire backends from plan.skaal.lock
         {wiring_code}

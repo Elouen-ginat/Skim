@@ -1,4 +1,4 @@
-"""Module — reusable, composable Skim fragment. Base class for App."""
+"""Module — reusable, composable Skaal fragment. Base class for App."""
 
 from __future__ import annotations
 
@@ -63,7 +63,7 @@ class ModuleExport:
 
 class Module:
     """
-    A reusable, composable Skim fragment.
+    A reusable, composable Skaal fragment.
 
     A Module can declare storage, agents, functions, channels, and patterns —
     but it has no deploy target. Modules are mounted into Apps (or other Modules)

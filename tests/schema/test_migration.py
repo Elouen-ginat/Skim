@@ -6,7 +6,7 @@ import json
 
 import pytest
 
-from skaal.local.storage import LocalMap
+from skaal.backends.local_backend import LocalMap
 from skaal.migrate.engine import MigrationEngine, MigrationState, copy_all
 from skaal.migrate.shadow import DiscrepancyRecord, ShadowBackend
 

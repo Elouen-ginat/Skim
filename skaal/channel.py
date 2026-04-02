@@ -32,11 +32,11 @@ class Channel(Generic[T]):
 
     async def send(self, item: T) -> None:
         """Send an item to the channel. Stub — requires runtime mesh."""
-        raise NotImplementedError("Channel.send() requires the Skim runtime.")
+        raise NotImplementedError("Channel.send() requires the Skaal runtime.")
 
     async def receive(self) -> AsyncIterator[T]:
         """Receive items from the channel. Stub — requires runtime mesh."""
-        raise NotImplementedError("Channel.receive() requires the Skim runtime.")
+        raise NotImplementedError("Channel.receive() requires the Skaal runtime.")
         # make mypy happy — this is an async generator stub
         yield  # type: ignore[misc]
 

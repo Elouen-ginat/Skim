@@ -9,7 +9,7 @@ from pathlib import Path
 
 import typer
 
-app = typer.Typer(help="Run a Skim app locally.")
+app = typer.Typer(help="Run a Skaal app locally.")
 
 
 @app.callback(invoke_without_command=True)
@@ -34,7 +34,7 @@ def run(
     ),
 ) -> None:
     """
-    Run a Skim app locally.
+    Run a Skaal app locally.
 
     Starts an HTTP server where every @app.function() becomes a
     POST /{name} endpoint.  Storage is backed by in-memory LocalMap.
@@ -71,7 +71,7 @@ def run(
         )
         raise typer.Exit(1)
 
-    from skaal.local.runtime import LocalRuntime
+    from skaal.runtime.local import LocalRuntime
 
     if redis:
         typer.echo(f"Using Redis backend: {redis}")

@@ -1,1 +1,1 @@
-"""Skim CLI — typer-based command-line interface."""
+"""Skaal CLI — typer-based command-line interface."""

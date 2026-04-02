@@ -5,8 +5,6 @@ import pytest
 @pytest.fixture
 def aws_catalog(tmp_path):
     """Write a minimal catalog TOML and return its path."""
-    import tomli_w  # type: ignore[import]
-
     data = {
         "storage": {
             "redis": {
@@ -28,7 +26,7 @@ def aws_catalog(tmp_path):
         }
     }
     catalog_path = tmp_path / "aws.toml"
-    catalog_path.write_bytes(__import__("tomllib", fromlist=["dumps"]) and _write_toml(data))
+    catalog_path.write_bytes(_write_toml(data))
     return catalog_path
 
 

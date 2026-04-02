@@ -6,7 +6,8 @@ import pytest
 
 from skaal import App
 from skaal.types import AccessPattern, Durability, Latency
-from skaal.solver.solver import load_catalog, solve
+from skaal.catalog.loader import load_catalog
+from skaal.solver.solver import solve
 from skaal.solver.storage import UnsatisfiableConstraints, select_backend
 
 

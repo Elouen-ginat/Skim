@@ -1,4 +1,4 @@
-"""Translate a Skim PlanFile into Pulumi Automation API calls."""
+"""Translate a Skaal PlanFile into Pulumi Automation API calls."""
 
 from __future__ import annotations
 

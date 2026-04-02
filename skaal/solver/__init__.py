@@ -1,4 +1,4 @@
-"""Z3-based constraint solver for Skim infrastructure planning."""
+"""Z3-based constraint solver for Skaal infrastructure planning."""
 
 from skaal.solver.explain import explain_plan
 from skaal.solver.graph import ResourceGraph, build_graph

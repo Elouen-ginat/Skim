@@ -8,8 +8,8 @@ import json
 import pytest
 
 from skaal import App
-from skaal.local.runtime import LocalRuntime
-from skaal.local.storage import LocalMap, patch_storage_class
+from skaal.runtime.local import LocalRuntime
+from skaal.backends.local_backend import LocalMap, patch_storage_class
 
 
 # ── Storage tests ──────────────────────────────────────────────────────────────
@@ -43,7 +43,7 @@ def test_patch_storage_class():
     backend = LocalMap()
     patch_storage_class(MyStorage, backend)
 
-    assert MyStorage._local is backend  # type: ignore[attr-defined]
+    assert MyStorage._backend is backend  # type: ignore[attr-defined]
     assert callable(MyStorage.get)  # type: ignore[attr-defined]
 
 

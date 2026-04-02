@@ -1,7 +1,8 @@
-"""In-memory storage backends and schema-aware class patching."""
+"""In-memory storage backend and schema-aware class patching utilities."""
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 
@@ -32,11 +33,11 @@ def _serialize(value: Any, value_type: type | None) -> Any:
 
 def _deserialize(raw: Any, value_type: type | None) -> Any:
     """
-    Reconstruct a typed value from what the backend returned.
+    Reconstruct a typed value from the raw backend representation.
 
-    - ``dict`` + Pydantic value_type → run ``apply_migrations()`` then
-      ``value_type.model_validate(raw)``
-    - JSON string + Pydantic value_type → parse to dict first, then same path
+    - ``dict`` + Pydantic *value_type* → run ``apply_migrations()`` then
+      ``value_type.model_validate(migrated)``
+    - JSON ``str``/``bytes`` + Pydantic *value_type* → parse to ``dict`` first
     - Already the right type → returned as-is
     - ``None`` → ``None``
     - Anything else → returned unchanged
@@ -49,29 +50,25 @@ def _deserialize(raw: Any, value_type: type | None) -> Any:
             if isinstance(raw, value_type):
                 return raw
             if isinstance(raw, (str, bytes)):
-                import json as _json
-                raw = _json.loads(raw)
+                raw = json.loads(raw)
             if isinstance(raw, dict):
                 from skaal.types.schema import apply_migrations
-                migrated = apply_migrations(raw, value_type)
-                return value_type.model_validate(migrated)
+                return value_type.model_validate(apply_migrations(raw, value_type))
     except ImportError:
         pass
     return raw
 
 
-# ── LocalMap ──────────────────────────────────────────────────────────────────
+# ── LocalMap ───────────────────────────────────────────────────────────────────
 
 class LocalMap:
     """
-    In-memory key-value store.
+    In-memory key-value store that satisfies the :class:`~skaal.backends.base.StorageBackend`
+    protocol.
 
-    Patched onto storage classes during ``LocalRuntime`` startup so that
-    user code can call ``await MyStorage.get(key)`` without any real backend.
-
-    All methods are async to match the production backend interface.
-    Values are stored as raw Python objects; serialization happens in the
-    schema-aware patch layer, not here.
+    Used by :class:`~skaal.runtime.local.LocalRuntime` to back storage classes
+    during local development and testing.  All methods are async to match the
+    production backend interface.
     """
 
     def __init__(self) -> None:
@@ -93,7 +90,7 @@ class LocalMap:
         return [(k, v) for k, v in self._data.items() if k.startswith(prefix)]
 
     async def close(self) -> None:
-        """No-op for in-memory backend; satisfies the StorageBackend protocol."""
+        pass
 
     def __len__(self) -> int:
         return len(self._data)
@@ -108,18 +105,17 @@ def patch_storage_class(cls: type, backend: Any) -> None:
     """
     Inject *backend* as class-level async methods on *cls*.
 
-    **Plain storage classes** (``class Counts: pass``) get raw get/set/delete/
-    list/scan/close — identical to before, zero overhead.
+    Plain storage classes (``class Counts: pass``) get raw get/set/delete/
+    list/scan/close with zero overhead.
 
-    **Typed storage classes** (``class Profiles(Map[str, User])`` or
+    Typed storage classes (``class Profiles(Map[str, User])`` or
     ``class Profiles(Collection[User])``) additionally get:
 
-    - Automatic Pydantic validation on ``set()``
-    - Automatic deserialization on ``get()`` / ``list()`` / ``scan()``
+    - Automatic Pydantic validation and schema migration on read/write
     - ``Collection`` subclasses also get ``add()``, ``remove()``,
       ``update()``, ``all()``, ``find()``
 
-    The backend is also available as ``cls._local`` for direct access.
+    The backend is also available as ``cls._backend`` for direct access.
     """
     from skaal.storage import Collection, Map
 
@@ -128,9 +124,7 @@ def patch_storage_class(cls: type, backend: Any) -> None:
     is_collection = isinstance(cls, type) and issubclass(cls, Collection)
     use_schema = (is_map or is_collection) and value_type is not None
 
-    cls._local = backend  # type: ignore[attr-defined]
-
-    # ── Core KV methods ──────────────────────────────────────────────────────
+    cls._backend = backend  # type: ignore[attr-defined]
 
     async def _get(key: str) -> Any | None:
         raw = await backend.get(key)
@@ -158,14 +152,12 @@ def patch_storage_class(cls: type, backend: Any) -> None:
     async def _close() -> None:
         await backend.close()
 
-    cls.get = staticmethod(_get)          # type: ignore[attr-defined]
-    cls.set = staticmethod(_set)          # type: ignore[attr-defined]
-    cls.delete = staticmethod(_delete)    # type: ignore[attr-defined]
-    cls.list = staticmethod(_list)        # type: ignore[attr-defined]
-    cls.scan = staticmethod(_scan)        # type: ignore[attr-defined]
-    cls.close = staticmethod(_close)      # type: ignore[attr-defined]
-
-    # ── Collection convenience methods ───────────────────────────────────────
+    cls.get = staticmethod(_get)       # type: ignore[attr-defined]
+    cls.set = staticmethod(_set)       # type: ignore[attr-defined]
+    cls.delete = staticmethod(_delete) # type: ignore[attr-defined]
+    cls.list = staticmethod(_list)     # type: ignore[attr-defined]
+    cls.scan = staticmethod(_scan)     # type: ignore[attr-defined]
+    cls.close = staticmethod(_close)   # type: ignore[attr-defined]
 
     if is_collection:
         key_field: str = getattr(cls, "__skaal_key_field__", "id")
@@ -195,8 +187,8 @@ def patch_storage_class(cls: type, backend: Any) -> None:
         async def _find(prefix: str = "") -> list[Any]:
             return [v for _, v in await _scan(prefix)]
 
-        cls.add = staticmethod(_add)      # type: ignore[attr-defined]
-        cls.remove = staticmethod(_remove)  # type: ignore[attr-defined]
-        cls.update = staticmethod(_update)  # type: ignore[attr-defined]
-        cls.all = staticmethod(_all)      # type: ignore[attr-defined]
-        cls.find = staticmethod(_find)    # type: ignore[attr-defined]
+        cls.add = staticmethod(_add)       # type: ignore[attr-defined]
+        cls.remove = staticmethod(_remove) # type: ignore[attr-defined]
+        cls.update = staticmethod(_update) # type: ignore[attr-defined]
+        cls.all = staticmethod(_all)       # type: ignore[attr-defined]
+        cls.find = staticmethod(_find)     # type: ignore[attr-defined]

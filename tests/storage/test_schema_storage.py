@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from pydantic import BaseModel
 
-from skaal.local.storage import LocalMap, _deserialize, _serialize, patch_storage_class
+from skaal.backends.local_backend import LocalMap, _deserialize, _serialize, patch_storage_class
 from skaal.storage import Collection, Map, _primary_key_field, _schema_hints
 
 
@@ -346,7 +346,7 @@ async def test_plain_class_raw_storage():
 @pytest.mark.asyncio
 async def test_todo_api_end_to_end():
     """Full integration test of examples/todo_api.py with typed Map storage."""
-    from skaal.local.runtime import LocalRuntime
+    from skaal.runtime.local import LocalRuntime
     import json
 
     from examples.todo_api import app as todo_app

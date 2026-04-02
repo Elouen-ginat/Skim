@@ -10,7 +10,7 @@ class StorageBackend(Protocol):
     """
     Protocol for async key-value storage backends.
 
-    All Skim storage backends (LocalMap, RedisBackend, DynamoBackend) implement
+    All Skaal storage backends (LocalMap, RedisBackend, DynamoBackend) implement
     this interface. The protocol is runtime-checkable so isinstance() works.
     """
 

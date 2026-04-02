@@ -1,5 +1,5 @@
 """
-Skim external and provisioned components.
+Skaal external and provisioned components.
 
 Components are infrastructure declared at **module level** (not inside an App)
 and wired in via ``app.attach(component)``. They appear in ``plan.skaal.lock``
@@ -24,7 +24,7 @@ from skaal.types import AccessPattern, Durability, Latency, RateLimitPolicy, Thr
 
 class ComponentBase:
     """
-    Abstract base for all Skim components.
+    Abstract base for all Skaal components.
 
     Subclasses set ``_skim_component_kind`` as a class variable.
     On instantiation they populate ``__skim_component__`` — the metadata
@@ -50,7 +50,7 @@ class ComponentBase:
 
 class ProvisionedComponent(ComponentBase):
     """
-    A component that Skim provisions via Pulumi.
+    A component that Skaal provisions via Pulumi.
 
     The solver selects a concrete implementation from the infrastructure
     catalog (e.g. chooses Traefik vs Nginx based on constraints and deploy
@@ -60,9 +60,9 @@ class ProvisionedComponent(ComponentBase):
 
 class ExternalComponent(ComponentBase):
     """
-    A pre-existing infrastructure component that Skim did NOT provision.
+    A pre-existing infrastructure component that Skaal did NOT provision.
 
-    Skim does NOT create external components. Instead it:
+    Skaal does NOT create external components. Instead it:
 
     1. Writes their spec into ``plan.skaal.lock`` as a reference.
     2. Injects connection info into the app runtime via env vars.
@@ -130,7 +130,7 @@ class AuthConfig:
 
 class Proxy(ProvisionedComponent):
     """
-    A reverse proxy provisioned by Skim.
+    A reverse proxy provisioned by Skaal.
 
     The solver selects the implementation (Traefik, Nginx, Envoy, AWS ALB, …)
     based on the declared throughput/latency constraints and the ``@deploy``
@@ -237,7 +237,7 @@ class ExternalStorage(ExternalComponent):
     """
     Reference to a pre-existing database or object store.
 
-    Skim does not provision this — it only injects connectivity. Declaring
+    Skaal does not provision this — it only injects connectivity. Declaring
     ``latency`` allows the solver to reason about co-location (e.g. keep a
     function on the same rack as the external DB).
 
@@ -327,7 +327,7 @@ class ExternalObservability(ExternalComponent):
     """
     Reference to an external observability stack.
 
-    The Skim runtime emits metrics and traces to this endpoint when declared.
+    The Skaal runtime emits metrics and traces to this endpoint when declared.
 
     Usage::
 

@@ -1,4 +1,4 @@
-"""App — a deployable Skim application. Extends Module with a deploy target."""
+"""App — a deployable Skaal application. Extends Module with a deploy target."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ F = TypeVar("F", bound=Callable[..., Any])
 
 class App(Module):
     """
-    Central registry for a Skim application.
+    Central registry for a Skaal application.
 
     ``App`` extends ``Module`` with a deploy target (``deploy()``) and HTTP
     mounting (``mount()``). All storage, agent, function, channel, pattern,
