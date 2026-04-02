@@ -1,5 +1,5 @@
 [workspace]
-members = ["skaal-mesh"]
+members = ["mesh"]
 resolver = "2"
 
 [workspace.package]

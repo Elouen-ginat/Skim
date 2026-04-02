@@ -3,32 +3,15 @@
 from __future__ import annotations
 
 import hashlib
-import tomllib
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from skaal.catalog.loader import load_catalog  # noqa: F401 — re-exported for compat
 from skaal.plan import ComputeSpec, PlanFile, StorageSpec
 from skaal.solver.storage import UnsatisfiableConstraints, select_backend
 
 if TYPE_CHECKING:
     from skaal.app import App
-
-
-def load_catalog(path: Path | None = None) -> dict[str, Any]:
-    """
-    Load catalog TOML. Searches CWD/catalog/aws.toml if path not given.
-
-    Returns the parsed TOML as a dict.
-    """
-    if path is None:
-        path = Path.cwd() / "catalog" / "aws.toml"
-    if not path.exists():
-        raise FileNotFoundError(
-            f"Catalog not found at {path}. "
-            "Pass --catalog <path> or ensure catalog/aws.toml exists."
-        )
-    with open(path, "rb") as f:
-        return tomllib.load(f)
 
 
 def solve(app: "App", catalog: dict[str, Any], target: str = "generic") -> "PlanFile":
