@@ -8,11 +8,14 @@ from typing import Any
 
 from skaal.catalog.models import Catalog
 
-# Default search order when no explicit path is given
+# Default search order when no explicit path is given.
+# Cloud catalogs take priority; local.toml is the zero-setup fallback.
+# The legacy "catalog/" path is kept for backward compat.
 _DEFAULT_PATHS: list[str] = [
     "catalogs/aws.toml",
+    "catalogs/gcp.toml",
     "catalogs/local.toml",
-    "catalog/aws.toml",  # legacy path, kept for backward compat
+    "catalog/aws.toml",  # legacy path
 ]
 
 

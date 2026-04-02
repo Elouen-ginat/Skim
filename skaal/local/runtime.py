@@ -11,6 +11,30 @@ from typing import Any
 from skaal.local.storage import LocalMap, patch_storage_class
 
 
+def _wire_channel(channel_obj: Any) -> None:
+    """
+    Replace the stub send/receive on a Channel instance with LocalChannel methods.
+
+    This is done in-place so that module-level ``Channel`` instances work
+    transparently in local mode without requiring any code changes.
+    Import is deferred to avoid circular imports between local and runtime packages.
+    """
+    from skaal.runtime.channels import LocalChannel  # deferred — avoids circular import
+
+    local = LocalChannel()
+
+    async def _send(item: Any) -> None:
+        await local.publish("default", item)
+
+    async def _receive() -> Any:
+        async for msg in local.subscribe("default"):
+            yield msg
+
+    channel_obj.send = _send          # type: ignore[attr-defined]
+    channel_obj.receive = _receive    # type: ignore[attr-defined]
+    channel_obj._local_channel = local  # type: ignore[attr-defined]
+
+
 class LocalRuntime:
     """
     Runs a Skim App locally as a tiny HTTP server.
@@ -40,6 +64,7 @@ class LocalRuntime:
         self._backends: dict[str, Any] = {}
         self._backend_overrides = backend_overrides or {}
         self._patch_storage()
+        self._patch_channels()
 
     # ── Setup ──────────────────────────────────────────────────────────────
 
@@ -55,6 +80,15 @@ class LocalRuntime:
                     backend = LocalMap()
                 self._backends[qname] = backend
                 patch_storage_class(obj, backend)
+
+    def _patch_channels(self) -> None:
+        """Wire Channel instances registered with the app to LocalChannel."""
+        from skaal.channel import Channel as SkaalChannel  # deferred — same reason
+
+        all_resources = self.app._collect_all()
+        for qname, obj in all_resources.items():
+            if isinstance(obj, SkaalChannel):
+                _wire_channel(obj)
 
     # ── Factory methods ────────────────────────────────────────────────────
 
@@ -96,6 +130,38 @@ class LocalRuntime:
         for qname, obj in all_resources.items():
             if isinstance(obj, type) and hasattr(obj, "__skim_storage__"):
                 backend = SqliteBackend(_Path(db_path), namespace=qname)
+                backends[qname] = backend
+        return cls(app, host=host, port=port, backend_overrides=backends)
+
+    @classmethod
+    def from_postgres(
+        cls,
+        app: Any,
+        dsn: str,
+        host: str = "127.0.0.1",
+        port: int = 8000,
+        min_size: int = 1,
+        max_size: int = 5,
+    ) -> "LocalRuntime":
+        """
+        Create a LocalRuntime backed by PostgreSQL for persistent local development.
+
+        Args:
+            app:      The Skim App.
+            dsn:      asyncpg connection string, e.g.
+                      ``"postgresql://user:pass@localhost/mydb"``.
+            host:     HTTP bind address.
+            port:     HTTP port.
+            min_size: Connection pool minimum size.
+            max_size: Connection pool maximum size.
+        """
+        from skaal.backends.postgres_backend import PostgresBackend
+
+        backends: dict[str, Any] = {}
+        all_resources = app._collect_all()
+        for qname, obj in all_resources.items():
+            if isinstance(obj, type) and hasattr(obj, "__skim_storage__"):
+                backend = PostgresBackend(dsn=dsn, namespace=qname, min_size=min_size, max_size=max_size)
                 backends[qname] = backend
         return cls(app, host=host, port=port, backend_overrides=backends)
 

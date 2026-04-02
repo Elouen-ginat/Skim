@@ -47,11 +47,19 @@ class BackendRegistry:
 
         for name, spec in self._catalog.storage.items():
             if read_latency_max is not None:
+                # Backend must be able to reliably deliver under the max bound.
+                # Filter out backends whose best-case (min) already exceeds the
+                # constraint, OR whose worst-case (max) exceeds it — meaning they
+                # can't guarantee the constraint in normal operation.
                 if spec.read_latency.min > read_latency_max:
+                    continue
+                if spec.read_latency.max > read_latency_max:
                     continue
 
             if write_latency_max is not None:
                 if spec.write_latency.min > write_latency_max:
+                    continue
+                if spec.write_latency.max > write_latency_max:
                     continue
 
             if durability is not None:

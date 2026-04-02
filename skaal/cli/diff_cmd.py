@@ -171,7 +171,8 @@ def diff(
         raise typer.Exit(1)
 
     try:
-        from skaal.solver.solver import load_catalog, solve
+        from skaal.catalog.loader import load_catalog
+        from skaal.solver.solver import solve
 
         catalog = load_catalog()
         new_plan = solve(skim_app, catalog, target=existing_plan.deploy_target)

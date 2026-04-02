@@ -57,12 +57,20 @@ class ResourceGraph:
         """
         Return nodes in topological order (dependencies before dependents).
 
+        An edge ``src → dst`` (``add_edge(src, dst)``) means "src depends on
+        dst", so dst is scheduled *before* src.
+
         Raises :class:`CyclicDependencyError` if a cycle is detected.
         """
+        # in_degree[n] = number of unresolved dependencies n still has.
+        # Each add_edge(src, dst) adds one dependency to src.
         in_degree: dict[str, int] = {n: 0 for n in self._nodes}
+        # successors[dst] = set of nodes that depend on dst (unblocked when dst done)
+        successors: dict[str, set[str]] = {n: set() for n in self._nodes}
         for src, dsts in self._edges.items():
             for dst in dsts:
-                in_degree[dst] = in_degree.get(dst, 0) + 1
+                in_degree[src] = in_degree.get(src, 0) + 1
+                successors.setdefault(dst, set()).add(src)
 
         queue: deque[str] = deque(
             sorted(n for n, d in in_degree.items() if d == 0)
@@ -72,10 +80,10 @@ class ResourceGraph:
         while queue:
             node = queue.popleft()
             order.append(node)
-            for dep in sorted(self._edges.get(node, set())):
-                in_degree[dep] -= 1
-                if in_degree[dep] == 0:
-                    queue.append(dep)
+            for dependent in sorted(successors.get(node, set())):
+                in_degree[dependent] -= 1
+                if in_degree[dependent] == 0:
+                    queue.append(dependent)
 
         if len(order) != len(self._nodes):
             cycle_nodes = sorted(self._nodes - set(order))

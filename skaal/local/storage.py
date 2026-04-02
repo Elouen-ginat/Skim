@@ -34,8 +34,9 @@ def _deserialize(raw: Any, value_type: type | None) -> Any:
     """
     Reconstruct a typed value from what the backend returned.
 
-    - ``dict`` + Pydantic value_type → ``value_type.model_validate(raw)``
-    - JSON string + Pydantic value_type → ``value_type.model_validate_json(raw)``
+    - ``dict`` + Pydantic value_type → run ``apply_migrations()`` then
+      ``value_type.model_validate(raw)``
+    - JSON string + Pydantic value_type → parse to dict first, then same path
     - Already the right type → returned as-is
     - ``None`` → ``None``
     - Anything else → returned unchanged
@@ -47,10 +48,13 @@ def _deserialize(raw: Any, value_type: type | None) -> Any:
         if isinstance(value_type, type) and issubclass(value_type, BaseModel):
             if isinstance(raw, value_type):
                 return raw
-            if isinstance(raw, dict):
-                return value_type.model_validate(raw)
             if isinstance(raw, (str, bytes)):
-                return value_type.model_validate_json(raw)
+                import json as _json
+                raw = _json.loads(raw)
+            if isinstance(raw, dict):
+                from skaal.types.schema import apply_migrations
+                migrated = apply_migrations(raw, value_type)
+                return value_type.model_validate(migrated)
     except ImportError:
         pass
     return raw
