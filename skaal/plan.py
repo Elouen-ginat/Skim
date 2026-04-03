@@ -23,6 +23,9 @@ class StorageSpec:
     nodes: int = 1
     storage_gb: int | None = None
     reason: str = ""
+    # Provisioning parameters sourced from [storage.<backend>.deploy] in the
+    # catalog TOML.  Not used by the constraint solver; only by deploy generators.
+    deploy_params: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -62,6 +65,10 @@ class PlanFile:
     compute: dict[str, ComputeSpec] = field(default_factory=dict)
     components: dict[str, ComponentSpec] = field(default_factory=dict)
     extra: dict[str, Any] = field(default_factory=dict)
+    # Target-level deploy parameters sourced from [compute.<target>.deploy] in
+    # the catalog (e.g. Lambda memory/timeout, Cloud Run memory/cpu).
+    # Not used by the constraint solver; only by deploy generators.
+    deploy_config: dict[str, Any] = field(default_factory=dict)
 
     # ── Serialisation ──────────────────────────────────────────────────────
 
@@ -84,6 +91,7 @@ class PlanFile:
             "version": self.version,
             "previous_version": self.previous_version,
             "deploy_target": self.deploy_target,
+            "deploy_config": self.deploy_config,
             "storage": {k: asdict(v) for k, v in self.storage.items()},
             "compute": {k: asdict(v) for k, v in self.compute.items()},
             "components": {k: asdict(v) for k, v in self.components.items()},
@@ -100,6 +108,7 @@ class PlanFile:
             version=raw["version"],
             previous_version=raw.get("previous_version"),
             deploy_target=raw.get("deploy_target", "k8s"),
+            deploy_config=raw.get("deploy_config", {}),
             storage=storage,
             compute=compute,
             components=components,

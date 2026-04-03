@@ -26,6 +26,9 @@ class StorageBackendSpec(BaseModel):
     requires_vpc: bool = False
     regions: list[str] = Field(default_factory=lambda: ["all"])
     notes: str = ""
+    # Deployment-time provisioning parameters (not used by the solver).
+    # Populated from the optional [storage.<name>.deploy] TOML subsection.
+    deploy: dict[str, str] = Field(default_factory=dict)
 
 
 class ComputeBackendSpec(BaseModel):
@@ -38,6 +41,9 @@ class ComputeBackendSpec(BaseModel):
     cost_per_hour: float = 0.0
     regions: list[str] = Field(default_factory=lambda: ["all"])
     notes: str = ""
+    # Deployment-time provisioning parameters (not used by the solver).
+    # Populated from the optional [compute.<name>.deploy] TOML subsection.
+    deploy: dict[str, str] = Field(default_factory=dict)
 
 
 class NetworkSpec(BaseModel):

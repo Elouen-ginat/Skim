@@ -60,6 +60,11 @@ serverless    = true
 regions = ["all"]
 notes = "Key-value at scale with single-digit ms latency; serverless-native, no VPC"
 
+[storage.dynamodb.deploy]
+billing_mode   = "PAY_PER_REQUEST"
+hash_key       = "pk"
+hash_key_type  = "S"
+
 [storage.msk-kafka]
 display_name = "Amazon MSK (Kafka)"
 read_latency  = { min = 2.0, max = 20.0, unit = "ms" }
@@ -132,6 +137,11 @@ cold_start_ms = 200   # typical, varies
 max_duration_min = 15
 cost_per_invocation = 0.0000002
 notes = "Preferred for bursty, low-frequency, stateless workloads"
+
+[compute.lambda.deploy]
+runtime    = "python3.11"
+timeout    = "30"
+memory_mb  = "256"
 
 # ── Network ────────────────────────────────────────────────────────────────
 

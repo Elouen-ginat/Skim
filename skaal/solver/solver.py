@@ -54,6 +54,10 @@ def solve(app: "App", catalog: dict[str, Any], target: str = "generic") -> "Plan
         # Compute a stable schema hash from the class name
         schema_hash = hashlib.sha256(qname.encode()).hexdigest()[:12]
 
+        # Carry deploy-time provisioning params from the catalog into the plan.
+        # The solver never reads these; they are only consumed by deploy generators.
+        deploy_params = storage_backends.get(backend_name, {}).get("deploy", {})
+
         storage_specs[qname] = StorageSpec(
             variable_name=qname,
             backend=backend_name,
@@ -62,6 +66,7 @@ def solve(app: "App", catalog: dict[str, Any], target: str = "generic") -> "Plan
             migration_stage=0,
             schema_hash=schema_hash,
             reason=reason,
+            deploy_params=deploy_params,
         )
 
     # ── Solve compute ──────────────────────────────────────────────────────
@@ -105,11 +110,27 @@ def solve(app: "App", catalog: dict[str, Any], target: str = "generic") -> "Plan
             except Exception:  # noqa: BLE001
                 pass  # non-critical — components don't block the plan
 
+    # ── Target-level deploy config ─────────────────────────────────────────
+    # Read the deploy params for the target compute backend (e.g. Lambda,
+    # Cloud Run) from the catalog.  The solver doesn't use these; deploy
+    # generators do.  We map well-known target names to their catalog keys.
+    _TARGET_COMPUTE_KEY = {
+        "aws-lambda": "lambda",
+        "aws": "lambda",
+        "gcp-cloudrun": "cloud-run",
+        "gcp": "cloud-run",
+    }
+    target_compute_key = _TARGET_COMPUTE_KEY.get(target)
+    deploy_config: dict[str, Any] = {}
+    if target_compute_key:
+        deploy_config = compute_backends.get(target_compute_key, {}).get("deploy", {})
+
     return PlanFile(
         app_name=app.name,
         version=1,
         previous_version=None,
         deploy_target=target,
+        deploy_config=deploy_config,
         storage=storage_specs,
         compute=compute_specs,
         components=component_specs,

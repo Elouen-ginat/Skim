@@ -11,6 +11,11 @@ access_patterns = ["random-read", "random-write", "pub-sub"]
 cost_per_gb_month = 3.20
 regions = ["all"]
 
+[storage.memorystore-redis.deploy]
+redis_version  = "REDIS_7_0"
+tier           = "BASIC"
+memory_size_gb = "1"
+
 [storage.cloud-sql-postgres]
 display_name = "Cloud SQL (PostgreSQL 16)"
 read_latency  = { min = 1.0, max = 50.0, unit = "ms" }
@@ -20,6 +25,12 @@ max_size_gb   = 30_720
 access_patterns = ["random-read", "sequential", "transactional"]
 cost_per_gb_month = 0.17
 regions = ["all"]
+
+[storage.cloud-sql-postgres.deploy]
+database_version  = "POSTGRES_16"
+tier              = "db-f1-micro"
+backup_enabled    = "true"
+deletion_protection = "false"
 
 [storage.gcs]
 display_name = "Google Cloud Storage"
@@ -110,6 +121,11 @@ compute_types = ["cpu"]
 cold_start_ms = 100
 cost_per_invocation = 0.00000024
 notes = "Preferred for bursty, stateless workloads"
+
+[compute.cloud-run.deploy]
+memory      = "512Mi"
+cpu         = "1000m"
+concurrency = "80"
 
 # ── Network ────────────────────────────────────────────────────────────────
 
