@@ -7,6 +7,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from skaal.deploy._render import render, to_pulumi_yaml
+from skaal.deploy.config import (
+    CloudRunDeployConfig,
+    CloudSQLDeployConfig,
+    MemorystoreRedisDeployConfig,
+    storage_deploy_config,
+)
 
 if TYPE_CHECKING:
     from skaal.plan import PlanFile
@@ -96,7 +102,7 @@ def _build_pulumi_stack(
     are exposed as Pulumi ``config:`` entries with catalog-derived defaults so
     that ``pulumi config set cloudRunMemory 1Gi`` works without re-planning.
     """
-    deploy = plan.deploy_config  # Cloud Run deploy params from catalog
+    deploy = CloudRunDeployConfig.model_validate(plan.deploy_config)
 
     needs_vpc = any(s.backend in _REQUIRES_VPC for s in plan.storage.values())
 
@@ -104,27 +110,25 @@ def _build_pulumi_stack(
     config: dict[str, Any] = {
         "gcp:project": {"type": "string"},
         "gcp:region": {"type": "string", "default": region},
-        "cloudRunMemory": {"type": "string", "default": deploy.get("memory", "512Mi")},
-        "cloudRunCpu": {"type": "string", "default": deploy.get("cpu", "1000m")},
-        "cloudRunConcurrency": {
-            "type": "integer",
-            "default": int(deploy.get("concurrency", 80)),
-        },
+        "cloudRunMemory": {"type": "string", "default": deploy.memory},
+        "cloudRunCpu": {"type": "string", "default": deploy.cpu},
+        "cloudRunConcurrency": {"type": "integer", "default": deploy.concurrency},
     }
 
-    # Per-storage overridable params
+    # Per-storage overridable params — validated via the typed config model
     for qname, spec in plan.storage.items():
         class_name = qname.split(".")[-1]
-        d = spec.deploy_params
         if spec.backend == "cloud-sql-postgres":
+            sql_cfg = CloudSQLDeployConfig.model_validate(spec.deploy_params)
             config[f"sqlTier{class_name}"] = {
                 "type": "string",
-                "default": d.get("tier", "db-f1-micro"),
+                "default": sql_cfg.tier,
             }
         elif spec.backend == "memorystore-redis":
+            redis_cfg = MemorystoreRedisDeployConfig.model_validate(spec.deploy_params)
             config[f"redisSizeGb{class_name}"] = {
                 "type": "integer",
-                "default": int(d.get("memory_size_gb", 1)),
+                "default": redis_cfg.memory_size_gb,
             }
 
     resources: dict[str, Any] = {}
@@ -154,30 +158,27 @@ def _build_pulumi_stack(
             container_envs.append({"name": env_var, "value": collection})
 
         elif spec.backend == "cloud-sql-postgres":
+            sql_cfg = CloudSQLDeployConfig.model_validate(spec.deploy_params)
             resource_key = f"{class_name.lower()}-sql"
-            db_key = f"{class_name.lower()}-db"
             resources[resource_key] = {
                 "type": "gcp:sql:DatabaseInstance",
                 "properties": {
-                    "databaseVersion": d.get("database_version", "POSTGRES_16"),
+                    "databaseVersion": sql_cfg.database_version,
                     "region": "${gcp:region}",
                     "settings": {
                         "tier": f"${{{f'sqlTier{class_name}'}}}",
-                        "backupConfiguration": {
-                            "enabled": d.get("backup_enabled", "true") == "true",
-                        },
+                        "backupConfiguration": {"enabled": sql_cfg.backup_enabled},
                     },
-                    "deletionProtection": d.get("deletion_protection", "false") == "true",
+                    "deletionProtection": sql_cfg.deletion_protection,
                 },
             }
-            resources[db_key] = {
+            resources[f"{class_name.lower()}-db"] = {
                 "type": "gcp:sql:Database",
                 "properties": {
                     "instance": f"${{{resource_key}.name}}",
                     "name": app.name,
                 },
             }
-            # DSN uses Cloud SQL socket path; the Cloud SQL Auth Proxy handles auth.
             dsn = (
                 f"postgresql://skaal@localhost/{app.name}"
                 f"?host=/cloudsql/${{{resource_key}.connectionName}}"
@@ -185,14 +186,15 @@ def _build_pulumi_stack(
             container_envs.append({"name": env_var, "value": dsn})
 
         elif spec.backend == "memorystore-redis":
+            redis_cfg = MemorystoreRedisDeployConfig.model_validate(spec.deploy_params)
             resource_key = f"{class_name.lower()}-redis"
             resources[resource_key] = {
                 "type": "gcp:redis:Instance",
                 "properties": {
-                    "tier": d.get("tier", "BASIC"),
+                    "tier": redis_cfg.tier,
                     "memorySizeGb": f"${{{f'redisSizeGb{class_name}'}}}",
                     "region": "${gcp:region}",
-                    "redisVersion": d.get("redis_version", "REDIS_7_0"),
+                    "redisVersion": redis_cfg.redis_version,
                 },
             }
             container_envs.append({

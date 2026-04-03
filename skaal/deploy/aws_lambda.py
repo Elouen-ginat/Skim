@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from skaal.deploy._render import render, to_pulumi_yaml
+from skaal.deploy.config import DynamoDBDeployConfig, LambdaDeployConfig
 
 if TYPE_CHECKING:
     from skaal.plan import PlanFile
@@ -52,14 +53,14 @@ def _build_pulumi_stack(app: Any, plan: "PlanFile") -> dict[str, Any]:
     Pulumi ``config:`` entries with catalog-derived defaults so that
     ``pulumi config set lambdaMemoryMb 512`` works without re-planning.
     """
-    deploy = plan.deploy_config  # e.g. {"runtime": "python3.11", "timeout": "30", ...}
+    deploy = LambdaDeployConfig.model_validate(plan.deploy_config)
 
     # ── Pulumi config (user-overridable) ──────────────────────────────────────
     config: dict[str, Any] = {
         "aws:region": {"type": "string", "default": "us-east-1"},
-        "lambdaMemoryMb": {"type": "integer", "default": int(deploy.get("memory_mb", 256))},
-        "lambdaTimeout": {"type": "integer", "default": int(deploy.get("timeout", 30))},
-        "lambdaRuntime": {"type": "string", "default": deploy.get("runtime", "python3.11")},
+        "lambdaMemoryMb": {"type": "integer", "default": deploy.memory_mb},
+        "lambdaTimeout": {"type": "integer", "default": deploy.timeout},
+        "lambdaRuntime": {"type": "string", "default": deploy.runtime},
     }
 
     resources: dict[str, Any] = {}
@@ -70,11 +71,11 @@ def _build_pulumi_stack(app: Any, plan: "PlanFile") -> dict[str, Any]:
     for qname, spec in plan.storage.items():
         class_name = qname.split(".")[-1]
         resource_key = f"{class_name.lower()}-table"
-        d = spec.deploy_params  # {"billing_mode": "PAY_PER_REQUEST", "hash_key": "pk", ...}
+        d = DynamoDBDeployConfig.model_validate(spec.deploy_params)
 
-        billing_mode = d.get("billing_mode", "PAY_PER_REQUEST")
-        hash_key = d.get("hash_key", "pk")
-        hash_key_type = d.get("hash_key_type", "S")
+        billing_mode = d.billing_mode
+        hash_key = d.hash_key
+        hash_key_type = d.hash_key_type
 
         resources[resource_key] = {
             "type": "aws:dynamodb:Table",

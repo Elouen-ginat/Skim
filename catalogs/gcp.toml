@@ -14,7 +14,7 @@ regions = ["all"]
 [storage.memorystore-redis.deploy]
 redis_version  = "REDIS_7_0"
 tier           = "BASIC"
-memory_size_gb = "1"
+memory_size_gb = 1
 
 [storage.cloud-sql-postgres]
 display_name = "Cloud SQL (PostgreSQL 16)"
@@ -27,10 +27,10 @@ cost_per_gb_month = 0.17
 regions = ["all"]
 
 [storage.cloud-sql-postgres.deploy]
-database_version  = "POSTGRES_16"
-tier              = "db-f1-micro"
-backup_enabled    = "true"
-deletion_protection = "false"
+database_version    = "POSTGRES_16"
+tier                = "db-f1-micro"
+backup_enabled      = true
+deletion_protection = false
 
 [storage.gcs]
 display_name = "Google Cloud Storage"
@@ -125,7 +125,7 @@ notes = "Preferred for bursty, stateless workloads"
 [compute.cloud-run.deploy]
 memory      = "512Mi"
 cpu         = "1000m"
-concurrency = "80"
+concurrency = 80
 
 # ── Network ────────────────────────────────────────────────────────────────
 

@@ -140,8 +140,8 @@ notes = "Preferred for bursty, low-frequency, stateless workloads"
 
 [compute.lambda.deploy]
 runtime    = "python3.11"
-timeout    = "30"
-memory_mb  = "256"
+timeout    = 30
+memory_mb  = 256
 
 # ── Network ────────────────────────────────────────────────────────────────
 
