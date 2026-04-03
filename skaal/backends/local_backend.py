@@ -2,8 +2,51 @@
 
 from __future__ import annotations
 
+import asyncio
+import concurrent.futures
 import json
 from typing import Any
+
+
+# ── Sync/async bridge ─────────────────────────────────────────────────────────
+
+# A module-level thread executor used by the sync wrappers to safely run async
+# operations from synchronous contexts (Dash callbacks, Flask views, Django
+# views, etc.) even when an event loop is already running in the current thread.
+_sync_executor = concurrent.futures.ThreadPoolExecutor(
+    max_workers=4,
+    thread_name_prefix="skaal-sync",
+)
+
+
+def _sync_run(coro: Any) -> Any:
+    """
+    Run *coro* from a synchronous context.
+
+    Handles both cases:
+
+    - **No running event loop** (typical in sync frameworks like Dash/Flask):
+      uses ``asyncio.run()``.
+    - **Running event loop in current thread** (e.g., called from inside
+      uvicorn/asyncio code): submits to a separate thread with its own loop,
+      blocking until done.  This avoids the "cannot run nested event loop"
+      error.
+
+    Example (Dash callback)::
+
+        @callback(Output("graph", "figure"), Input("session-id", "data"))
+        def update_graph(session_id):
+            state = Sessions.sync_get(session_id)  # safe in Dash callbacks
+            ...
+    """
+    try:
+        asyncio.get_running_loop()
+        # A loop is running in this thread (e.g., uvicorn).
+        # Off-load to a dedicated thread that can create its own loop.
+        return _sync_executor.submit(asyncio.run, coro).result()
+    except RuntimeError:
+        # No running loop — create one inline.
+        return asyncio.run(coro)
 
 
 # ── Serialization helpers ──────────────────────────────────────────────────────
@@ -152,12 +195,34 @@ def patch_storage_class(cls: type, backend: Any) -> None:
     async def _close() -> None:
         await backend.close()
 
-    cls.get = staticmethod(_get)       # type: ignore[attr-defined]
-    cls.set = staticmethod(_set)       # type: ignore[attr-defined]
-    cls.delete = staticmethod(_delete) # type: ignore[attr-defined]
-    cls.list = staticmethod(_list)     # type: ignore[attr-defined]
-    cls.scan = staticmethod(_scan)     # type: ignore[attr-defined]
-    cls.close = staticmethod(_close)   # type: ignore[attr-defined]
+    # ── Sync wrappers — safe to call from Dash callbacks, Flask views, etc. ──
+
+    def _sync_get(key: str) -> Any | None:
+        return _sync_run(_get(key))
+
+    def _sync_set(key: str, value: Any) -> None:
+        _sync_run(_set(key, value))
+
+    def _sync_delete(key: str) -> None:
+        _sync_run(_delete(key))
+
+    def _sync_list() -> list[tuple[str, Any]]:
+        return _sync_run(_list())
+
+    def _sync_scan(prefix: str = "") -> list[tuple[str, Any]]:
+        return _sync_run(_scan(prefix))
+
+    cls.get = staticmethod(_get)               # type: ignore[attr-defined]
+    cls.set = staticmethod(_set)               # type: ignore[attr-defined]
+    cls.delete = staticmethod(_delete)         # type: ignore[attr-defined]
+    cls.list = staticmethod(_list)             # type: ignore[attr-defined]
+    cls.scan = staticmethod(_scan)             # type: ignore[attr-defined]
+    cls.close = staticmethod(_close)           # type: ignore[attr-defined]
+    cls.sync_get = staticmethod(_sync_get)     # type: ignore[attr-defined]
+    cls.sync_set = staticmethod(_sync_set)     # type: ignore[attr-defined]
+    cls.sync_delete = staticmethod(_sync_delete) # type: ignore[attr-defined]
+    cls.sync_list = staticmethod(_sync_list)   # type: ignore[attr-defined]
+    cls.sync_scan = staticmethod(_sync_scan)   # type: ignore[attr-defined]
 
     if is_collection:
         key_field: str = getattr(cls, "__skaal_key_field__", "id")
@@ -187,8 +252,20 @@ def patch_storage_class(cls: type, backend: Any) -> None:
         async def _find(prefix: str = "") -> list[Any]:
             return [v for _, v in await _scan(prefix)]
 
-        cls.add = staticmethod(_add)       # type: ignore[attr-defined]
-        cls.remove = staticmethod(_remove) # type: ignore[attr-defined]
-        cls.update = staticmethod(_update) # type: ignore[attr-defined]
-        cls.all = staticmethod(_all)       # type: ignore[attr-defined]
-        cls.find = staticmethod(_find)     # type: ignore[attr-defined]
+        def _sync_add(item: Any) -> None:
+            _sync_run(_add(item))
+
+        def _sync_all() -> list[Any]:
+            return _sync_run(_all())
+
+        def _sync_find(prefix: str = "") -> list[Any]:
+            return _sync_run(_find(prefix))
+
+        cls.add = staticmethod(_add)               # type: ignore[attr-defined]
+        cls.remove = staticmethod(_remove)         # type: ignore[attr-defined]
+        cls.update = staticmethod(_update)         # type: ignore[attr-defined]
+        cls.all = staticmethod(_all)               # type: ignore[attr-defined]
+        cls.find = staticmethod(_find)             # type: ignore[attr-defined]
+        cls.sync_add = staticmethod(_sync_add)     # type: ignore[attr-defined]
+        cls.sync_all = staticmethod(_sync_all)     # type: ignore[attr-defined]
+        cls.sync_find = staticmethod(_sync_find)   # type: ignore[attr-defined]

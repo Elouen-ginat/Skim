@@ -328,26 +328,43 @@ def generate_artifacts(
 
     generated: list[Path] = []
     backend_imports, backend_overrides = _build_wiring(plan)
+    wsgi_attribute: str | None = getattr(app, "_wsgi_attribute", None)
 
     # ── main.py ───────────────────────────────────────────────────────────────
     main_path = output_dir / "main.py"
-    main_path.write_text(render(
-        "gcp/main.py",
-        app_name=app.name,
-        source_module=source_module,
-        app_var=app_var,
-        backend_imports=backend_imports,
-        backend_overrides=backend_overrides,
-    ))
+    if wsgi_attribute:
+        # WSGI mode: gunicorn serves the user's Flask/Dash/WSGI app
+        main_path.write_text(render(
+            "gcp/main_wsgi.py",
+            source_module=source_module,
+            app_var=app_var,
+            wsgi_attribute=wsgi_attribute,
+            backend_imports=backend_imports,
+            backend_overrides=backend_overrides,
+        ))
+    else:
+        main_path.write_text(render(
+            "gcp/main.py",
+            app_name=app.name,
+            source_module=source_module,
+            app_var=app_var,
+            backend_imports=backend_imports,
+            backend_overrides=backend_overrides,
+        ))
     generated.append(main_path)
 
     # ── Dockerfile ────────────────────────────────────────────────────────────
     dockerfile_path = output_dir / "Dockerfile"
-    dockerfile_path.write_text(render("gcp/Dockerfile"))
+    dockerfile_path.write_text(
+        render("gcp/Dockerfile_wsgi") if wsgi_attribute else render("gcp/Dockerfile")
+    )
     generated.append(dockerfile_path)
 
     # ── requirements.txt ──────────────────────────────────────────────────────
-    infra_deps = ["skaal[gcp]", "uvicorn>=0.29"]
+    if wsgi_attribute:
+        infra_deps = ["skaal[gcp]", "gunicorn>=22.0"]
+    else:
+        infra_deps = ["skaal[gcp]", "uvicorn>=0.29"]
     for spec in plan.storage.values():
         if spec.backend == "cloud-sql-postgres":
             infra_deps.append("cloud-sql-python-connector[asyncpg]>=1.9")

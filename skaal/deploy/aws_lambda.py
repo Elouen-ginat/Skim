@@ -269,22 +269,37 @@ def generate_artifacts(
 
     generated: list[Path] = []
     backend_imports, backend_overrides = _build_wiring(plan)
+    wsgi_attribute: str | None = getattr(app, "_wsgi_attribute", None)
 
     # ── handler.py ────────────────────────────────────────────────────────────
     handler_path = output_dir / "handler.py"
-    handler_path.write_text(render(
-        "aws/handler.py",
-        app_name=app.name,
-        source_module=source_module,
-        app_var=app_var,
-        backend_imports=backend_imports,
-        backend_overrides=backend_overrides,
-    ))
+    if wsgi_attribute:
+        # WSGI mode: mangum wraps the user's Flask/Dash/WSGI app
+        handler_path.write_text(render(
+            "aws/handler_wsgi.py",
+            source_module=source_module,
+            app_var=app_var,
+            wsgi_attribute=wsgi_attribute,
+            backend_imports=backend_imports,
+            backend_overrides=backend_overrides,
+        ))
+    else:
+        handler_path.write_text(render(
+            "aws/handler.py",
+            app_name=app.name,
+            source_module=source_module,
+            app_var=app_var,
+            backend_imports=backend_imports,
+            backend_overrides=backend_overrides,
+        ))
     generated.append(handler_path)
 
     # ── requirements.txt ─────────────────────────────────────────────────────
     user_pkgs = collect_user_packages(source_module)
-    deps = list(dict.fromkeys(["skaal[aws]"] + user_pkgs))
+    base_deps = ["skaal[aws]"]
+    if wsgi_attribute:
+        base_deps.append("mangum>=0.17")
+    deps = list(dict.fromkeys(base_deps + user_pkgs))
     requirements_path = output_dir / "requirements.txt"
     requirements_path.write_text("\n".join(deps) + "\n")
     generated.append(requirements_path)
