@@ -125,6 +125,40 @@ class LocalRuntime:
         return cls(app, host=host, port=port, backend_overrides=backends)
 
     @classmethod
+    def from_firestore(
+        cls,
+        app: Any,
+        project: str | None = None,
+        database: str = "(default)",
+        host: str = "127.0.0.1",
+        port: int = 8000,
+    ) -> "LocalRuntime":
+        """
+        Create a ``LocalRuntime`` using Cloud Firestore backends for all storage classes.
+
+        Each storage class gets its own Firestore collection named after the
+        fully-qualified class name (dots replaced with underscores).
+
+        Args:
+            app:      The Skaal :class:`~skaal.app.App`.
+            project:  GCP project ID.  Defaults to the ambient project from
+                      Application Default Credentials.
+            database: Firestore database name.  Defaults to ``"(default)"``.
+        """
+        from skaal.backends.firestore_backend import FirestoreBackend
+
+        backends = {
+            qname: FirestoreBackend(
+                collection=qname.replace(".", "_").lower(),
+                project=project,
+                database=database,
+            )
+            for qname, obj in app._collect_all().items()
+            if isinstance(obj, type) and hasattr(obj, "__skim_storage__")
+        }
+        return cls(app, host=host, port=port, backend_overrides=backends)
+
+    @classmethod
     def from_postgres(
         cls,
         app: Any,

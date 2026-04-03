@@ -1,0 +1,138 @@
+"""Rendering utilities for skaal deploy generators.
+
+``render()``       — fills a $-substitution template from skaal/deploy/templates/.
+``to_pulumi_yaml`` — serialises a plain Python dict to Pulumi YAML (no deps).
+"""
+
+from __future__ import annotations
+
+import re
+import string
+from pathlib import Path
+from typing import Any
+
+_TEMPLATES_DIR = Path(__file__).parent / "templates"
+
+
+# ── Template rendering ────────────────────────────────────────────────────────
+
+def render(template: str, **variables: str) -> str:
+    """
+    Render a template from ``skaal/deploy/templates/`` using
+    :class:`string.Template` (``$var`` / ``${var}`` substitution).
+
+    Args:
+        template:    Relative path inside the templates directory,
+                     e.g. ``"gcp/main.py"`` or ``"aws/handler.py"``.
+        **variables: Substitution variables.
+
+    Returns:
+        Rendered file content as a string.
+    """
+    path = _TEMPLATES_DIR / template
+    return string.Template(path.read_text()).substitute(variables)
+
+
+# ── Pulumi YAML serialiser ─────────────────────────────────────────────────────
+#
+# Pulumi YAML is a well-behaved subset of YAML.  We only need to handle:
+#   scalars — str, int, float, bool, None
+#   mappings — dict
+#   sequences — list
+#
+# Rather than pulling in PyYAML, this minimal serialiser covers the exact
+# patterns used by Pulumi stacks (resource definitions, config, outputs).
+#
+# Quoting rules
+# -------------
+# Keys  : quote if they contain characters outside [a-zA-Z0-9_-].
+#         (e.g. "gcp:project", "fn::toJSON", "run.googleapis.com/vpc-…")
+# Values: quote if the string contains characters that have special meaning
+#         in YAML flow/plain context — `{}[]:#|>&*!'"@` — or matches a
+#         reserved boolean/null literal, or is empty.
+
+_BARE = re.compile(r"^[a-zA-Z0-9_-]+$")
+_SPECIAL_VAL = re.compile(r'[{}\[\]:#|>&*!\'"]|^\s|\s$')
+_RESERVED = re.compile(r"^(true|false|null|yes|no|on|off|~)$", re.I)
+
+
+def _quote(s: str) -> str:
+    return '"' + s.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def _yaml_key(k: str) -> str:
+    return k if _BARE.match(k) else _quote(k)
+
+
+def _yaml_scalar(v: Any) -> str:
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    if isinstance(v, (int, float)):
+        return str(v)
+    if v is None:
+        return "null"
+    s = str(v)
+    if not s or _SPECIAL_VAL.search(s) or _RESERVED.match(s):
+        return _quote(s)
+    return s
+
+
+def _yaml_lines(data: Any, indent: int = 0) -> list[str]:
+    """Return lines (no trailing newline) for *data* at the given indent level."""
+    pad = "  " * indent
+    lines: list[str] = []
+
+    if isinstance(data, dict):
+        for k, v in data.items():
+            key = _yaml_key(str(k))
+            if isinstance(v, (dict, list)):
+                lines.append(f"{pad}{key}:")
+                lines.extend(_yaml_lines(v, indent + 1))
+            else:
+                lines.append(f"{pad}{key}: {_yaml_scalar(v)}")
+
+    elif isinstance(data, list):
+        for item in data:
+            if isinstance(item, dict):
+                entries = list(item.items())
+                if not entries:
+                    lines.append(f"{pad}- {{}}")
+                    continue
+                # First entry uses the "- " prefix; subsequent use "  " alignment
+                first_k, first_v = entries[0]
+                key = _yaml_key(str(first_k))
+                if isinstance(first_v, (dict, list)):
+                    lines.append(f"{pad}- {key}:")
+                    lines.extend(_yaml_lines(first_v, indent + 2))
+                else:
+                    lines.append(f"{pad}- {key}: {_yaml_scalar(first_v)}")
+                for k, v in entries[1:]:
+                    key = _yaml_key(str(k))
+                    if isinstance(v, (dict, list)):
+                        lines.append(f"{pad}  {key}:")
+                        lines.extend(_yaml_lines(v, indent + 2))
+                    else:
+                        lines.append(f"{pad}  {key}: {_yaml_scalar(v)}")
+            else:
+                lines.append(f"{pad}- {_yaml_scalar(item)}")
+
+    return lines
+
+
+def to_pulumi_yaml(stack: dict[str, Any]) -> str:
+    """
+    Serialise a Pulumi stack dict to a ``Pulumi.yaml`` string.
+
+    The dict should follow Pulumi's YAML schema::
+
+        {
+            "name": "skaal-myapp",
+            "runtime": "yaml",
+            "config": { ... },
+            "resources": { ... },
+            "outputs": { ... },
+        }
+
+    Returns a string ready to write to ``Pulumi.yaml``.
+    """
+    return "\n".join(_yaml_lines(stack)) + "\n"
