@@ -6,6 +6,7 @@ import textwrap
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from skaal.deploy._deps import collect_user_packages
 from skaal.deploy._render import render, to_pulumi_yaml
 from skaal.deploy.config import DynamoDBDeployConfig, LambdaDeployConfig
 
@@ -272,8 +273,10 @@ def generate_artifacts(
     generated.append(handler_path)
 
     # ── requirements.txt ─────────────────────────────────────────────────────
+    user_pkgs = collect_user_packages(source_module)
+    deps = list(dict.fromkeys(["skaal[aws]"] + user_pkgs))
     requirements_path = output_dir / "requirements.txt"
-    requirements_path.write_text("skaal[aws]\n")
+    requirements_path.write_text("\n".join(deps) + "\n")
     generated.append(requirements_path)
 
     # ── Pulumi.yaml ───────────────────────────────────────────────────────────
