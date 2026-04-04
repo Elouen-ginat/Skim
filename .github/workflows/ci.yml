@@ -7,8 +7,8 @@ on:
     branches: [main]
 
 jobs:
-  lint:
-    name: Lint
+  pre-commit:
+    name: Pre-commit
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -24,31 +24,7 @@ jobs:
       - name: Install dev dependencies
         run: uv sync --group dev
 
-      - name: Ruff check
-        run: uv run ruff check skaal tests
-
-      - name: Ruff format check
-        run: uv run ruff format --check skaal tests
-
-  typecheck:
-    name: Type Check
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Install dev dependencies
-        run: uv sync --group dev
-
-      - name: MyPy
-        run: uv run mypy skaal
+      - uses: pre-commit/action@v3.0.1
 
   test:
     name: Test (Python ${{ matrix.python-version }})
