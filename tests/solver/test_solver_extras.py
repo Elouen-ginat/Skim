@@ -9,14 +9,13 @@ from skaal.plan import ComputeSpec, PlanFile, StorageSpec
 from skaal.solver.explain import explain_plan
 from skaal.solver.graph import CyclicDependencyError, ResourceGraph, build_graph
 from skaal.solver.stability import (
-    PlanDiff,
     StabilityVerdict,
     diff_plans,
 )
 from skaal.types import Compute
 
-
 # ── ResourceGraph ─────────────────────────────────────────────────────────────
+
 
 def test_resource_graph_empty_topological():
     g = ResourceGraph()
@@ -88,6 +87,7 @@ def test_build_graph_no_cycles():
 
 # ── explain_plan ──────────────────────────────────────────────────────────────
 
+
 def _make_plan(storage_backend: str = "redis") -> PlanFile:
     return PlanFile(
         app_name="test",
@@ -149,6 +149,7 @@ def test_explain_plan_empty():
 
 
 # ── diff_plans / stability ────────────────────────────────────────────────────
+
 
 def test_diff_plans_stable():
     plan = _make_plan("redis")

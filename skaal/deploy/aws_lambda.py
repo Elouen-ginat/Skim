@@ -16,6 +16,7 @@ if TYPE_CHECKING:
 
 # ── Wiring helpers (backend_imports / backend_overrides for entry-point template)
 
+
 def _build_wiring(plan: "PlanFile") -> tuple[str, str]:
     """
     Return ``(backend_imports, backend_overrides)`` template variables.
@@ -39,6 +40,7 @@ def _build_wiring(plan: "PlanFile") -> tuple[str, str]:
 
 
 # ── Pulumi YAML stack builder ─────────────────────────────────────────────────
+
 
 def _build_pulumi_stack(app: Any, plan: "PlanFile") -> dict[str, Any]:
     """
@@ -99,11 +101,13 @@ def _build_pulumi_stack(app: Any, plan: "PlanFile") -> dict[str, Any]:
             "assumeRolePolicy": {
                 "fn::toJSON": {
                     "Version": "2012-10-17",
-                    "Statement": [{
-                        "Effect": "Allow",
-                        "Principal": {"Service": "lambda.amazonaws.com"},
-                        "Action": "sts:AssumeRole",
-                    }],
+                    "Statement": [
+                        {
+                            "Effect": "Allow",
+                            "Principal": {"Service": "lambda.amazonaws.com"},
+                            "Action": "sts:AssumeRole",
+                        }
+                    ],
                 }
             },
         },
@@ -122,14 +126,19 @@ def _build_pulumi_stack(app: Any, plan: "PlanFile") -> dict[str, Any]:
             "policy": {
                 "fn::toJSON": {
                     "Version": "2012-10-17",
-                    "Statement": [{
-                        "Effect": "Allow",
-                        "Action": [
-                            "dynamodb:GetItem", "dynamodb:PutItem",
-                            "dynamodb:DeleteItem", "dynamodb:Scan", "dynamodb:Query",
-                        ],
-                        "Resource": "*",
-                    }],
+                    "Statement": [
+                        {
+                            "Effect": "Allow",
+                            "Action": [
+                                "dynamodb:GetItem",
+                                "dynamodb:PutItem",
+                                "dynamodb:DeleteItem",
+                                "dynamodb:Scan",
+                                "dynamodb:Query",
+                            ],
+                            "Resource": "*",
+                        }
+                    ],
                 }
             },
         },
@@ -228,6 +237,7 @@ def _build_pulumi_stack(app: Any, plan: "PlanFile") -> dict[str, Any]:
 
 # ── Public entry point ─────────────────────────────────────────────────────────
 
+
 def generate_artifacts(
     app: Any,
     plan: "PlanFile",
@@ -275,23 +285,27 @@ def generate_artifacts(
     handler_path = output_dir / "handler.py"
     if wsgi_attribute:
         # WSGI mode: mangum wraps the user's Flask/Dash/WSGI app
-        handler_path.write_text(render(
-            "aws/handler_wsgi.py",
-            source_module=source_module,
-            app_var=app_var,
-            wsgi_attribute=wsgi_attribute,
-            backend_imports=backend_imports,
-            backend_overrides=backend_overrides,
-        ))
+        handler_path.write_text(
+            render(
+                "aws/handler_wsgi.py",
+                source_module=source_module,
+                app_var=app_var,
+                wsgi_attribute=wsgi_attribute,
+                backend_imports=backend_imports,
+                backend_overrides=backend_overrides,
+            )
+        )
     else:
-        handler_path.write_text(render(
-            "aws/handler.py",
-            app_name=app.name,
-            source_module=source_module,
-            app_var=app_var,
-            backend_imports=backend_imports,
-            backend_overrides=backend_overrides,
-        ))
+        handler_path.write_text(
+            render(
+                "aws/handler.py",
+                app_name=app.name,
+                source_module=source_module,
+                app_var=app_var,
+                backend_imports=backend_imports,
+                backend_overrides=backend_overrides,
+            )
+        )
     generated.append(handler_path)
 
     # ── pyproject.toml ────────────────────────────────────────────────────────

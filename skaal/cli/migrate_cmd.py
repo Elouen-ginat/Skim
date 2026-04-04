@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
 
 import typer
 
@@ -21,9 +20,7 @@ def start(
     from_backend: str = typer.Option(
         ..., "--from", help="Source backend name, e.g. 'elasticache-redis'."
     ),
-    to_backend: str = typer.Option(
-        ..., "--to", help="Target backend name, e.g. 'dynamodb'."
-    ),
+    to_backend: str = typer.Option(..., "--to", help="Target backend name, e.g. 'dynamodb'."),
 ) -> None:
     """Start a new migration for a storage variable."""
     app_name = get_app_name()
@@ -39,7 +36,7 @@ def start(
         )
         raise typer.Exit(1)
 
-    state = engine.start(from_backend, to_backend)
+    engine.start(from_backend, to_backend)
     typer.echo(
         f"Migration started: {variable}  {from_backend} → {to_backend}\n"
         f"Stage: 1 ({STAGE_NAMES[1]})"
@@ -131,7 +128,6 @@ def rollback(
 @app.command("list")
 def list_migrations() -> None:
     """List all pending and in-progress migrations."""
-    app_name = get_app_name()
     # List migrations across all apps under .skaal/migrations/
     base_dir = Path(".skaal/migrations")
     if not base_dir.exists():
@@ -142,7 +138,6 @@ def list_migrations() -> None:
     for app_dir in sorted(base_dir.iterdir()):
         if not app_dir.is_dir():
             continue
-        engine = MigrationEngine(app_dir.name, "__probe__")
         # Use list_all on a representative engine
         import json as _json
 

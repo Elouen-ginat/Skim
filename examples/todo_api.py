@@ -33,8 +33,8 @@ from pydantic import BaseModel, Field
 
 from skaal import App, Map
 
-
 # ── Domain models ──────────────────────────────────────────────────────────────
+
 
 class Attachment(BaseModel):
     url: str
@@ -47,10 +47,8 @@ class Todo(BaseModel):
     title: str
     done: bool = False
     tags: list[str] = []
-    attachments: list[Attachment] = []   # nested model inside a list
-    created_at: str = Field(
-        default_factory=lambda: datetime.now(timezone.utc).isoformat()
-    )
+    attachments: list[Attachment] = []  # nested model inside a list
+    created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     completed_at: str | None = None
 
 
@@ -76,6 +74,7 @@ class Todos(Map[str, Todo]):
 
 
 # ── Functions ──────────────────────────────────────────────────────────────────
+
 
 @app.function()
 async def create_todo(
@@ -117,7 +116,9 @@ async def complete_todo(id: str) -> dict:
 
 
 @app.function()
-async def add_attachment(id: str, url: str, name: str, mime_type: str = "application/octet-stream") -> dict:
+async def add_attachment(
+    id: str, url: str, name: str, mime_type: str = "application/octet-stream"
+) -> dict:
     """Attach a file to a todo. Demonstrates nested model mutation."""
     todo = await Todos.get(id)
     if todo is None:

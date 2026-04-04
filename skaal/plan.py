@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-import json
 import hashlib
-from dataclasses import dataclass, field, asdict
+import json
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -45,9 +45,9 @@ class ComponentSpec:
     """Serializable spec for a provisioned or external component."""
 
     component_name: str
-    kind: str               # "proxy" | "api-gateway" | "external-storage" | ...
+    kind: str  # "proxy" | "api-gateway" | "external-storage" | ...
     implementation: str | None  # e.g. "traefik", "kong"; None if solver selects
-    provisioned: bool       # False for ExternalComponent subclasses
+    provisioned: bool  # False for ExternalComponent subclasses
     connection_env: str | None  # env var carrying the DSN (external only)
     config: dict[str, Any] = field(default_factory=dict)
     reason: str = ""

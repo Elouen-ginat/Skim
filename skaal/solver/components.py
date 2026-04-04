@@ -51,6 +51,7 @@ def _select_gateway_impl(component: Any, target: str) -> str:
 
 # ── Main entry point ──────────────────────────────────────────────────────────
 
+
 def encode_component(
     name: str,
     component: "ComponentBase",
@@ -77,7 +78,7 @@ def encode_component(
     Returns:
         A resolved :class:`~skaal.plan.ComponentSpec`.
     """
-    from skaal.components import ExternalComponent, ProvisionedComponent
+    from skaal.components import ExternalComponent
     from skaal.plan import ComponentSpec
 
     kind = component._skim_component_kind

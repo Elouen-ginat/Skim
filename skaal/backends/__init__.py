@@ -14,15 +14,19 @@ def __getattr__(name: str) -> object:
     """Lazy import for optional backends that require extra dependencies."""
     if name == "RedisBackend":
         from skaal.backends.redis_backend import RedisBackend
+
         return RedisBackend
     if name == "DynamoBackend":
         from skaal.backends.dynamodb_backend import DynamoBackend
+
         return DynamoBackend
     if name == "SqliteBackend":
         from skaal.backends.sqlite_backend import SqliteBackend
+
         return SqliteBackend
     if name == "PostgresBackend":
         from skaal.backends.postgres_backend import PostgresBackend
+
         return PostgresBackend
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 

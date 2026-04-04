@@ -42,9 +42,7 @@ class Agent(metaclass=AgentMeta):
         super().__init_subclass__(**kwargs)
         # Collect fields annotated as persistent via class variable __persistent__
         cls.__skim_persistent_fields__ = frozenset(
-            name
-            for name, annotation in cls.__annotations__.items()
-            if not name.startswith("_")
+            name for name, annotation in cls.__annotations__.items() if not name.startswith("_")
         )
 
     @classmethod
@@ -65,7 +63,7 @@ def agent(*, persistent: bool = True) -> Any:
         if not issubclass(cls, Agent):
             # Dynamically make it inherit from Agent
             cls = AgentMeta(cls.__name__, (Agent,), dict(cls.__dict__))
-        cls.__skim_agent__ = {"persistent": persistent}
+        cls.__skim_agent__ = {"persistent": persistent}  # type: ignore[attr-defined]
         return cls
 
     return decorator

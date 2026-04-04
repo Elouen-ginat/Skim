@@ -18,7 +18,6 @@ from typing import Any, ClassVar
 
 from skaal.types import AccessPattern, Durability, Latency, RateLimitPolicy, Throughput
 
-
 # ── Base classes ──────────────────────────────────────────────────────────
 
 
@@ -87,12 +86,14 @@ class ExternalComponent(ComponentBase):
         self.connection_env = connection_env
         self.latency = Latency(latency) if isinstance(latency, str) else latency
         self.region = region
-        self.__skim_component__.update({
-            "external": True,
-            "connection_env": connection_env,
-            "latency_ms": self.latency.ms if self.latency else None,
-            "region": region,
-        })
+        self.__skim_component__.update(
+            {
+                "external": True,
+                "connection_env": connection_env,
+                "latency_ms": self.latency.ms if self.latency else None,
+                "region": region,
+            }
+        )
 
 
 # ── Provisioned components ────────────────────────────────────────────────
@@ -110,19 +111,19 @@ class Route:
     """
 
     path: str
-    target: str                              # @app.function name or external URL
+    target: str  # @app.function name or external URL
     methods: list[str] = field(default_factory=lambda: ["GET", "POST"])
     strip_prefix: bool = False
     timeout_ms: int | None = None
-    rewrite: str | None = None               # path rewrite template
+    rewrite: str | None = None  # path rewrite template
 
 
 @dataclass
 class AuthConfig:
     """Authentication / authorisation configuration for an ``APIGateway``."""
 
-    provider: str                            # "jwt" | "oauth2" | "api-key" | "mtls"
-    issuer: str | None = None                # token issuer URL (JWT / OAuth2)
+    provider: str  # "jwt" | "oauth2" | "api-key" | "mtls"
+    issuer: str | None = None  # token issuer URL (JWT / OAuth2)
     audience: str | None = None
     header: str = "Authorization"
     required: bool = True
@@ -170,14 +171,17 @@ class Proxy(ProvisionedComponent):
         self.throughput = Throughput(throughput) if isinstance(throughput, str) else throughput
         self.health_check_path = health_check_path
         self.implementation = implementation
-        self.__skim_component__.update({
-            "tls": tls,
-            "routes": [{"path": r.path, "target": r.target,
-                         "methods": r.methods} for r in routes],
-            "latency_ms": self.latency.ms if self.latency else None,
-            "health_check_path": health_check_path,
-            "implementation": implementation,
-        })
+        self.__skim_component__.update(
+            {
+                "tls": tls,
+                "routes": [
+                    {"path": r.path, "target": r.target, "methods": r.methods} for r in routes
+                ],
+                "latency_ms": self.latency.ms if self.latency else None,
+                "health_check_path": health_check_path,
+                "implementation": implementation,
+            }
+        )
 
 
 class APIGateway(ProvisionedComponent):
@@ -221,13 +225,16 @@ class APIGateway(ProvisionedComponent):
         self.throughput = Throughput(throughput) if isinstance(throughput, str) else throughput
         self.cors_origins = cors_origins
         self.implementation = implementation
-        self.__skim_component__.update({
-            "routes": [{"path": r.path, "target": r.target,
-                         "methods": r.methods} for r in routes],
-            "auth": {"provider": auth.provider} if auth else None,
-            "cors_origins": cors_origins,
-            "implementation": implementation,
-        })
+        self.__skim_component__.update(
+            {
+                "routes": [
+                    {"path": r.path, "target": r.target, "methods": r.methods} for r in routes
+                ],
+                "auth": {"provider": auth.provider} if auth else None,
+                "cors_origins": cors_origins,
+                "implementation": implementation,
+            }
+        )
 
 
 # ── External components ───────────────────────────────────────────────────
@@ -275,13 +282,13 @@ class ExternalStorage(ExternalComponent):
         self.access_pattern = (
             AccessPattern(access_pattern) if isinstance(access_pattern, str) else access_pattern
         )
-        self.durability = (
-            Durability(durability) if isinstance(durability, str) else durability
+        self.durability = Durability(durability) if isinstance(durability, str) else durability
+        self.__skim_component__.update(
+            {
+                "access_pattern": self.access_pattern,
+                "durability": self.durability,
+            }
         )
-        self.__skim_component__.update({
-            "access_pattern": self.access_pattern,
-            "durability": self.durability,
-        })
 
 
 class ExternalQueue(ExternalComponent):
@@ -315,12 +322,12 @@ class ExternalQueue(ExternalComponent):
             connection_env=connection_env,
             region=region,
         )
-        self.throughput = (
-            Throughput(throughput) if isinstance(throughput, str) else throughput
+        self.throughput = Throughput(throughput) if isinstance(throughput, str) else throughput
+        self.__skim_component__.update(
+            {
+                "throughput": str(self.throughput) if self.throughput else None,
+            }
         )
-        self.__skim_component__.update({
-            "throughput": str(self.throughput) if self.throughput else None,
-        })
 
 
 class ExternalObservability(ExternalComponent):
@@ -344,7 +351,7 @@ class ExternalObservability(ExternalComponent):
     def __init__(
         self,
         name: str,
-        provider: str,                # "prometheus" | "grafana" | "datadog" | "otel"
+        provider: str,  # "prometheus" | "grafana" | "datadog" | "otel"
         *,
         endpoint: str | None = None,
         endpoint_env: str | None = None,

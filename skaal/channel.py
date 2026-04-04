@@ -38,7 +38,7 @@ class Channel(Generic[T]):
         """Receive items from the channel. Stub — requires runtime mesh."""
         raise NotImplementedError("Channel.receive() requires the Skaal runtime.")
         # make mypy happy — this is an async generator stub
-        yield  # type: ignore[misc]
+        yield
 
     def __repr__(self) -> str:
         return f"Channel(buffer={self.buffer}, backend={self._backend!r})"

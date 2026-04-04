@@ -49,20 +49,20 @@ def explain_plan(plan: "PlanFile", *, rich: bool = False) -> str:
     # Compute decisions
     if plan.compute:
         lines.append(h("Compute"))
-        for qname, spec in sorted(plan.compute.items()):
-            lines.append(f"  {qname}  →  {spec.instance_type}  (×{spec.instances})")
-            if spec.reason:
-                lines.append(dim(f"    {spec.reason}"))
+        for qname, cspec in sorted(plan.compute.items()):
+            lines.append(f"  {qname}  →  {cspec.instance_type}  (×{cspec.instances})")
+            if cspec.reason:
+                lines.append(dim(f"    {cspec.reason}"))
         lines.append("")
 
     # Components
     if plan.components:
         lines.append(h("Components"))
-        for qname, spec in sorted(plan.components.items()):
-            impl = spec.implementation or "(auto)"
-            lines.append(f"  {qname}  [{spec.kind}]  →  {impl}")
-            if spec.reason:
-                lines.append(dim(f"    {spec.reason}"))
+        for qname, compspec in sorted(plan.components.items()):
+            impl = compspec.implementation or "(auto)"
+            lines.append(f"  {qname}  [{compspec.kind}]  →  {impl}")
+            if compspec.reason:
+                lines.append(dim(f"    {compspec.reason}"))
         lines.append("")
 
     return "\n".join(lines).rstrip()

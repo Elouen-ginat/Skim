@@ -82,6 +82,7 @@ def plan_diff(
 
 # ── Internal helpers ──────────────────────────────────────────────────────────
 
+
 def _attach_migration_metadata(new: PlanFile, old: PlanFile) -> None:
     """Mutate *new* in-place: set ``previous_backend`` / ``migration_stage`` fields."""
     for qname, spec in new.storage.items():

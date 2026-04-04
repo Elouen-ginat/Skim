@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import Any
+from typing import Any, List
 
 
 class FirestoreBackend:
@@ -87,16 +87,12 @@ class FirestoreBackend:
 
         return await self._run(_list)
 
-    async def scan(self, prefix: str = "") -> list[tuple[str, Any]]:
+    async def scan(self, prefix: str = "") -> List[tuple[str, Any]]:
         def _scan() -> list[tuple[str, Any]]:
             items: list[tuple[str, Any]] = []
             if prefix:
                 # Firestore range query: key >= prefix AND key < prefix + '\uffff'
-                query = (
-                    self._col()
-                    .where("pk", ">=", prefix)
-                    .where("pk", "<", prefix + "\uffff")
-                )
+                query = self._col().where("pk", ">=", prefix).where("pk", "<", prefix + "\uffff")
                 docs = query.stream()
             else:
                 docs = self._col().stream()

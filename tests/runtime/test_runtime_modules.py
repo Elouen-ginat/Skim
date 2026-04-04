@@ -10,8 +10,8 @@ from skaal.runtime.agent_registry import AgentRegistry, AgentStatus
 from skaal.runtime.channels import LocalChannel
 from skaal.runtime.state import InMemoryStateStore
 
-
 # ── InMemoryStateStore ────────────────────────────────────────────────────────
+
 
 @pytest.mark.asyncio
 async def test_state_store_get_missing():
@@ -61,6 +61,7 @@ async def test_state_store_overwrite():
 
 
 # ── LocalChannel ─────────────────────────────────────────────────────────────
+
 
 @pytest.mark.asyncio
 async def test_channel_publish_subscribe():
@@ -130,6 +131,7 @@ async def test_channel_subscriber_cleanup():
 
 
 # ── AgentRegistry ─────────────────────────────────────────────────────────────
+
 
 @pytest.mark.asyncio
 async def test_agent_registry_register():

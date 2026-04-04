@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, List
 
 
 class PostgresBackend:
@@ -37,7 +37,7 @@ class PostgresBackend:
         self.namespace = namespace
         self.min_size = min_size
         self.max_size = max_size
-        self._pool = None  # asyncpg pool, lazy-created
+        self._pool: Any = None  # asyncpg pool, lazy-created
 
     async def connect(self) -> None:
         """Create the asyncpg connection pool and ensure table exists."""
@@ -117,7 +117,7 @@ class PostgresBackend:
             result.append((row["key"], val))
         return result
 
-    async def scan(self, prefix: str = "") -> list[tuple[str, Any]]:
+    async def scan(self, prefix: str = "") -> List[tuple[str, Any]]:
         await self._ensure_connected()
         async with self._pool.acquire() as conn:
             rows = await conn.fetch(

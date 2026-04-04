@@ -1,6 +1,6 @@
 # ADR 005 — Local Runtime Design
 
-**Status:** Accepted  
+**Status:** Accepted
 **Date:** 2024-01-01
 
 ## Context

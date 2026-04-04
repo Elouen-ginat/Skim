@@ -8,8 +8,8 @@ from pydantic import BaseModel
 from skaal.backends.local_backend import LocalMap, _deserialize, _serialize, patch_storage_class
 from skaal.storage import Collection, Map, _primary_key_field, _schema_hints
 
-
 # ── Domain models for tests ────────────────────────────────────────────────────
+
 
 class Address(BaseModel):
     street: str
@@ -32,9 +32,11 @@ class Product(BaseModel):
 
 # ── Map[K, V] type extraction ──────────────────────────────────────────────────
 
+
 def test_map_extracts_value_type():
     class UserStore(Map[str, User]):
         pass
+
     assert UserStore.__skaal_value_type__ is User
     assert UserStore.__skaal_key_type__ is str
 
@@ -42,8 +44,10 @@ def test_map_extracts_value_type():
 def test_map_nested_subclass_inherits():
     class Base(Map[str, User]):
         pass
+
     class Sub(Base):
         pass
+
     # Sub doesn't re-declare, inherits from Base
     assert Sub.__skaal_value_type__ is User
 
@@ -51,20 +55,24 @@ def test_map_nested_subclass_inherits():
 def test_map_primitive_value_type():
     class Counts(Map[str, int]):
         pass
+
     assert Counts.__skaal_value_type__ is int
 
 
 # ── Collection[T] type and key extraction ─────────────────────────────────────
 
+
 def test_collection_extracts_value_type():
     class Products(Collection[Product]):
         pass
+
     assert Products.__skaal_value_type__ is Product
 
 
 def test_collection_infers_key_field_from_id():
     class Users(Collection[User]):
         pass
+
     assert Users.__skaal_key_field__ == "id"
 
 
@@ -75,16 +83,19 @@ def test_collection_infers_key_field_first_when_no_id():
 
     class Things(Collection[NoIdModel]):
         pass
+
     assert Things.__skaal_key_field__ == "sku"
 
 
 def test_collection_respects_explicit_key_field():
     class ProductStore(Collection[Product]):
         __skaal_key_field__ = "sku"
+
     assert ProductStore.__skaal_key_field__ == "sku"
 
 
 # ── _primary_key_field helper ──────────────────────────────────────────────────
+
 
 def test_primary_key_field_id():
     assert _primary_key_field(User) == "id"
@@ -94,31 +105,36 @@ def test_primary_key_field_first_fallback():
     class Thing(BaseModel):
         code: str
         label: str
+
     assert _primary_key_field(Thing) == "code"
 
 
 # ── _schema_hints ──────────────────────────────────────────────────────────────
 
+
 def test_schema_hints_empty_for_plain_class():
     class Plain:
         pass
+
     assert _schema_hints(Plain) == {}
 
 
 def test_schema_hints_for_map_with_nested_model():
     class UserStore(Map[str, User]):
         pass
+
     hints = _schema_hints(UserStore)
     assert hints["model"] == "User"
-    assert hints["field_count"] == 4     # id, name, address, scores
-    assert hints["nested_models"] == 1   # Address
-    assert hints["list_fields"] == 1     # scores
+    assert hints["field_count"] == 4  # id, name, address, scores
+    assert hints["nested_models"] == 1  # Address
+    assert hints["list_fields"] == 1  # scores
     assert hints["prefers_sql"] is True  # has nested model
 
 
 def test_schema_hints_flat_model():
     class PStore(Map[str, Product]):
         pass
+
     hints = _schema_hints(PStore)
     assert hints["nested_models"] == 0
     assert hints["list_fields"] == 0
@@ -126,6 +142,7 @@ def test_schema_hints_flat_model():
 
 
 # ── _serialize / _deserialize ──────────────────────────────────────────────────
+
 
 def test_serialize_pydantic_model():
     user = User(id="u1", name="Alice", address=Address(street="1 Main", city="NYC"))
@@ -171,7 +188,6 @@ def test_deserialize_no_type_passthrough():
 
 
 def test_deserialize_json_string():
-    import json
     user = User(id="u1", name="Eve", address=Address(street="5 Maple", city="CHI"))
     json_str = user.model_dump_json()
     result = _deserialize(json_str, User)
@@ -181,10 +197,12 @@ def test_deserialize_json_string():
 
 # ── patch_storage_class with Map ───────────────────────────────────────────────
 
+
 @pytest.mark.asyncio
 async def test_map_get_set_returns_model():
     class UserStore(Map[str, User]):
         pass
+
     patch_storage_class(UserStore, LocalMap())
 
     user = User(id="u1", name="Frank", address=Address(street="6 Birch", city="PDX"))
@@ -201,12 +219,12 @@ async def test_map_get_set_returns_model():
 async def test_map_accepts_dict_on_set():
     class UserStore(Map[str, User]):
         pass
+
     patch_storage_class(UserStore, LocalMap())
 
-    await UserStore.set("u2", {
-        "id": "u2", "name": "Grace",
-        "address": {"street": "7 Cedar", "city": "SEA"}
-    })
+    await UserStore.set(
+        "u2", {"id": "u2", "name": "Grace", "address": {"street": "7 Cedar", "city": "SEA"}}
+    )
     result = await UserStore.get("u2")
     assert isinstance(result, User)
     assert result.address.country == "US"  # default applied
@@ -216,13 +234,13 @@ async def test_map_accepts_dict_on_set():
 async def test_map_list_returns_models():
     class UserStore(Map[str, User]):
         pass
+
     patch_storage_class(UserStore, LocalMap())
 
     for i, name in enumerate(["Alice", "Bob", "Carol"]):
-        await UserStore.set(f"u{i}", User(
-            id=f"u{i}", name=name,
-            address=Address(street=f"{i} St", city="NYC")
-        ))
+        await UserStore.set(
+            f"u{i}", User(id=f"u{i}", name=name, address=Address(street=f"{i} St", city="NYC"))
+        )
 
     entries = await UserStore.list()
     assert len(entries) == 3
@@ -233,10 +251,12 @@ async def test_map_list_returns_models():
 async def test_map_nested_model_roundtrip():
     class UserStore(Map[str, User]):
         pass
+
     patch_storage_class(UserStore, LocalMap())
 
     user = User(
-        id="u1", name="Heidi",
+        id="u1",
+        name="Heidi",
         address=Address(street="8 Walnut", city="Austin", country="US"),
         scores=[1.5, 2.7, 3.9],
     )
@@ -249,10 +269,12 @@ async def test_map_nested_model_roundtrip():
 
 # ── patch_storage_class with Collection ───────────────────────────────────────
 
+
 @pytest.mark.asyncio
 async def test_collection_add_and_get():
     class UserCol(Collection[User]):
         pass
+
     patch_storage_class(UserCol, LocalMap())
 
     user = User(id="u1", name="Ivan", address=Address(street="9 Elm", city="DEN"))
@@ -267,13 +289,13 @@ async def test_collection_add_and_get():
 async def test_collection_all():
     class UserCol(Collection[User]):
         pass
+
     patch_storage_class(UserCol, LocalMap())
 
     for i in range(3):
-        await UserCol.add(User(
-            id=f"u{i}", name=f"User{i}",
-            address=Address(street=f"{i} Rd", city="NYC")
-        ))
+        await UserCol.add(
+            User(id=f"u{i}", name=f"User{i}", address=Address(street=f"{i} Rd", city="NYC"))
+        )
 
     results = await UserCol.all()
     assert len(results) == 3
@@ -284,6 +306,7 @@ async def test_collection_all():
 async def test_collection_remove():
     class UserCol(Collection[User]):
         pass
+
     patch_storage_class(UserCol, LocalMap())
 
     user = User(id="u1", name="Judy", address=Address(street="1 Ave", city="MIA"))
@@ -296,6 +319,7 @@ async def test_collection_remove():
 async def test_collection_update():
     class UserCol(Collection[User]):
         pass
+
     patch_storage_class(UserCol, LocalMap())
 
     user = User(id="u1", name="Karl", address=Address(street="2 Ave", city="MIA"))
@@ -312,13 +336,11 @@ async def test_collection_update():
 async def test_collection_find_by_prefix():
     class UserCol(Collection[User]):
         pass
+
     patch_storage_class(UserCol, LocalMap())
 
     for prefix, name in [("admin_u1", "Admin1"), ("user_u2", "User2"), ("admin_u3", "Admin3")]:
-        await UserCol.add(User(
-            id=prefix, name=name,
-            address=Address(street="X St", city="NYC")
-        ))
+        await UserCol.add(User(id=prefix, name=name, address=Address(street="X St", city="NYC")))
 
     admins = await UserCol.find("admin_")
     assert len(admins) == 2
@@ -327,10 +349,12 @@ async def test_collection_find_by_prefix():
 
 # ── Backward compat: plain class stays raw ────────────────────────────────────
 
+
 @pytest.mark.asyncio
 async def test_plain_class_raw_storage():
     class Counts:
         pass
+
     patch_storage_class(Counts, LocalMap())
 
     await Counts.set("hits", 42)
@@ -343,13 +367,14 @@ async def test_plain_class_raw_storage():
 
 # ── todo_api.py integration ────────────────────────────────────────────────────
 
+
 @pytest.mark.asyncio
 async def test_todo_api_end_to_end():
     """Full integration test of examples/todo_api.py with typed Map storage."""
-    from skaal.runtime.local import LocalRuntime
     import json
 
     from examples.todo_api import app as todo_app
+    from skaal.runtime.local import LocalRuntime
 
     runtime = LocalRuntime(todo_app)
 
@@ -367,7 +392,9 @@ async def test_todo_api_end_to_end():
     assert data["title"] == "Test todo"
 
     # Add attachment (nested model mutation)
-    body = json.dumps({"id": "t1", "url": "https://example.com/file.pdf", "name": "spec.pdf"}).encode()
+    body = json.dumps(
+        {"id": "t1", "url": "https://example.com/file.pdf", "name": "spec.pdf"}
+    ).encode()
     data, status = await runtime._dispatch("POST", "/add_attachment", body)
     assert status == 200
     assert len(data["attachments"]) == 1

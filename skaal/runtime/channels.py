@@ -18,7 +18,7 @@ class Channel:
     async def publish(self, topic: str, message: Any) -> None:
         raise NotImplementedError
 
-    async def subscribe(self, topic: str) -> "AsyncIterator[Any]":
+    def subscribe(self, topic: str) -> "AsyncIterator[Any]":
         raise NotImplementedError
 
 

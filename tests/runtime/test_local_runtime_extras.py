@@ -33,6 +33,7 @@ def counter_app() -> App:
 def test_runtime_default_in_memory(counter_app):
     """Default LocalRuntime uses in-memory LocalMap."""
     from skaal.backends.local_backend import LocalMap
+
     rt = LocalRuntime(counter_app)
     backends = list(rt._backends.values())
     assert all(isinstance(b, LocalMap) for b in backends)
@@ -41,6 +42,7 @@ def test_runtime_default_in_memory(counter_app):
 def test_runtime_from_sqlite(counter_app, tmp_path):
     """from_sqlite creates a runtime with SqliteBackend instances."""
     from skaal.backends.sqlite_backend import SqliteBackend
+
     db = tmp_path / "test.db"
     rt = LocalRuntime.from_sqlite(counter_app, db_path=str(db))
     backends = list(rt._backends.values())
@@ -71,6 +73,7 @@ async def test_runtime_dispatch_get(counter_app):
 async def test_runtime_dispatch_increment(counter_app):
     """POST /increment increments the counter."""
     import json
+
     rt = LocalRuntime(counter_app)
     body = json.dumps({"name": "hits"}).encode()
     result, status = await rt._dispatch("POST", "/increment", body)
@@ -109,6 +112,7 @@ async def test_runtime_dispatch_bad_method(counter_app):
 def test_from_postgres_creates_backends(counter_app):
     """from_postgres() creates PostgresBackend instances (lazy connect)."""
     from skaal.backends.postgres_backend import PostgresBackend
+
     rt = LocalRuntime.from_postgres(counter_app, dsn="postgresql://user:pass@localhost/test")
     backends = list(rt._backends.values())
     assert all(isinstance(b, PostgresBackend) for b in backends)

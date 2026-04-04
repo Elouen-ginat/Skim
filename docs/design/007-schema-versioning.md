@@ -1,6 +1,6 @@
 # ADR 007 — Schema Versioning and Migrations
 
-**Status:** Accepted  
+**Status:** Accepted
 **Date:** 2024-01-01
 
 ## Context

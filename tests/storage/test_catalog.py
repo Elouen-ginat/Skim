@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import tomllib
 from pathlib import Path
 
 import pytest
@@ -12,12 +11,12 @@ from skaal.catalog.models import (
     Catalog,
     ComputeBackendSpec,
     LatencyRange,
-    NetworkSpec,
     StorageBackendSpec,
 )
 from skaal.catalog.registry import BackendRegistry
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
 
 def _minimal_raw() -> dict:
     return {
@@ -59,6 +58,7 @@ def _minimal_raw() -> dict:
 
 
 # ── Model tests ───────────────────────────────────────────────────────────────
+
 
 def test_latency_range_model():
     lr = LatencyRange(min=0.1, max=5.0, unit="ms")
@@ -102,6 +102,7 @@ def test_catalog_from_raw_empty_sections():
 
 # ── Loader tests ──────────────────────────────────────────────────────────────
 
+
 def test_load_catalog_explicit_path():
     """load_catalog() with explicit path returns a raw dict."""
     p = Path(__file__).parent.parent.parent / "catalogs" / "aws.toml"
@@ -118,13 +119,12 @@ def test_load_catalog_missing_path():
 
 def test_load_typed_catalog(tmp_path):
     """load_typed_catalog() returns a Catalog object."""
-    raw = _minimal_raw()
     # write a minimal TOML
     lines = [
         "[storage.fast-redis]",
         'display_name = "Fast Redis"',
-        "read_latency = { min = 0.1, max = 2.0, unit = \"ms\" }",
-        "write_latency = { min = 0.1, max = 5.0, unit = \"ms\" }",
+        'read_latency = { min = 0.1, max = 2.0, unit = "ms" }',
+        'write_latency = { min = 0.1, max = 5.0, unit = "ms" }',
         'durability = ["ephemeral", "persistent"]',
         'access_patterns = ["random-read"]',
         "cost_per_gb_month = 3.5",
@@ -138,6 +138,7 @@ def test_load_typed_catalog(tmp_path):
 
 
 # ── Registry tests ────────────────────────────────────────────────────────────
+
 
 @pytest.fixture
 def registry() -> BackendRegistry:

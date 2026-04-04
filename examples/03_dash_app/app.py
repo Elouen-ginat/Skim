@@ -29,12 +29,16 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timezone
+
+import dash
+import dash_bootstrap_components as dbc  # type: ignore[import]
+from dash import Input, Output, State, callback, dcc, html
 from pydantic import BaseModel
 
 from skaal import App, Map
 
-
 # ── Domain model ──────────────────────────────────────────────────────────────
+
 
 class UserState(BaseModel):
     session_id: str
@@ -50,8 +54,8 @@ skaal_app = App("dash-demo")
 
 @skaal_app.storage(
     read_latency="< 5ms",
-    durability="ephemeral",      # session data; Redis/Memorystore preferred
-    retention="30m",             # expire inactive sessions after 30 minutes
+    durability="ephemeral",  # session data; Redis/Memorystore preferred
+    retention="30m",  # expire inactive sessions after 30 minutes
     access_pattern="random-read",
 )
 class Sessions(Map[str, UserState]):
@@ -60,27 +64,24 @@ class Sessions(Map[str, UserState]):
 
 # ── Dash layout and callbacks ─────────────────────────────────────────────────
 
-import dash
-from dash import dcc, html, callback, Input, Output, State
-import dash_bootstrap_components as dbc  # type: ignore[import]
-
 dash_app = dash.Dash(
     __name__,
     external_stylesheets=[dbc.themes.BOOTSTRAP],
     suppress_callback_exceptions=True,
 )
 
-dash_app.layout = html.Div([
-    # Session ID lives in the browser — stateless server side
-    dcc.Store(id="session-id", storage_type="session"),
-    dcc.Interval(id="init", interval=1, n_intervals=0, max_intervals=1),
+dash_app.layout = html.Div(
+    [
+        # Session ID lives in the browser — stateless server side
+        dcc.Store(id="session-id", storage_type="session"),
+        dcc.Interval(id="init", interval=1, n_intervals=0, max_intervals=1),
+        html.H2("Skaal + Dash Demo"),
+        html.P("Server-side state per user. Scalable across multiple instances."),
+        html.Button("Click me!", id="click-btn", n_clicks=0),
+        html.Div(id="output"),
+    ]
+)
 
-    html.H2("Skaal + Dash Demo"),
-    html.P("Server-side state per user. Scalable across multiple instances."),
-
-    html.Button("Click me!", id="click-btn", n_clicks=0),
-    html.Div(id="output"),
-])
 
 @callback(
     Output("session-id", "data"),
@@ -95,6 +96,7 @@ def init_session(_, existing_id):
     # sync_set is safe in Dash callbacks — no event loop conflict
     Sessions.sync_set(session_id, UserState(session_id=session_id))
     return session_id
+
 
 @callback(
     Output("output", "children"),
@@ -116,7 +118,6 @@ def handle_click(n_clicks, session_id):
     return f"Clicks: {state.click_count} — last at {state.last_clicked}"
 
 
-
 # ── Tell Skaal which WSGI app to serve ────────────────────────────────────────
 
 # dash_app.server is the Flask app behind the Dash frontend.
@@ -135,6 +136,7 @@ skaal_app.mount_wsgi(
 
 if __name__ == "__main__":
     import asyncio
+
     from skaal.runtime.local import LocalRuntime
 
     if dash_app is None:

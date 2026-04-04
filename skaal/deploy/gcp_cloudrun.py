@@ -7,13 +7,12 @@ from typing import TYPE_CHECKING, Any
 
 from skaal.deploy._deps import collect_user_packages
 from skaal.deploy._render import render, to_pulumi_yaml, to_pyproject_toml
-from skaal.deploy.push import write_meta
 from skaal.deploy.config import (
     CloudRunDeployConfig,
     CloudSQLDeployConfig,
     MemorystoreRedisDeployConfig,
-    storage_deploy_config,
 )
+from skaal.deploy.push import write_meta
 
 if TYPE_CHECKING:
     from skaal.plan import PlanFile
@@ -59,6 +58,7 @@ def _constructor(backend_name: str, class_name: str, env_var: str) -> str:
 
 # ── Wiring helpers (backend_imports / backend_overrides for entry-point template)
 
+
 def _build_wiring(plan: "PlanFile") -> tuple[str, str]:
     """
     Return ``(backend_imports, backend_overrides)`` template variables.
@@ -88,9 +88,8 @@ def _build_wiring(plan: "PlanFile") -> tuple[str, str]:
 
 # ── Pulumi YAML stack builder ─────────────────────────────────────────────────
 
-def _build_pulumi_stack(
-    app: Any, plan: "PlanFile", region: str
-) -> dict[str, Any]:
+
+def _build_pulumi_stack(app: Any, plan: "PlanFile", region: str) -> dict[str, Any]:
     """
     Return the Pulumi stack as a plain Python dict.
 
@@ -152,7 +151,6 @@ def _build_pulumi_stack(
     for qname, spec in plan.storage.items():
         class_name = qname.split(".")[-1]
         env_var = _env_var(spec.backend, class_name)
-        d = spec.deploy_params
 
         if spec.backend == "firestore":
             collection = f"{app.name}-{class_name.lower()}"
@@ -200,10 +198,12 @@ def _build_pulumi_stack(
                     "redisVersion": redis_cfg.redis_version,
                 },
             }
-            container_envs.append({
-                "name": env_var,
-                "value": f"redis://${{{resource_key}.host}}:6379",
-            })
+            container_envs.append(
+                {
+                    "name": env_var,
+                    "value": f"redis://${{{resource_key}.host}}:6379",
+                }
+            )
 
     # ── VPC connector (required by Cloud SQL and Memorystore) ─────────────────
     service_annotations: dict[str, str] = {}
@@ -211,7 +211,7 @@ def _build_pulumi_stack(
         resources["vpc-connector"] = {
             "type": "gcp:vpcaccess:Connector",
             "properties": {
-                "name": f"${{pulumi.stack}}-connector",
+                "name": "${pulumi.stack}-connector",
                 "region": "${gcp:region}",
                 "ipCidrRange": "10.8.0.0/28",
                 "network": "default",
@@ -223,9 +223,7 @@ def _build_pulumi_stack(
         }
 
     # ── Cloud Run service ─────────────────────────────────────────────────────
-    image = (
-        f"${{gcp:region}}-docker.pkg.dev/${{gcp:project}}/${{repo.name}}/{app.name}:latest"
-    )
+    image = f"${{gcp:region}}-docker.pkg.dev/${{gcp:project}}/${{repo.name}}/{app.name}:latest"
     scaling_annotations = {
         "autoscaling.knative.dev/minScale": "${cloudRunMinInstances}",
         "autoscaling.knative.dev/maxScale": "${cloudRunMaxInstances}",
@@ -236,16 +234,18 @@ def _build_pulumi_stack(
         "metadata": {"annotations": template_annotations},
         "spec": {
             "containerConcurrency": "${cloudRunConcurrency}",
-            "containers": [{
-                "image": image,
-                "envs": container_envs,
-                "resources": {
-                    "limits": {
-                        "memory": "${cloudRunMemory}",
-                        "cpu": "${cloudRunCpu}",
+            "containers": [
+                {
+                    "image": image,
+                    "envs": container_envs,
+                    "resources": {
+                        "limits": {
+                            "memory": "${cloudRunMemory}",
+                            "cpu": "${cloudRunCpu}",
+                        },
                     },
-                },
-            }],
+                }
+            ],
         },
     }
 
@@ -283,6 +283,7 @@ def _build_pulumi_stack(
 
 
 # ── Public entry point ─────────────────────────────────────────────────────────
+
 
 def generate_artifacts(
     app: Any,
@@ -334,23 +335,27 @@ def generate_artifacts(
     main_path = output_dir / "main.py"
     if wsgi_attribute:
         # WSGI mode: gunicorn serves the user's Flask/Dash/WSGI app
-        main_path.write_text(render(
-            "gcp/main_wsgi.py",
-            source_module=source_module,
-            app_var=app_var,
-            wsgi_attribute=wsgi_attribute,
-            backend_imports=backend_imports,
-            backend_overrides=backend_overrides,
-        ))
+        main_path.write_text(
+            render(
+                "gcp/main_wsgi.py",
+                source_module=source_module,
+                app_var=app_var,
+                wsgi_attribute=wsgi_attribute,
+                backend_imports=backend_imports,
+                backend_overrides=backend_overrides,
+            )
+        )
     else:
-        main_path.write_text(render(
-            "gcp/main.py",
-            app_name=app.name,
-            source_module=source_module,
-            app_var=app_var,
-            backend_imports=backend_imports,
-            backend_overrides=backend_overrides,
-        ))
+        main_path.write_text(
+            render(
+                "gcp/main.py",
+                app_name=app.name,
+                source_module=source_module,
+                app_var=app_var,
+                backend_imports=backend_imports,
+                backend_overrides=backend_overrides,
+            )
+        )
     generated.append(main_path)
 
     # ── Dockerfile ────────────────────────────────────────────────────────────

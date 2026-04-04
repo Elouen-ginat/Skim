@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, List
 
 from skaal.backends.base import StorageBackend
 
@@ -115,7 +115,7 @@ class ShadowBackend:
         else:
             raise ValueError(f"Invalid migration stage: {self.stage}")
 
-    async def scan(self, prefix: str = "") -> list[tuple[str, Any]]:
+    async def scan(self, prefix: str = "") -> List[tuple[str, Any]]:
         if self.stage in (1, 2):
             return await self.source.scan(prefix)
         elif self.stage == 3:
@@ -134,6 +134,5 @@ class ShadowBackend:
 
     def __repr__(self) -> str:
         return (
-            f"ShadowBackend(stage={self.stage}, "
-            f"source={self.source!r}, target={self.target!r})"
+            f"ShadowBackend(stage={self.stage}, " f"source={self.source!r}, target={self.target!r})"
         )

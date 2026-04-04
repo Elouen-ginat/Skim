@@ -23,12 +23,14 @@ import sys
 from pathlib import Path
 from typing import Any
 
+
 def _uv_or_pip() -> list[str]:
     """Return the base install command: ``uv pip install`` if uv is in PATH,
     otherwise ``python -m pip install``."""
     if shutil.which("uv") is not None:
         return ["uv", "pip", "install"]
     return [sys.executable, "-m", "pip", "install"]
+
 
 # ── Metadata helpers ──────────────────────────────────────────────────────────
 
@@ -60,7 +62,10 @@ def read_meta(artifacts_dir: Path) -> dict[str, Any]:
 
 # ── Subprocess helper ─────────────────────────────────────────────────────────
 
-def _run(cmd: list[str], cwd: Path | None = None, capture: bool = False) -> subprocess.CompletedProcess[str]:
+
+def _run(
+    cmd: list[str], cwd: Path | None = None, capture: bool = False
+) -> subprocess.CompletedProcess[str]:
     """Run a command, raising CalledProcessError on non-zero exit."""
     return subprocess.run(
         cmd,
@@ -72,6 +77,7 @@ def _run(cmd: list[str], cwd: Path | None = None, capture: bool = False) -> subp
 
 
 # ── AWS helpers ───────────────────────────────────────────────────────────────
+
 
 def _package_aws(artifacts_dir: Path, project_root: Path, source_module: str) -> None:
     """
@@ -110,6 +116,7 @@ def _package_aws(artifacts_dir: Path, project_root: Path, source_module: str) ->
 
 # ── Pulumi helpers ────────────────────────────────────────────────────────────
 
+
 def _pulumi_stack_select_or_init(artifacts_dir: Path, stack: str) -> None:
     """Select *stack* if it exists, otherwise initialise it."""
     result = subprocess.run(
@@ -144,6 +151,7 @@ def _pulumi_output(artifacts_dir: Path, output_name: str) -> str:
 
 # ── GCP helpers ───────────────────────────────────────────────────────────────
 
+
 def _build_push_image(
     artifacts_dir: Path,
     project: str,
@@ -162,6 +170,7 @@ def _build_push_image(
 
 
 # ── Public entry point ────────────────────────────────────────────────────────
+
 
 def package_and_push(
     artifacts_dir: Path,
@@ -228,10 +237,13 @@ def package_and_push(
                 "Pass --gcp-project PROJECT or set SKAAL_GCP_PROJECT."
             )
 
-        _pulumi_config_set(artifacts_dir, {
-            "gcp:project": gcp_project,
-            "gcp:region": gcp_region,
-        })
+        _pulumi_config_set(
+            artifacts_dir,
+            {
+                "gcp:project": gcp_project,
+                "gcp:region": gcp_region,
+            },
+        )
 
         # Phase 1: provision infrastructure (Artifact Registry + storage).
         print("==> Provisioning infrastructure (pulumi up) ...")

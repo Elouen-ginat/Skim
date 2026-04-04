@@ -37,8 +37,12 @@ def plan(
         "--catalog",
         help="Path to catalog TOML. Env: SKAAL_CATALOG. pyproject: tool.skaal.catalog.",
     ),
-    reoptimize: bool = typer.Option(False, "--reoptimize", help="Force re-solving all backend choices."),
-    pin: list[str] = typer.Option([], "--pin", help="Pin a variable to a backend, e.g. profiles=redis."),
+    reoptimize: bool = typer.Option(
+        False, "--reoptimize", help="Force re-solving all backend choices."
+    ),
+    pin: list[str] = typer.Option(
+        [], "--pin", help="Pin a variable to a backend, e.g. profiles=redis."
+    ),
 ) -> None:
     """
     Analyze the app's constraints via Z3 and write plan.skaal.lock.
@@ -52,9 +56,9 @@ def plan(
     """
     cfg = SkaalSettings()
 
-    resolved_app     = target_app or cfg.app
-    resolved_target  = target     or cfg.target
-    resolved_catalog = catalog    or cfg.catalog
+    resolved_app = target_app or cfg.app
+    resolved_target = target or cfg.target
+    resolved_catalog = catalog or cfg.catalog
 
     if resolved_app is None:
         typer.echo(
@@ -105,5 +109,5 @@ def plan(
 
     if plan_file.compute:
         typer.echo("\nCompute assignments:")
-        for spec in plan_file.compute.values():
-            typer.echo(f"  {spec.function_name}: {spec.instance_type}  ({spec.reason})")
+        for cspec in plan_file.compute.values():
+            typer.echo(f"  {cspec.function_name}: {cspec.instance_type}  ({cspec.reason})")

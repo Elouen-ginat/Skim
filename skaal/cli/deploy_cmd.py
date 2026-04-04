@@ -82,8 +82,8 @@ def deploy(
     """
     cfg = SkaalSettings()
 
-    resolved_stack       = stack       or cfg.stack
-    resolved_region      = region      or cfg.region
+    resolved_stack = stack or cfg.stack
+    resolved_region = region or cfg.region
     resolved_gcp_project = gcp_project or cfg.gcp_project
 
     resolved = artifacts_dir.resolve()

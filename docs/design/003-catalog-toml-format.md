@@ -1,6 +1,6 @@
 # ADR 003 — TOML Catalog Format
 
-**Status:** Accepted  
+**Status:** Accepted
 **Date:** 2024-01-01
 
 ## Context

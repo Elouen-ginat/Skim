@@ -72,9 +72,7 @@ class ResourceGraph:
                 in_degree[src] = in_degree.get(src, 0) + 1
                 successors.setdefault(dst, set()).add(src)
 
-        queue: deque[str] = deque(
-            sorted(n for n, d in in_degree.items() if d == 0)
-        )
+        queue: deque[str] = deque(sorted(n for n, d in in_degree.items() if d == 0))
         order: list[str] = []
 
         while queue:
@@ -87,9 +85,7 @@ class ResourceGraph:
 
         if len(order) != len(self._nodes):
             cycle_nodes = sorted(self._nodes - set(order))
-            raise CyclicDependencyError(
-                f"Cycle detected among resources: {cycle_nodes}"
-            )
+            raise CyclicDependencyError(f"Cycle detected among resources: {cycle_nodes}")
 
         return order
 

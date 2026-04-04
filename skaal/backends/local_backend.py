@@ -5,8 +5,7 @@ from __future__ import annotations
 import asyncio
 import concurrent.futures
 import json
-from typing import Any
-
+from typing import Any, List
 
 # ── Sync/async bridge ─────────────────────────────────────────────────────────
 
@@ -51,6 +50,7 @@ def _sync_run(coro: Any) -> Any:
 
 # ── Serialization helpers ──────────────────────────────────────────────────────
 
+
 def _serialize(value: Any, value_type: type | None) -> Any:
     """
     Convert *value* to a backend-storable form.
@@ -64,6 +64,7 @@ def _serialize(value: Any, value_type: type | None) -> Any:
         return value
     try:
         from pydantic import BaseModel
+
         if isinstance(value_type, type) and issubclass(value_type, BaseModel):
             if isinstance(value, BaseModel):
                 return value.model_dump()
@@ -89,6 +90,7 @@ def _deserialize(raw: Any, value_type: type | None) -> Any:
         return raw
     try:
         from pydantic import BaseModel
+
         if isinstance(value_type, type) and issubclass(value_type, BaseModel):
             if isinstance(raw, value_type):
                 return raw
@@ -96,6 +98,7 @@ def _deserialize(raw: Any, value_type: type | None) -> Any:
                 raw = json.loads(raw)
             if isinstance(raw, dict):
                 from skaal.types.schema import apply_migrations
+
                 return value_type.model_validate(apply_migrations(raw, value_type))
     except ImportError:
         pass
@@ -103,6 +106,7 @@ def _deserialize(raw: Any, value_type: type | None) -> Any:
 
 
 # ── LocalMap ───────────────────────────────────────────────────────────────────
+
 
 class LocalMap:
     """
@@ -129,7 +133,7 @@ class LocalMap:
     async def list(self) -> list[tuple[str, Any]]:
         return list(self._data.items())
 
-    async def scan(self, prefix: str = "") -> list[tuple[str, Any]]:
+    async def scan(self, prefix: str = "") -> List[tuple[str, Any]]:
         return [(k, v) for k, v in self._data.items() if k.startswith(prefix)]
 
     async def close(self) -> None:
@@ -143,6 +147,7 @@ class LocalMap:
 
 
 # ── patch_storage_class ────────────────────────────────────────────────────────
+
 
 def patch_storage_class(cls: type, backend: Any) -> None:
     """
@@ -212,17 +217,17 @@ def patch_storage_class(cls: type, backend: Any) -> None:
     def _sync_scan(prefix: str = "") -> list[tuple[str, Any]]:
         return _sync_run(_scan(prefix))
 
-    cls.get = staticmethod(_get)               # type: ignore[attr-defined]
-    cls.set = staticmethod(_set)               # type: ignore[attr-defined]
-    cls.delete = staticmethod(_delete)         # type: ignore[attr-defined]
-    cls.list = staticmethod(_list)             # type: ignore[attr-defined]
-    cls.scan = staticmethod(_scan)             # type: ignore[attr-defined]
-    cls.close = staticmethod(_close)           # type: ignore[attr-defined]
-    cls.sync_get = staticmethod(_sync_get)     # type: ignore[attr-defined]
-    cls.sync_set = staticmethod(_sync_set)     # type: ignore[attr-defined]
-    cls.sync_delete = staticmethod(_sync_delete) # type: ignore[attr-defined]
-    cls.sync_list = staticmethod(_sync_list)   # type: ignore[attr-defined]
-    cls.sync_scan = staticmethod(_sync_scan)   # type: ignore[attr-defined]
+    cls.get = staticmethod(_get)  # type: ignore[attr-defined]
+    cls.set = staticmethod(_set)  # type: ignore[attr-defined]
+    cls.delete = staticmethod(_delete)  # type: ignore[attr-defined]
+    cls.list = staticmethod(_list)  # type: ignore[attr-defined]
+    cls.scan = staticmethod(_scan)  # type: ignore[attr-defined]
+    cls.close = staticmethod(_close)  # type: ignore[attr-defined]
+    cls.sync_get = staticmethod(_sync_get)  # type: ignore[attr-defined]
+    cls.sync_set = staticmethod(_sync_set)  # type: ignore[attr-defined]
+    cls.sync_delete = staticmethod(_sync_delete)  # type: ignore[attr-defined]
+    cls.sync_list = staticmethod(_sync_list)  # type: ignore[attr-defined]
+    cls.sync_scan = staticmethod(_sync_scan)  # type: ignore[attr-defined]
 
     if is_collection:
         key_field: str = getattr(cls, "__skaal_key_field__", "id")
@@ -261,11 +266,11 @@ def patch_storage_class(cls: type, backend: Any) -> None:
         def _sync_find(prefix: str = "") -> list[Any]:
             return _sync_run(_find(prefix))
 
-        cls.add = staticmethod(_add)               # type: ignore[attr-defined]
-        cls.remove = staticmethod(_remove)         # type: ignore[attr-defined]
-        cls.update = staticmethod(_update)         # type: ignore[attr-defined]
-        cls.all = staticmethod(_all)               # type: ignore[attr-defined]
-        cls.find = staticmethod(_find)             # type: ignore[attr-defined]
-        cls.sync_add = staticmethod(_sync_add)     # type: ignore[attr-defined]
-        cls.sync_all = staticmethod(_sync_all)     # type: ignore[attr-defined]
-        cls.sync_find = staticmethod(_sync_find)   # type: ignore[attr-defined]
+        cls.add = staticmethod(_add)  # type: ignore[attr-defined]
+        cls.remove = staticmethod(_remove)  # type: ignore[attr-defined]
+        cls.update = staticmethod(_update)  # type: ignore[attr-defined]
+        cls.all = staticmethod(_all)  # type: ignore[attr-defined]
+        cls.find = staticmethod(_find)  # type: ignore[attr-defined]
+        cls.sync_add = staticmethod(_sync_add)  # type: ignore[attr-defined]
+        cls.sync_all = staticmethod(_sync_all)  # type: ignore[attr-defined]
+        cls.sync_find = staticmethod(_sync_find)  # type: ignore[attr-defined]

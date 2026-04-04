@@ -11,6 +11,7 @@ from skaal.types.constraints import Latency, Throughput
 
 class ComputeType(str, Enum):
     """Hardware type required by a function."""
+
     CPU = "cpu"
     GPU = "gpu"
     TPU = "tpu"
@@ -19,6 +20,7 @@ class ComputeType(str, Enum):
 
 class ScaleStrategy(str, Enum):
     """How requests are distributed across instances."""
+
     ROUND_ROBIN = "round-robin"
     PARTITION_BY_KEY = "partition-by-key"
     BROADCAST = "broadcast"
@@ -29,6 +31,7 @@ class ScaleStrategy(str, Enum):
 @dataclass
 class Scale:
     """Compute scaling parameters."""
+
     instances: int | str = "auto"
     strategy: ScaleStrategy = ScaleStrategy.ROUND_ROBIN
 
@@ -40,6 +43,7 @@ class Scale:
 @dataclass
 class RetryPolicy:
     """Retry-with-backoff and optional idempotency for a function."""
+
     max_attempts: int = 3
     backoff: Literal["fixed", "linear", "exponential"] = "exponential"
     base_delay_ms: int = 100
@@ -50,6 +54,7 @@ class RetryPolicy:
 @dataclass
 class CircuitBreaker:
     """Open the circuit after N consecutive failures; probe after recovery_timeout_ms."""
+
     failure_threshold: int = 5
     recovery_timeout_ms: int = 10_000
     fallback: str | None = None  # name of a registered @app.function
@@ -58,6 +63,7 @@ class CircuitBreaker:
 @dataclass
 class RateLimitPolicy:
     """Token-bucket rate limiting, optionally scoped per-client or per-argument."""
+
     requests_per_second: float
     burst: int = 1
     scope: str = "global"  # "global" | "per-client" | "per-key:<arg_name>"
@@ -66,6 +72,7 @@ class RateLimitPolicy:
 @dataclass
 class Bulkhead:
     """Limit concurrent calls; callers block up to max_wait_ms then fail fast."""
+
     max_concurrent_calls: int
     max_wait_ms: int = 0
 
@@ -73,10 +80,11 @@ class Bulkhead:
 @dataclass
 class Compute:
     """Full compute constraint specification attached to ``@app.function()``."""
+
     latency: Latency | str | None = None
     throughput: Throughput | str | None = None
     compute_type: ComputeType = ComputeType.CPU
-    memory: str | None = None   # e.g. "~ 2GB"
+    memory: str | None = None  # e.g. "~ 2GB"
     schedule: str = "realtime"  # "realtime" | "batch" | "streaming"
     retry: RetryPolicy | None = None
     circuit_breaker: CircuitBreaker | None = None

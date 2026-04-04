@@ -26,7 +26,7 @@ def load_catalog(path: Path | str | None = None, target: str | None = None) -> d
     Searches ``CWD/catalogs/<target>.toml`` (or catalogs/aws.toml if target is
     not given) when *path* is not given.  Raises ``FileNotFoundError`` if nothing
     is found.
-    
+
     Args:
         path: Explicit path to catalog file. If given, target is ignored.
         target: Deploy target name to search for (e.g., 'aws', 'gcp', 'aws-lambda').

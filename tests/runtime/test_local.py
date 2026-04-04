@@ -8,11 +8,11 @@ import json
 import pytest
 
 from skaal import App
-from skaal.runtime.local import LocalRuntime
 from skaal.backends.local_backend import LocalMap, patch_storage_class
-
+from skaal.runtime.local import LocalRuntime
 
 # ── Storage tests ──────────────────────────────────────────────────────────────
+
 
 @pytest.mark.asyncio
 async def test_local_map_get_set_delete():
@@ -55,15 +55,16 @@ async def test_patched_class_methods():
     backend = LocalMap()
     patch_storage_class(Cache, backend)
 
-    await Cache.set("hello", "world")   # type: ignore[attr-defined]
+    await Cache.set("hello", "world")  # type: ignore[attr-defined]
     assert await Cache.get("hello") == "world"  # type: ignore[attr-defined]
-    entries = await Cache.list()        # type: ignore[attr-defined]
+    entries = await Cache.list()  # type: ignore[attr-defined]
     assert ("hello", "world") in entries
-    await Cache.delete("hello")         # type: ignore[attr-defined]
+    await Cache.delete("hello")  # type: ignore[attr-defined]
     assert await Cache.get("hello") is None  # type: ignore[attr-defined]
 
 
 # ── Runtime + dispatch tests ───────────────────────────────────────────────────
+
 
 def _make_counter_app() -> App:
     """Build a fresh counter App instance for each test."""
@@ -176,6 +177,7 @@ async def test_runtime_method_not_allowed():
 
 # ── End-to-end: actual TCP server ─────────────────────────────────────────────
 
+
 @pytest.mark.asyncio
 async def test_end_to_end_tcp():
     """Spin up a real server on a random port, hit it over TCP."""
@@ -220,7 +222,7 @@ async def test_end_to_end_tcp():
         # Parse response
         header_end = response_raw.find(b"\r\n\r\n")
         assert header_end != -1
-        response_body = response_raw[header_end + 4:]
+        response_body = response_raw[header_end + 4 :]
         response_data = json.loads(response_body)
 
         assert response_data["name"] == "tcp_test"

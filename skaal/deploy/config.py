@@ -24,21 +24,24 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator
 
-
 # ── Base classes ──────────────────────────────────────────────────────────────
+
 
 class StorageDeployConfig(BaseModel):
     """Base for storage backend deploy configs.  Unknown fields are ignored
     so that custom catalog entries don't break on forward-compat keys."""
+
     model_config = {"extra": "ignore"}
 
 
 class ComputeDeployConfig(BaseModel):
     """Base for compute backend deploy configs."""
+
     model_config = {"extra": "ignore"}
 
 
 # ── AWS storage ───────────────────────────────────────────────────────────────
+
 
 class DynamoDBDeployConfig(StorageDeployConfig):
     billing_mode: Literal["PAY_PER_REQUEST", "PROVISIONED"] = "PAY_PER_REQUEST"
@@ -54,6 +57,7 @@ class DynamoDBDeployConfig(StorageDeployConfig):
 
 
 # ── GCP storage ───────────────────────────────────────────────────────────────
+
 
 class FirestoreDeployConfig(StorageDeployConfig):
     """Firestore is serverless — no provisioning parameters required."""
@@ -108,24 +112,39 @@ class MemorystoreRedisDeployConfig(StorageDeployConfig):
 # ── AWS compute ───────────────────────────────────────────────────────────────
 
 _LAMBDA_RUNTIMES = {
-    "python3.8", "python3.9", "python3.10", "python3.11", "python3.12",
-    "nodejs18.x", "nodejs20.x", "java11", "java17", "java21",
-    "ruby3.2", "provided.al2", "provided.al2023",
+    "python3.8",
+    "python3.9",
+    "python3.10",
+    "python3.11",
+    "python3.12",
+    "nodejs18.x",
+    "nodejs20.x",
+    "java11",
+    "java17",
+    "java21",
+    "ruby3.2",
+    "provided.al2",
+    "provided.al2023",
 }
 
 
 class LambdaDeployConfig(ComputeDeployConfig):
     runtime: str = "python3.11"
     timeout: int = Field(
-        default=30, ge=1, le=900,
+        default=30,
+        ge=1,
+        le=900,
         description="Function timeout in seconds. Lambda maximum is 900 (15 min).",
     )
     memory_mb: int = Field(
-        default=256, ge=128, le=10240,
+        default=256,
+        ge=128,
+        le=10240,
         description="Memory allocated to the function in MB. Must be a multiple of 64.",
     )
     reserved_concurrency: int = Field(
-        default=-1, ge=-1,
+        default=-1,
+        ge=-1,
         description=(
             "Maximum number of concurrent Lambda executions. "
             "-1 means unreserved (AWS account limit). "
@@ -139,8 +158,7 @@ class LambdaDeployConfig(ComputeDeployConfig):
     def _valid_runtime(cls, v: str) -> str:
         if v not in _LAMBDA_RUNTIMES:
             raise ValueError(
-                f"Unknown Lambda runtime {v!r}. "
-                f"Known values: {sorted(_LAMBDA_RUNTIMES)}."
+                f"Unknown Lambda runtime {v!r}. " f"Known values: {sorted(_LAMBDA_RUNTIMES)}."
             )
         return v
 
@@ -165,11 +183,14 @@ class CloudRunDeployConfig(ComputeDeployConfig):
     memory: str = "512Mi"
     cpu: str = "1000m"
     concurrency: int = Field(
-        default=80, ge=1, le=1000,
+        default=80,
+        ge=1,
+        le=1000,
         description="Max concurrent requests per container instance.",
     )
     min_instances: int = Field(
-        default=0, ge=0,
+        default=0,
+        ge=0,
         description=(
             "Minimum number of container instances kept warm. "
             "0 means scale to zero when idle (cold starts possible). "
@@ -177,7 +198,9 @@ class CloudRunDeployConfig(ComputeDeployConfig):
         ),
     )
     max_instances: int = Field(
-        default=1000, ge=1, le=1000,
+        default=1000,
+        ge=1,
+        le=1000,
         description="Maximum number of container instances Cloud Run may scale to.",
     )
 
@@ -194,9 +217,7 @@ class CloudRunDeployConfig(ComputeDeployConfig):
     @classmethod
     def _valid_cpu(cls, v: str) -> str:
         if not _CPU_RE.match(v):
-            raise ValueError(
-                f"cpu must be like '1000m' or '2', got {v!r}."
-            )
+            raise ValueError(f"cpu must be like '1000m' or '2', got {v!r}.")
         return v
 
     @field_validator("max_instances")
@@ -204,21 +225,21 @@ class CloudRunDeployConfig(ComputeDeployConfig):
     def _max_gte_min(cls, v: int, info: Any) -> int:
         min_i = info.data.get("min_instances", 0)
         if v < min_i:
-            raise ValueError(
-                f"max_instances ({v}) must be >= min_instances ({min_i})."
-            )
+            raise ValueError(f"max_instances ({v}) must be >= min_instances ({min_i}).")
         return v
 
 
 # ── Local Docker Compose compute ──────────────────────────────────────────────
 
+
 class LocalStackDeployConfig(ComputeDeployConfig):
     """Configuration for local Docker Compose deployments.
-    
+
     Attributes:
         port: HTTP port to expose for the app container.
         app_service_name: Name of the app service in docker-compose.yml.
     """
+
     port: int = Field(default=8000, ge=1, le=65535)
     app_service_name: str = "app"
 
@@ -246,9 +267,7 @@ _COMPUTE_CONFIGS: dict[str, type[ComputeDeployConfig]] = {
 }
 
 
-def storage_deploy_config(
-    backend_name: str, params: dict[str, Any]
-) -> StorageDeployConfig:
+def storage_deploy_config(backend_name: str, params: dict[str, Any]) -> StorageDeployConfig:
     """
     Parse and validate *params* as the deploy config for *backend_name*.
 
@@ -265,14 +284,10 @@ def storage_deploy_config(
     try:
         return cls.model_validate(params)
     except Exception as exc:
-        raise ValueError(
-            f"Invalid [storage.{backend_name}.deploy] configuration: {exc}"
-        ) from exc
+        raise ValueError(f"Invalid [storage.{backend_name}.deploy] configuration: {exc}") from exc
 
 
-def compute_deploy_config(
-    target: str, params: dict[str, Any]
-) -> ComputeDeployConfig:
+def compute_deploy_config(target: str, params: dict[str, Any]) -> ComputeDeployConfig:
     """
     Parse and validate *params* as the deploy config for *target*.
 
@@ -286,6 +301,4 @@ def compute_deploy_config(
     try:
         return cls.model_validate(params)
     except Exception as exc:
-        raise ValueError(
-            f"Invalid [compute.{target}.deploy] configuration: {exc}"
-        ) from exc
+        raise ValueError(f"Invalid [compute.{target}.deploy] configuration: {exc}") from exc

@@ -16,6 +16,7 @@ _TEMPLATES_DIR = Path(__file__).parent / "templates"
 
 # ── Template rendering ────────────────────────────────────────────────────────
 
+
 def render(template: str, **variables: str) -> str:
     """
     Render a template from ``skaal/deploy/templates/`` using

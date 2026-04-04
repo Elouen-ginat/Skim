@@ -4,14 +4,6 @@ Re-exports everything so existing code using ``from skaal.types import X``
 continues to work without change.
 """
 
-from skaal.types.constraints import (
-    AccessPattern,
-    Consistency,
-    DecommissionPolicy,
-    Durability,
-    Latency,
-    Throughput,
-)
 from skaal.types.compute import (
     Bulkhead,
     CircuitBreaker,
@@ -21,6 +13,14 @@ from skaal.types.compute import (
     RetryPolicy,
     Scale,
     ScaleStrategy,
+)
+from skaal.types.constraints import (
+    AccessPattern,
+    Consistency,
+    DecommissionPolicy,
+    Durability,
+    Latency,
+    Throughput,
 )
 from skaal.types.schema import apply_migrations, migrate_from
 

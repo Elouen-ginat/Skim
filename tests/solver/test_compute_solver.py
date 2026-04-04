@@ -16,7 +16,6 @@ from skaal.solver.components import encode_component
 from skaal.solver.compute import UnsatisfiableComputeConstraints, encode_compute
 from skaal.types import Compute, ComputeType
 
-
 # ── encode_compute fixtures ───────────────────────────────────────────────────
 
 _CATALOG_COMPUTE = {
@@ -62,7 +61,6 @@ def test_encode_compute_cheapest_cpu():
 
 def test_encode_compute_gpu_required():
     """GPU compute type filter selects a gpu-capable instance."""
-    from skaal.types import ComputeType
     compute = Compute(compute_type=ComputeType.GPU)
     name, reason = encode_compute("fn", compute, _CATALOG_COMPUTE)
     assert name == "gpu-instance"
@@ -84,7 +82,6 @@ def test_encode_compute_empty_catalog():
 
 def test_encode_compute_unresolvable_type():
     """Requesting an unsupported compute type falls through to cost-based fallback."""
-    from skaal.types import ComputeType
     compute = Compute(compute_type=ComputeType.TPU)
     # TPU not in catalog → UnsatisfiableComputeConstraints raised
     with pytest.raises(UnsatisfiableComputeConstraints) as exc_info:
@@ -161,6 +158,7 @@ def test_encode_component_catalog_override():
 
 
 # ── Integration: solve() with components ─────────────────────────────────────
+
 
 def test_solve_includes_components():
     """solve() encodes app components into plan.components."""

@@ -16,9 +16,7 @@ class UnsatisfiableComputeConstraints(Exception):
     def __init__(self, function_name: str, reason: str = "") -> None:
         self.function_name = function_name
         self.reason = reason
-        super().__init__(
-            f"Cannot satisfy compute constraints for {function_name!r}. {reason}"
-        )
+        super().__init__(f"Cannot satisfy compute constraints for {function_name!r}. {reason}")
 
 
 def encode_compute(
@@ -68,6 +66,7 @@ def encode_compute(
         mem = constraints.memory
         if isinstance(mem, str):
             import re
+
             m = re.match(r"([\d.]+)\s*GB?", mem, re.IGNORECASE)
             memory_gb = float(m.group(1)) if m else None
         else:
@@ -145,7 +144,9 @@ def encode_compute(
     )
 
     if selected is None:
-        raise UnsatisfiableComputeConstraints(function_name, "Z3 returned sat but no instance selected")
+        raise UnsatisfiableComputeConstraints(
+            function_name, "Z3 returned sat but no instance selected"
+        )
 
     spec = instance_types[selected]
     display = spec.get("display_name", selected)

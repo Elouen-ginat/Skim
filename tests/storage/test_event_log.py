@@ -2,15 +2,13 @@
 
 from __future__ import annotations
 
-import asyncio
-
 import pytest
 
 from skaal.backends.local_backend import LocalMap
 from skaal.patterns import EventLog
 
-
 # ── append ─────────────────────────────────────────────────────────────────────
+
 
 @pytest.mark.asyncio
 async def test_append_returns_sequential_offsets():
@@ -33,6 +31,7 @@ async def test_append_single_event():
 
 
 # ── replay ─────────────────────────────────────────────────────────────────────
+
 
 @pytest.mark.asyncio
 async def test_replay_yields_events_in_order():
@@ -86,6 +85,7 @@ async def test_replay_from_offset_beyond_end():
 
 
 # ── subscribe ──────────────────────────────────────────────────────────────────
+
 
 @pytest.mark.asyncio
 async def test_subscribe_yields_new_events():
@@ -165,6 +165,7 @@ async def test_subscribe_from_beginning_false_starts_at_current():
 
 # ── EventLog default backend ───────────────────────────────────────────────────
 
+
 @pytest.mark.asyncio
 async def test_event_log_default_backend_works_without_setup():
     """EventLog with default LocalMap backend works without any runtime setup."""
@@ -181,6 +182,7 @@ async def test_event_log_default_backend_works_without_setup():
 
 
 # ── repr ───────────────────────────────────────────────────────────────────────
+
 
 def test_event_log_repr():
     log = EventLog(retention="30d", partitions=8)

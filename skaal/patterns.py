@@ -12,7 +12,7 @@ Patterns are registered with a module via ``module.pattern(p)`` and attach
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, AsyncIterator, Generic, Literal, TypeVar
 
 from skaal.types import Consistency, Durability, Throughput
@@ -70,10 +70,12 @@ class EventLog(Generic[T]):
             self._backend = _backend
         else:
             from skaal.backends.local_backend import LocalMap
+
             self._backend = LocalMap()
 
         # Metadata consumed by solver — mirrors __skim_storage__
         from skaal.types import AccessPattern
+
         self.__skim_pattern__ = {
             "pattern_type": "event-log",
             "storage": {
@@ -95,14 +97,10 @@ class EventLog(Generic[T]):
         await self._backend.set("meta:next_offset", offset + 1)
         return offset
 
-    async def replay(
-        self, from_offset: int = 0
-    ) -> AsyncIterator[tuple[int, T]]:
+    async def replay(self, from_offset: int = 0) -> AsyncIterator[tuple[int, T]]:
         """Replay events starting from *from_offset*. Yields (offset, event) tuples."""
         entries = await self._backend.scan("event:")
-        for key, value in sorted(
-            (e for e in entries if e[0] >= f"event:{from_offset:020d}")
-        ):
+        for key, value in sorted((e for e in entries if e[0] >= f"event:{from_offset:020d}")):
             offset = int(key.split(":")[-1])
             yield offset, value
 
@@ -125,14 +123,10 @@ class EventLog(Generic[T]):
         offset = 0 if from_beginning else (int(raw) if raw is not None else 0)
         while True:
             entries = await self._backend.scan(f"event:{offset:020d}")
-            sorted_entries = sorted(
-                (e for e in entries if e[0] >= f"event:{offset:020d}")
-            )
+            sorted_entries = sorted((e for e in entries if e[0] >= f"event:{offset:020d}"))
             for key, value in sorted_entries:
                 current_offset = int(key.split(":")[-1])
-                await self._backend.set(
-                    f"consumer:{consumer_group}:offset", current_offset + 1
-                )
+                await self._backend.set(f"consumer:{consumer_group}:offset", current_offset + 1)
                 offset = current_offset + 1
                 yield current_offset, value
             if not sorted_entries:
@@ -177,9 +171,7 @@ class Projection(Generic[TSource, TView]):
         self.source = source
         self.target = target
         self.handler = handler
-        self.consistency = (
-            Consistency(consistency) if isinstance(consistency, str) else consistency
-        )
+        self.consistency = Consistency(consistency) if isinstance(consistency, str) else consistency
         self.checkpoint_every = checkpoint_every
 
         self.__skim_pattern__ = {
@@ -206,7 +198,7 @@ class Projection(Generic[TSource, TView]):
 class SagaStep:
     """A single step in a Saga, with its compensating action."""
 
-    function: str    # name of a registered @app.function / @module.function
+    function: str  # name of a registered @app.function / @module.function
     compensate: str  # name of the compensation function (run on failure/rollback)
     timeout_ms: int | None = None
 
@@ -254,8 +246,10 @@ class Saga:
         self.__skim_pattern__ = {
             "pattern_type": "saga",
             "name": name,
-            "steps": [{"function": s.function, "compensate": s.compensate,
-                        "timeout_ms": s.timeout_ms} for s in steps],
+            "steps": [
+                {"function": s.function, "compensate": s.compensate, "timeout_ms": s.timeout_ms}
+                for s in steps
+            ],
             "coordination": coordination,
             "timeout_ms": timeout_ms,
         }
@@ -299,8 +293,8 @@ class Outbox(Generic[T]):
 
     def __init__(
         self,
-        channel: Any,   # Channel[T] — typed as Any to avoid circular import
-        storage: Any,   # @storage-annotated class
+        channel: Any,  # Channel[T] — typed as Any to avoid circular import
+        storage: Any,  # @storage-annotated class
         delivery: Literal["at-least-once", "exactly-once"] = "at-least-once",
     ) -> None:
         self.channel = channel

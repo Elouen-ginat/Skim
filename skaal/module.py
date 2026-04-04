@@ -9,14 +9,12 @@ from skaal.types import (
     Bulkhead,
     CircuitBreaker,
     Compute,
-    ComputeType,
     DecommissionPolicy,
     Durability,
     Latency,
     RateLimitPolicy,
     RetryPolicy,
     Scale,
-    ScaleStrategy,
     Throughput,
 )
 
@@ -96,7 +94,7 @@ class Module:
         self._patterns: dict[str, Any] = {}
         self._components: dict[str, Any] = {}
         self._exports: set[str] = set()
-        self._submodules: dict[str, Module] = {}   # namespace → mounted module
+        self._submodules: dict[str, Module] = {}  # namespace → mounted module
 
     # ── Registration decorators ────────────────────────────────────────────
 
@@ -380,7 +378,7 @@ class Module:
             sub_prefix = f"{prefix}{ns}." if ns else prefix
             for qname, obj in sub._collect_all().items():
                 # Strip sub's own prefix and re-apply ours
-                bare = qname[len(sub.name) + 1:] if qname.startswith(sub.name + ".") else qname
+                bare = qname[len(sub.name) + 1 :] if qname.startswith(sub.name + ".") else qname
                 result[f"{sub_prefix}{bare}"] = obj
 
         return result

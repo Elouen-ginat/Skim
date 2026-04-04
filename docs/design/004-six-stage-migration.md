@@ -1,6 +1,6 @@
 # ADR 004 — Six-Stage Backend Migration Protocol
 
-**Status:** Accepted  
+**Status:** Accepted
 **Date:** 2024-01-01
 
 ## Context

@@ -25,9 +25,9 @@ def _wire_channel(channel_obj: Any) -> None:
         async for msg in local.subscribe("default"):
             yield msg
 
-    channel_obj.send = _send                    # type: ignore[attr-defined]
-    channel_obj.receive = _receive              # type: ignore[attr-defined]
-    channel_obj._local_channel = local          # type: ignore[attr-defined]
+    channel_obj.send = _send
+    channel_obj.receive = _receive
+    channel_obj._local_channel = local
 
 
 class LocalRuntime:
@@ -277,8 +277,11 @@ class LocalRuntime:
                 status_code = 500
 
             _STATUS = {
-                200: "OK", 400: "Bad Request", 404: "Not Found",
-                405: "Method Not Allowed", 422: "Unprocessable Entity",
+                200: "OK",
+                400: "Bad Request",
+                404: "Not Found",
+                405: "Method Not Allowed",
+                422: "Unprocessable Entity",
                 500: "Internal Server Error",
             }
             response = (
@@ -359,15 +362,17 @@ class LocalRuntime:
         async def _health(request: Any) -> JSONResponse:  # noqa: ANN001
             return JSONResponse({"status": "ok", "app": self.app.name})
 
-        asgi_app = Starlette(routes=[
-            Route("/health", _health),
-            Mount("/", WSGIMiddleware(wsgi_app)),
-        ])
+        asgi_app = Starlette(
+            routes=[
+                Route("/health", _health),
+                Mount("/", WSGIMiddleware(wsgi_app)),
+            ]
+        )
 
         attribute = getattr(self.app, "_wsgi_attribute", "wsgi_app")
         print(f"\n  Skaal local runtime — {self.app.name}  [WSGI: {attribute}]")
         print(f"  http://{self.host}:{self.port}\n")
-        print(f"    /health  → Skaal health check")
+        print("    /health  → Skaal health check")
         print(f"    /*       → {attribute}  (Dash / Flask)")
         print()
 

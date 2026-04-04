@@ -54,6 +54,7 @@ T = TypeVar("T")
 def _is_pydantic(t: Any) -> bool:
     try:
         from pydantic import BaseModel
+
         return isinstance(t, type) and issubclass(t, BaseModel)
     except ImportError:
         return False
@@ -80,19 +81,13 @@ def _schema_hints(cls: type) -> dict[str, Any]:
     """
     hints: dict[str, Any] = {}
     value_type = getattr(cls, "__skaal_value_type__", None)
-    if not _is_pydantic(value_type):
+    if not _is_pydantic(value_type) or value_type is None:
         return hints
 
-    from pydantic import BaseModel  # already confirmed importable
-
-    fields = value_type.model_fields  # type: ignore[union-attr]
-    nested_count = sum(
-        1 for f in fields.values()
-        if _is_pydantic(f.annotation)
-    )
+    fields = value_type.model_fields
+    nested_count = sum(1 for f in fields.values() if _is_pydantic(f.annotation))
     list_count = sum(
-        1 for f in fields.values()
-        if f.annotation is not None and get_origin(f.annotation) is list
+        1 for f in fields.values() if f.annotation is not None and get_origin(f.annotation) is list
     )
     hints["model"] = value_type.__name__
     hints["field_count"] = len(fields)

@@ -1,4 +1,5 @@
 """Solver test fixtures."""
+
 import pytest
 
 
@@ -32,7 +33,6 @@ def aws_catalog(tmp_path):
 
 def _write_toml(data: dict) -> bytes:
     """Minimal TOML serialiser for the fixture (avoids tomli_w dependency)."""
-    import json, re
 
     def _val(v):
         if isinstance(v, bool):

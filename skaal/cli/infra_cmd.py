@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
 
 import typer
 
@@ -48,7 +47,8 @@ def status(
         for name, spec in sorted(plan_file.storage.items()):
             migration_tag = ""
             if spec.previous_backend and spec.previous_backend != spec.backend:
-                from skaal.migrate.engine import MigrationEngine, STAGE_NAMES
+                from skaal.migrate.engine import STAGE_NAMES, MigrationEngine
+
                 try:
                     engine = MigrationEngine(plan_file.app_name, name)
                     state = engine.load_state()
@@ -65,8 +65,8 @@ def status(
 
     if plan_file.compute:
         typer.echo(f"Compute ({len(plan_file.compute)} functions):")
-        for name, spec in sorted(plan_file.compute.items()):
-            typer.echo(f"  {name:<36} {spec.instance_type}  ×{spec.instances}")
+        for name, cspec in sorted(plan_file.compute.items()):
+            typer.echo(f"  {name:<36} {cspec.instance_type}  ×{cspec.instances}")
     else:
         typer.echo("Compute: (none)")
 
@@ -74,10 +74,10 @@ def status(
 
     if plan_file.components:
         typer.echo(f"Components ({len(plan_file.components)}):")
-        for name, spec in sorted(plan_file.components.items()):
-            prov = "provisioned" if spec.provisioned else "external"
-            impl = spec.implementation or "(solver-selected)"
-            typer.echo(f"  {name:<30} [{spec.kind}]  {impl}  ({prov})")
+        for name, compspec in sorted(plan_file.components.items()):
+            prov = "provisioned" if compspec.provisioned else "external"
+            impl = compspec.implementation or "(solver-selected)"
+            typer.echo(f"  {name:<30} [{compspec.kind}]  {impl}  ({prov})")
     else:
         typer.echo("Components: (none)")
 
@@ -85,11 +85,15 @@ def status(
 @app.command("cleanup")
 def cleanup(
     variable: str = typer.Option(
-        ..., "--variable", "-v",
+        ...,
+        "--variable",
+        "-v",
         help="Qualified variable name to decommission, e.g. 'counter.Counts'.",
     ),
     confirm: bool = typer.Option(
-        False, "--yes", "-y",
+        False,
+        "--yes",
+        "-y",
         help="Skip confirmation prompt.",
     ),
 ) -> None:
@@ -112,9 +116,7 @@ def cleanup(
         )
 
     if not confirm:
-        confirmed = typer.confirm(
-            f"Remove migration state for {variable!r}?", default=False
-        )
+        confirmed = typer.confirm(f"Remove migration state for {variable!r}?", default=False)
         if not confirmed:
             typer.echo("Aborted.")
             raise typer.Exit(0)
@@ -125,5 +127,3 @@ def cleanup(
         typer.echo(f"Removed migration state for {variable!r}.")
     else:
         typer.echo(f"Migration state file not found for {variable!r}.")
-
-

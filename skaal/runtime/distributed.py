@@ -57,7 +57,6 @@ class DistributedRuntime:
         if fn is None:
             raise KeyError(f"No function {function_name!r} registered in {self.app.name!r}")
 
-        import asyncio
         import inspect
 
         if inspect.iscoroutinefunction(fn):

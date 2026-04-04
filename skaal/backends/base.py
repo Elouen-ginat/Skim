@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, List, Protocol, runtime_checkable
 
 
 @runtime_checkable
@@ -30,7 +30,7 @@ class StorageBackend(Protocol):
         """Return all (key, value) pairs."""
         ...
 
-    async def scan(self, prefix: str = "") -> list[tuple[str, Any]]:
+    async def scan(self, prefix: str = "") -> List[tuple[str, Any]]:
         """Return all (key, value) pairs where key starts with prefix."""
         ...
 
@@ -38,5 +38,4 @@ class StorageBackend(Protocol):
         """Release any resources held by this backend."""
         ...
 
-    def __repr__(self) -> str:
-        ...
+    def __repr__(self) -> str: ...

@@ -1,6 +1,6 @@
 # ADR 001 — Infrastructure as Constraints
 
-**Status:** Accepted  
+**Status:** Accepted
 **Date:** 2024-01-01
 
 ## Context

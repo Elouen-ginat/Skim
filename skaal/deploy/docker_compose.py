@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any
 
 from skaal.deploy._deps import collect_user_packages
 from skaal.deploy._render import render, to_pyproject_toml
-from skaal.deploy.config import LocalStackDeployConfig, storage_deploy_config
+from skaal.deploy.config import LocalStackDeployConfig
 from skaal.deploy.push import write_meta
 
 if TYPE_CHECKING:
@@ -85,7 +85,7 @@ def _constructor(backend_name: str, class_name: str, env_var: str) -> str:
     """Generate backend constructor call."""
     info = _backend_info(backend_name)
     cls = info["class"]
-    
+
     if backend_name == "postgres":
         return f'{cls}(os.environ["{env_var}"], namespace="{class_name}")'
     elif backend_name == "redis":
@@ -97,6 +97,7 @@ def _constructor(backend_name: str, class_name: str, env_var: str) -> str:
 
 
 # ── Wiring helpers (backend_imports / backend_overrides) ──────────────────────
+
 
 def _build_wiring(plan: "PlanFile") -> tuple[str, str]:
     """
@@ -125,6 +126,7 @@ def _build_wiring(plan: "PlanFile") -> tuple[str, str]:
 
 
 # ── Docker Compose YAML builder ───────────────────────────────────────────────
+
 
 def _build_docker_compose(plan: "PlanFile", port: int) -> str:
     """
@@ -168,17 +170,17 @@ def _build_docker_compose(plan: "PlanFile", port: int) -> str:
         for service_name, service_config in services_needed.items():
             service_lines.append(f"  {service_name}:")
             service_lines.append(f"    image: {service_config['image']}")
-            
+
             if service_config.get("ports"):
                 service_lines.append("    ports:")
                 for port_mapping in service_config["ports"]:
                     service_lines.append(f"      {port_mapping}")
-            
+
             if service_config.get("environment"):
                 service_lines.append("    environment:")
                 for env in service_config["environment"]:
                     service_lines.append(f"      {env}")
-            
+
             if service_config.get("healthcheck"):
                 hc = service_config["healthcheck"]
                 service_lines.append("    healthcheck:")
@@ -187,7 +189,7 @@ def _build_docker_compose(plan: "PlanFile", port: int) -> str:
                 service_lines.append(f"      timeout: {hc['timeout']}")
                 service_lines.append(f"      retries: {hc['retries']}")
                 service_lines.append(f"      start_period: {hc['start_period']}")
-            
+
             service_lines.append("")
 
         additional_services = "\n".join(service_lines)
@@ -202,7 +204,7 @@ def _build_docker_compose(plan: "PlanFile", port: int) -> str:
     # Render template
     return render(
         "local/docker-compose.yml",
-        port=port,
+        port=str(port),
         service_env_vars="\n".join(env_vars) if env_vars else "      {}",
         service_dependencies=depends_on_str,
         additional_services=additional_services,
@@ -210,6 +212,7 @@ def _build_docker_compose(plan: "PlanFile", port: int) -> str:
 
 
 # ── Public entry point ─────────────────────────────────────────────────────────
+
 
 def generate_artifacts(
     app: Any,
@@ -251,37 +254,43 @@ def generate_artifacts(
     # ── main.py or main_wsgi.py ───────────────────────────────────────────────
     main_path = output_dir / "main.py"
     if wsgi_attribute:
-        main_path.write_text(render(
-            "local/main_wsgi.py",
-            source_module=source_module,
-            app_var=app_var,
-            wsgi_attribute=wsgi_attribute,
-            backend_imports=backend_imports,
-            backend_overrides=backend_overrides,
-        ), encoding='utf-8')
+        main_path.write_text(
+            render(
+                "local/main_wsgi.py",
+                source_module=source_module,
+                app_var=app_var,
+                wsgi_attribute=wsgi_attribute,
+                backend_imports=backend_imports,
+                backend_overrides=backend_overrides,
+            ),
+            encoding="utf-8",
+        )
     else:
-        main_path.write_text(render(
-            "local/main.py",
-            source_module=source_module,
-            app_var=app_var,
-            backend_imports=backend_imports,
-            backend_overrides=backend_overrides,
-        ), encoding='utf-8')
+        main_path.write_text(
+            render(
+                "local/main.py",
+                source_module=source_module,
+                app_var=app_var,
+                backend_imports=backend_imports,
+                backend_overrides=backend_overrides,
+            ),
+            encoding="utf-8",
+        )
     generated.append(main_path)
 
     # ── Dockerfile ────────────────────────────────────────────────────────────
     dockerfile_path = output_dir / "Dockerfile"
-    dockerfile_path.write_text(render("local/Dockerfile"), encoding='utf-8')
+    dockerfile_path.write_text(render("local/Dockerfile"), encoding="utf-8")
     generated.append(dockerfile_path)
 
     # ── docker-compose.yml ─────────────────────────────────────────────────────
     compose_path = output_dir / "docker-compose.yml"
-    compose_path.write_text(_build_docker_compose(plan, deploy_config.port), encoding='utf-8')
+    compose_path.write_text(_build_docker_compose(plan, deploy_config.port), encoding="utf-8")
     generated.append(compose_path)
 
     # ── pyproject.toml ────────────────────────────────────────────────────────
     infra_deps = ["skaal[local]", "gunicorn>=22.0"]
-    
+
     # Add backend-specific dependencies
     for spec in plan.storage.values():
         if spec.backend == "redis":
@@ -294,7 +303,7 @@ def generate_artifacts(
     user_pkgs = collect_user_packages(source_module)
     deps = list(dict.fromkeys(infra_deps + user_pkgs))
     pyproject_path = output_dir / "pyproject.toml"
-    pyproject_path.write_text(to_pyproject_toml(app.name, deps), encoding='utf-8')
+    pyproject_path.write_text(to_pyproject_toml(app.name, deps), encoding="utf-8")
     generated.append(pyproject_path)
 
     # ── .gitignore ─────────────────────────────────────────────────────────────
@@ -308,12 +317,14 @@ def generate_artifacts(
         ".pytest_cache/\n"
         ".env\n"
         ".env.local\n",
-        encoding='utf-8'
+        encoding="utf-8",
     )
     generated.append(gitignore_path)
 
     # ── skaal-meta.json ───────────────────────────────────────────────────────
-    meta_path = write_meta(output_dir, target="local", source_module=source_module, app_name=app.name)
+    meta_path = write_meta(
+        output_dir, target="local", source_module=source_module, app_name=app.name
+    )
     generated.append(meta_path)
 
     return generated

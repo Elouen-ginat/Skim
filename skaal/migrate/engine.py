@@ -25,12 +25,12 @@ STAGE_NAMES = {
 
 @dataclass
 class MigrationState:
-    variable_name: str       # e.g. "counter.Counts"
-    source_backend: str      # backend name from plan (e.g. "elasticache-redis")
+    variable_name: str  # e.g. "counter.Counts"
+    source_backend: str  # backend name from plan (e.g. "elasticache-redis")
     target_backend: str
-    stage: int               # 0–6
-    started_at: str          # ISO timestamp
-    advanced_at: str         # ISO timestamp of last stage change
+    stage: int  # 0–6
+    started_at: str  # ISO timestamp
+    advanced_at: str  # ISO timestamp of last stage change
     discrepancy_count: int = 0
     keys_migrated: int = 0
     app_name: str = ""
@@ -49,11 +49,7 @@ class MigrationEngine:
     def __init__(self, app_name: str, variable_name: str) -> None:
         self.app_name = app_name
         self.variable_name = variable_name
-        self._state_path = (
-            self.STATE_DIR
-            / app_name
-            / f"{variable_name.replace('.', '__')}.json"
-        )
+        self._state_path = self.STATE_DIR / app_name / f"{variable_name.replace('.', '__')}.json"
 
     def load_state(self) -> MigrationState | None:
         """Load migration state from disk. Returns None if no migration in progress."""
@@ -65,9 +61,7 @@ class MigrationEngine:
     def save_state(self, state: MigrationState) -> None:
         """Persist state to .skaal/migrations/..."""
         self._state_path.parent.mkdir(parents=True, exist_ok=True)
-        self._state_path.write_text(
-            json.dumps(dataclasses.asdict(state), indent=2)
-        )
+        self._state_path.write_text(json.dumps(dataclasses.asdict(state), indent=2))
 
     def start(self, source: str, target: str) -> MigrationState:
         """Begin a new migration from source to target backend. Sets stage=1."""
@@ -84,17 +78,13 @@ class MigrationEngine:
         self.save_state(state)
         return state
 
-    def advance(
-        self, state: MigrationState, discrepancy_count: int = 0
-    ) -> MigrationState:
+    def advance(self, state: MigrationState, discrepancy_count: int = 0) -> MigrationState:
         """
         Advance to the next stage.
         Raises ValueError if already at stage 6 (done).
         """
         if state.stage >= 6:
-            raise ValueError(
-                f"{self.variable_name} migration is already complete (stage 6)."
-            )
+            raise ValueError(f"{self.variable_name} migration is already complete (stage 6).")
         state.stage += 1
         state.advanced_at = datetime.now(timezone.utc).isoformat()
         state.discrepancy_count += discrepancy_count

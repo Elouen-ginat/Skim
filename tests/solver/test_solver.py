@@ -5,13 +5,13 @@ from __future__ import annotations
 import pytest
 
 from skaal import App
-from skaal.types import AccessPattern, Durability, Latency
 from skaal.catalog.loader import load_catalog
 from skaal.solver.solver import solve
 from skaal.solver.storage import UnsatisfiableConstraints, select_backend
-
+from skaal.types import AccessPattern, Durability, Latency
 
 # ── Catalog loading ────────────────────────────────────────────────────────────
+
 
 def test_load_catalog():
     """load_catalog() successfully loads catalogs/aws.toml."""
@@ -29,6 +29,7 @@ def test_load_catalog():
 
 # ── select_backend() ──────────────────────────────────────────────────────────
 
+
 def test_select_backend_ephemeral_low_latency():
     """Ephemeral + < 5ms read_latency + random-read → elasticache-memcached or elasticache-redis."""
     catalog = load_catalog()
@@ -45,9 +46,10 @@ def test_select_backend_ephemeral_low_latency():
     )
     # Both Redis and Memcached satisfy < 5ms and ephemeral + random-read
     # Solver should pick one; Memcached is cheaper so it's the likely winner
-    assert backend_name in ("elasticache-memcached", "elasticache-redis"), (
-        f"Expected a fast cache backend, got {backend_name!r}. Reason: {reason}"
-    )
+    assert backend_name in (
+        "elasticache-memcached",
+        "elasticache-redis",
+    ), f"Expected a fast cache backend, got {backend_name!r}. Reason: {reason}"
 
 
 def test_select_backend_durable_lambda():
@@ -66,9 +68,9 @@ def test_select_backend_durable_lambda():
         target="aws-lambda",
     )
     # DynamoDB: durable, max 10ms, random-read, no VPC → best for Lambda
-    assert backend_name == "dynamodb", (
-        f"Expected 'dynamodb' for Lambda target, got {backend_name!r}. Reason: {reason}"
-    )
+    assert (
+        backend_name == "dynamodb"
+    ), f"Expected 'dynamodb' for Lambda target, got {backend_name!r}. Reason: {reason}"
     assert "serverless-compatible" in reason or "no VPC" in reason
 
 
@@ -119,9 +121,7 @@ def test_select_backend_append_only_durable():
         },
         storage_backends,
     )
-    assert backend_name in ("s3", "msk-kafka"), (
-        f"Expected s3 or msk-kafka, got {backend_name!r}"
-    )
+    assert backend_name in ("s3", "msk-kafka"), f"Expected s3 or msk-kafka, got {backend_name!r}"
 
 
 def test_select_backend_reason_string():
@@ -138,6 +138,7 @@ def test_select_backend_reason_string():
 
 
 # ── solve() ───────────────────────────────────────────────────────────────────
+
 
 def _make_counter_app() -> App:
     app = App("test-counter")
@@ -178,7 +179,7 @@ def test_solve_storage_entries():
     assert len(plan.storage) > 0
     for qname, spec in plan.storage.items():
         assert spec.backend  # non-empty backend name
-        assert spec.reason    # non-empty reason
+        assert spec.reason  # non-empty reason
         assert spec.schema_hash  # non-empty hash
         assert spec.migration_stage == 0
 

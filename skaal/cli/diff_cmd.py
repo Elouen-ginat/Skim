@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
+
+if TYPE_CHECKING:
+    from skaal.plan import PlanFile
 
 import typer
 
@@ -14,7 +17,7 @@ app = typer.Typer(help="Show what changes between plan versions.")
 _PLAN_DEFAULT = "plan.skaal.lock"
 
 
-def _load_plan(plan_path: str) -> "PlanFile":  # noqa: F821
+def _load_plan(plan_path: str) -> "PlanFile":
     from skaal.plan import PlanFile
 
     p = Path(plan_path)
@@ -24,7 +27,7 @@ def _load_plan(plan_path: str) -> "PlanFile":  # noqa: F821
     return PlanFile.read(p)
 
 
-def _print_plan_summary(plan: "PlanFile") -> None:  # noqa: F821
+def _print_plan_summary(plan: "PlanFile") -> None:
     """Pretty-print the contents of a plan without a second plan to diff against."""
     typer.echo(f"Plan: {plan.app_name}  (version {plan.version}, target={plan.deploy_target})")
     typer.echo("")
@@ -41,18 +44,18 @@ def _print_plan_summary(plan: "PlanFile") -> None:  # noqa: F821
 
     if plan.compute:
         typer.echo("Compute:")
-        for name, spec in sorted(plan.compute.items()):
-            prev = f"  [was: {spec.previous_instance_type}]" if spec.previous_instance_type else ""
-            typer.echo(f"  ~ {name:<40} instance={spec.instance_type}{prev}")
+        for name, cspec in sorted(plan.compute.items()):
+            prev = (
+                f"  [was: {cspec.previous_instance_type}]" if cspec.previous_instance_type else ""
+            )
+            typer.echo(f"  ~ {name:<40} instance={cspec.instance_type}{prev}")
     else:
         typer.echo("Compute: (none)")
 
 
-def _diff_plans(old: "PlanFile", new: "PlanFile") -> None:  # noqa: F821
+def _diff_plans(old: "PlanFile", new: "PlanFile") -> None:
     """Print a structured diff between old and new plans."""
-    typer.echo(
-        f"Diff: {old.app_name} v{old.version} → {new.app_name} v{new.version}"
-    )
+    typer.echo(f"Diff: {old.app_name} v{old.version} → {new.app_name} v{new.version}")
     typer.echo("")
 
     # ── Storage diff ──────────────────────────────────────────────────────
@@ -77,9 +80,7 @@ def _diff_plans(old: "PlanFile", new: "PlanFile") -> None:  # noqa: F821
         old_spec = old.storage[name]
         new_spec = new.storage[name]
         if old_spec.backend != new_spec.backend:
-            typer.echo(
-                f"  ~ {name:<40} backend: {old_spec.backend} → {new_spec.backend}"
-            )
+            typer.echo(f"  ~ {name:<40} backend: {old_spec.backend} → {new_spec.backend}")
             changed = True
 
     if not changed:
@@ -98,19 +99,19 @@ def _diff_plans(old: "PlanFile", new: "PlanFile") -> None:  # noqa: F821
 
     changed_c = False
     for name in sorted(added_c):
-        spec = new.compute[name]
-        typer.echo(f"  + {name:<40} instance={spec.instance_type}")
+        cspec = new.compute[name]
+        typer.echo(f"  + {name:<40} instance={cspec.instance_type}")
         changed_c = True
     for name in sorted(removed_c):
-        spec = old.compute[name]
-        typer.echo(f"  - {name:<40} instance={spec.instance_type}")
+        cspec = old.compute[name]
+        typer.echo(f"  - {name:<40} instance={cspec.instance_type}")
         changed_c = True
     for name in sorted(common_c):
-        old_spec = old.compute[name]
-        new_spec = new.compute[name]
-        if old_spec.instance_type != new_spec.instance_type:
+        old_cspec = old.compute[name]
+        new_cspec = new.compute[name]
+        if old_cspec.instance_type != new_cspec.instance_type:
             typer.echo(
-                f"  ~ {name:<40} instance: {old_spec.instance_type} → {new_spec.instance_type}"
+                f"  ~ {name:<40} instance: {old_cspec.instance_type} → {new_cspec.instance_type}"
             )
             changed_c = True
 

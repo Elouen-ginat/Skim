@@ -1,6 +1,6 @@
 # ADR 002 — Z3 Solver for Backend Selection
 
-**Status:** Accepted  
+**Status:** Accepted
 **Date:** 2024-01-01
 
 ## Context

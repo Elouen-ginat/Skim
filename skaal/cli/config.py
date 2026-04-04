@@ -27,8 +27,8 @@ from typing import Any
 from pydantic import Field
 from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
 
-
 # ── pyproject.toml discovery ──────────────────────────────────────────────────
+
 
 def find_pyproject() -> Path | None:
     """Walk up from cwd until a ``pyproject.toml`` is found, or return None."""
@@ -54,6 +54,7 @@ def load_skaal_section() -> dict[str, Any]:
 
 # ── pydantic-settings custom source ───────────────────────────────────────────
 
+
 class PyprojectTomlSource(PydanticBaseSettingsSource):
     """pydantic-settings source that reads ``[tool.skaal]`` from pyproject.toml."""
 
@@ -75,6 +76,7 @@ class PyprojectTomlSource(PydanticBaseSettingsSource):
 
 
 # ── Unified settings model ────────────────────────────────────────────────────
+
 
 class SkaalSettings(BaseSettings):
     """

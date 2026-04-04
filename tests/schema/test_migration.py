@@ -2,16 +2,14 @@
 
 from __future__ import annotations
 
-import json
-
 import pytest
 
 from skaal.backends.local_backend import LocalMap
-from skaal.migrate.engine import MigrationEngine, MigrationState, copy_all
-from skaal.migrate.shadow import DiscrepancyRecord, ShadowBackend
-
+from skaal.migrate.engine import MigrationEngine, copy_all
+from skaal.migrate.shadow import ShadowBackend
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
+
 
 def _make_backends():
     """Return a fresh (source, target) pair of LocalMap backends."""
@@ -19,6 +17,7 @@ def _make_backends():
 
 
 # ── ShadowBackend — Stage 1 (shadow_write) ────────────────────────────────────
+
 
 @pytest.mark.asyncio
 async def test_stage1_writes_to_both():
@@ -55,6 +54,7 @@ async def test_stage1_delete_both():
 
 
 # ── ShadowBackend — Stage 2 (shadow_read) ─────────────────────────────────────
+
 
 @pytest.mark.asyncio
 async def test_stage2_discrepancy_detected():
@@ -99,6 +99,7 @@ async def test_stage2_writes_to_both():
 
 # ── ShadowBackend — Stage 3 (dual_read) ───────────────────────────────────────
 
+
 @pytest.mark.asyncio
 async def test_stage3_reads_target_first():
     source, target = _make_backends()
@@ -129,6 +130,7 @@ async def test_stage3_writes_to_both():
 
 
 # ── ShadowBackend — Stage 4 (new_primary) ─────────────────────────────────────
+
 
 @pytest.mark.asyncio
 async def test_stage4_reads_target_only():
@@ -165,6 +167,7 @@ async def test_stage4_delete_target_only():
 
 # ── ShadowBackend — Stage 5 (cleanup) ─────────────────────────────────────────
 
+
 @pytest.mark.asyncio
 async def test_stage5_reads_target_only():
     source, target = _make_backends()
@@ -187,6 +190,7 @@ async def test_stage5_writes_target_only():
 
 # ── ShadowBackend — list/scan routing ─────────────────────────────────────────
 
+
 @pytest.mark.asyncio
 async def test_shadow_list_stage1():
     source, target = _make_backends()
@@ -208,6 +212,7 @@ async def test_shadow_close_closes_both():
 
 
 # ── MigrationEngine ────────────────────────────────────────────────────────────
+
 
 def test_engine_start_creates_state(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
@@ -328,6 +333,7 @@ def test_engine_list_all(tmp_path, monkeypatch):
 
 
 # ── copy_all ───────────────────────────────────────────────────────────────────
+
 
 @pytest.mark.asyncio
 async def test_copy_all():

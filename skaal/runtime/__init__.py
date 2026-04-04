@@ -1,6 +1,6 @@
 """skaal.runtime — runtime implementations (local and distributed)."""
 
-from skaal.runtime.agent_registry import AgentRegistry, AgentRecord, AgentStatus
+from skaal.runtime.agent_registry import AgentRecord, AgentRegistry, AgentStatus
 from skaal.runtime.channels import Channel, LocalChannel
 from skaal.runtime.distributed import DistributedRuntime
 from skaal.runtime.local import LocalRuntime

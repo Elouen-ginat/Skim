@@ -11,9 +11,7 @@ class UnsatisfiableConstraints(Exception):
     def __init__(self, variable_name: str, reason: str = "") -> None:
         self.variable_name = variable_name
         self.reason = reason
-        super().__init__(
-            f"Cannot satisfy constraints for {variable_name!r}. {reason}"
-        )
+        super().__init__(f"Cannot satisfy constraints for {variable_name!r}. {reason}")
 
 
 # Backends that require VPC per target family
@@ -80,7 +78,9 @@ def select_backend(
 
         # Check access_pattern
         if access_pattern is not None:
-            ap_value = access_pattern.value if hasattr(access_pattern, "value") else str(access_pattern)
+            ap_value = (
+                access_pattern.value if hasattr(access_pattern, "value") else str(access_pattern)
+            )
             spec_patterns = spec.get("access_patterns", [])
             if ap_value not in spec_patterns:
                 compatible = False
@@ -131,7 +131,9 @@ def select_backend(
             dur_val = durability.value if hasattr(durability, "value") else str(durability)
             reasons.append(f"durability={dur_val}")
         if access_pattern is not None:
-            ap_val = access_pattern.value if hasattr(access_pattern, "value") else str(access_pattern)
+            ap_val = (
+                access_pattern.value if hasattr(access_pattern, "value") else str(access_pattern)
+            )
             reasons.append(f"access_pattern={ap_val}")
         raise UnsatisfiableConstraints(
             variable_name,

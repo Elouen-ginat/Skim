@@ -95,13 +95,10 @@ class Catalog(BaseModel):
 
         compute: dict[str, ComputeBackendSpec] = {}
         for k, v in data.get("compute", {}).items():
-            spec = ComputeBackendSpec(**v)
-            if spec.deploy:
-                compute_deploy_config(k, spec.deploy)  # raises ValueError on bad config
-            compute[k] = spec
+            cspec = ComputeBackendSpec(**v)
+            if cspec.deploy:
+                compute_deploy_config(k, cspec.deploy)  # raises ValueError on bad config
+            compute[k] = cspec
 
-        network = {
-            k: NetworkSpec(**v)
-            for k, v in data.get("network", {}).items()
-        }
+        network = {k: NetworkSpec(**v) for k, v in data.get("network", {}).items()}
         return cls(storage=storage, compute=compute, network=network, raw=data)

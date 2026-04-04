@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, List
 
 
 class RedisBackend:
@@ -23,7 +23,7 @@ class RedisBackend:
     def __init__(self, url: str = "redis://localhost:6379", namespace: str = "default") -> None:
         self.url = url
         self.namespace = namespace
-        self._client: Any | None = None
+        self._client: Any = None
 
     def _key(self, key: str) -> str:
         return f"skaal:{self.namespace}:{key}"
@@ -31,12 +31,13 @@ class RedisBackend:
     def _strip_prefix(self, full_key: str) -> str:
         prefix = f"skaal:{self.namespace}:"
         if full_key.startswith(prefix):
-            return full_key[len(prefix):]
+            return full_key[len(prefix) :]
         return full_key
 
     async def connect(self) -> None:
         """Create the async Redis client. Call before first use."""
-        import redis.asyncio as aioredis
+        import redis.asyncio as aioredis  # type: ignore[import-untyped]
+
         self._client = aioredis.from_url(self.url, decode_responses=True)
 
     async def _ensure_connected(self) -> None:
@@ -73,7 +74,7 @@ class RedisBackend:
                 result.append((self._strip_prefix(k), json.loads(v)))
         return result
 
-    async def scan(self, prefix: str = "") -> list[tuple[str, Any]]:
+    async def scan(self, prefix: str = "") -> List[tuple[str, Any]]:
         await self._ensure_connected()
         pattern = f"skaal:{self.namespace}:{prefix}*"
         result = []

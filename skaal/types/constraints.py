@@ -9,13 +9,15 @@ from enum import Enum
 
 class Durability(str, Enum):
     """Storage durability tier."""
-    EPHEMERAL = "ephemeral"    # in-memory only, lost on restart
+
+    EPHEMERAL = "ephemeral"  # in-memory only, lost on restart
     PERSISTENT = "persistent"  # survives restarts (disk-backed)
-    DURABLE = "durable"        # replicated, high-availability (e.g. S3 11-nines)
+    DURABLE = "durable"  # replicated, high-availability (e.g. S3 11-nines)
 
 
 class AccessPattern(str, Enum):
     """How data is primarily accessed; guides backend selection."""
+
     RANDOM_READ = "random-read"
     RANDOM_WRITE = "random-write"
     SEQUENTIAL = "sequential"
@@ -25,11 +27,12 @@ class AccessPattern(str, Enum):
     TRANSACTIONAL = "transactional"
     PUB_SUB = "pub-sub"
     EVENT_LOG = "event-log"  # immutable, ordered, replayable → Kafka/Kinesis
-    WORM = "worm"            # write-once-read-many (audit logs, compliance)
+    WORM = "worm"  # write-once-read-many (audit logs, compliance)
 
 
 class Consistency(str, Enum):
     """Read consistency model for shared/distributed state."""
+
     EVENTUAL = "eventual"
     STRONG = "strong"
     CAUSAL = "causal"
@@ -80,6 +83,7 @@ class Throughput:
 @dataclass
 class DecommissionPolicy:
     """Policy for decommissioning old infrastructure after a completed migration."""
+
     retention_days: int = 30
     archive: bool = True
     archive_target: str = "s3"

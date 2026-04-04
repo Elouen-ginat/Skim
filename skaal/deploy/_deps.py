@@ -46,6 +46,7 @@ def collect_user_packages(source_module: str) -> list[str]:
 
 # ── internals ─────────────────────────────────────────────────────────────────
 
+
 def _find_source(module_name: str) -> Path | None:
     """Locate the .py file for *module_name*, or None if not found."""
     try:
@@ -82,7 +83,7 @@ def _resolve_packages(names: set[str]) -> list[str]:
     stdlib = sys.stdlib_module_names  # available since Python 3.10
 
     # importlib.metadata.packages_distributions() → {module_name: [dist, ...]}
-    pkg_dist: dict[str, list[str]] = importlib.metadata.packages_distributions()
+    pkg_dist: dict[str, list[str]] = dict(importlib.metadata.packages_distributions())
 
     distributions: set[str] = set()
     for name in names:

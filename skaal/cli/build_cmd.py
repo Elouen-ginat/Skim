@@ -100,11 +100,11 @@ def build(
     cfg = SkaalSettings()
 
     # CLI flags win; fall back to merged config (env > pyproject.toml > default).
-    resolved_app    = module_app or cfg.app
-    resolved_target = target     or cfg.target
-    resolved_region = region     or cfg.region
-    resolved_out    = out        or cfg.out
-    resolved_catalog = catalog   or cfg.catalog
+    resolved_app = module_app or cfg.app
+    resolved_target = target or cfg.target
+    resolved_region = region or cfg.region
+    resolved_out = out or cfg.out
+    resolved_catalog = catalog or cfg.catalog
 
     if resolved_app is None:
         typer.echo(
@@ -127,8 +127,8 @@ def build(
     module_path, _, var_name = resolved_app.partition(":")
     skaal_app = load_app(resolved_app)
 
-    from skaal.plan import PLAN_FILE_NAME, PlanFile
     from skaal.catalog.loader import load_catalog
+    from skaal.plan import PLAN_FILE_NAME, PlanFile
     from skaal.solver.solver import solve
     from skaal.solver.storage import UnsatisfiableConstraints
 
@@ -162,8 +162,9 @@ def build(
     typer.echo(f"Generating artifacts in {resolved_out}/ ...")
 
     if solver_target == "aws-lambda":
-        from skaal.deploy.aws_lambda import generate_artifacts
-        generated = generate_artifacts(
+        from skaal.deploy.aws_lambda import generate_artifacts as _gen_aws
+
+        generated = _gen_aws(
             app=skaal_app,
             plan=plan_file,
             output_dir=resolved_out,
@@ -171,9 +172,10 @@ def build(
             app_var=var_name,
         )
     elif solver_target == "gcp-cloudrun":
-        from skaal.deploy.gcp_cloudrun import generate_artifacts
+        from skaal.deploy.gcp_cloudrun import generate_artifacts as _gen_gcp
+
         gcp_region = resolved_region if resolved_region != "us-east-1" else "us-central1"
-        generated = generate_artifacts(
+        generated = _gen_gcp(
             app=skaal_app,
             plan=plan_file,
             output_dir=resolved_out,
@@ -182,8 +184,9 @@ def build(
             region=gcp_region,
         )
     else:  # local-compose
-        from skaal.deploy.docker_compose import generate_artifacts
-        generated = generate_artifacts(
+        from skaal.deploy.docker_compose import generate_artifacts as _gen_local
+
+        generated = _gen_local(
             app=skaal_app,
             plan=plan_file,
             output_dir=resolved_out,
@@ -196,6 +199,6 @@ def build(
         typer.echo(f"  {path}")
 
     if resolved_target in ("local", "local-compose"):
-        typer.echo(f"\nRun `docker-compose up --build` to start the local deployment.")
+        typer.echo("\nRun `docker-compose up --build` to start the local deployment.")
     else:
         typer.echo(f"\nRun `skaal deploy` to push to {resolved_target.upper()}.")

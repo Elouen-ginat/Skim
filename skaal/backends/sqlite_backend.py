@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, List
 
 
 class SqliteBackend:
@@ -37,7 +37,7 @@ class SqliteBackend:
     ) -> None:
         self.path = Path(path)
         self.namespace = namespace
-        self._db = None  # aiosqlite connection, lazy-opened
+        self._db: Any = None  # aiosqlite connection, lazy-opened
 
     async def connect(self) -> None:
         """Open the SQLite connection and create table if needed."""
@@ -99,7 +99,7 @@ class SqliteBackend:
             rows = await cursor.fetchall()
         return [(row[0], json.loads(row[1])) for row in rows]
 
-    async def scan(self, prefix: str = "") -> list[tuple[str, Any]]:
+    async def scan(self, prefix: str = "") -> List[tuple[str, Any]]:
         await self._ensure_connected()
         async with self._db.execute(
             "SELECT key, value FROM kv WHERE ns = ? AND key LIKE ?",

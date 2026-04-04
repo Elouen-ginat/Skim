@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import functools
 from typing import Any, Callable, TypeVar
 
 from skaal.types import (
@@ -38,11 +37,13 @@ def storage(
     """Declare infrastructure constraints for a storage variable or Map class."""
 
     def decorator(cls: type) -> type:
+        _rl: Latency | None
         if isinstance(read_latency, str):
             _rl = Latency(read_latency)
         else:
             _rl = read_latency
 
+        _wl: Latency | None
         if isinstance(write_latency, str):
             _wl = Latency(write_latency)
         else:
@@ -51,22 +52,23 @@ def storage(
         # Collect schema hints from Map / Collection subclasses
         try:
             from skaal.storage import _schema_hints
+
             schema = _schema_hints(cls)
         except Exception:  # noqa: BLE001
             schema = {}
 
-        cls.__skim_storage__ = {
+        cls.__skim_storage__ = {  # type: ignore[attr-defined]
             "read_latency": _rl,
             "write_latency": _wl,
             "durability": Durability(durability) if isinstance(durability, str) else durability,
             "size_hint": size_hint,
             "access_pattern": (
-                AccessPattern(access_pattern)
-                if isinstance(access_pattern, str)
-                else access_pattern
+                AccessPattern(access_pattern) if isinstance(access_pattern, str) else access_pattern
             ),
             "write_throughput": (
-                Throughput(write_throughput) if isinstance(write_throughput, str) else write_throughput
+                Throughput(write_throughput)
+                if isinstance(write_throughput, str)
+                else write_throughput
             ),
             "residency": residency,
             "retention": retention,
@@ -95,7 +97,9 @@ def compute(
         fn.__skim_compute__ = Compute(  # type: ignore[attr-defined]
             latency=latency,
             throughput=throughput,
-            compute_type=compute_type,
+            compute_type=ComputeType(compute_type)
+            if isinstance(compute_type, str)
+            else compute_type,
             memory=memory,
             schedule=schedule,
         )
@@ -113,7 +117,10 @@ def scale(
     """Declare scaling policy for a function."""
 
     def decorator(fn: F) -> F:
-        fn.__skim_scale__ = Scale(instances=instances, strategy=strategy)  # type: ignore[attr-defined]
+        fn.__skim_scale__ = Scale(  # type: ignore[attr-defined]
+            instances=instances,
+            strategy=ScaleStrategy(strategy) if isinstance(strategy, str) else strategy,
+        )
         return fn
 
     return decorator

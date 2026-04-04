@@ -47,20 +47,18 @@ def catalog(
 
     if section in ("all", "compute") and cat.compute:
         typer.echo(f"Compute backends ({len(cat.compute)}):")
-        typer.echo(
-            f"  {'Name':<28} {'Display':<32} {'vCPUs':<8} {'Memory':<10} {'$/hr'}"
-        )
+        typer.echo(f"  {'Name':<28} {'Display':<32} {'vCPUs':<8} {'Memory':<10} {'$/hr'}")
         typer.echo(f"  {'-'*28} {'-'*32} {'-'*8} {'-'*10} {'-'*8}")
-        for name, spec in sorted(cat.compute.items()):
+        for name, cspec in sorted(cat.compute.items()):
             typer.echo(
-                f"  {name:<28} {spec.display_name:<32} {spec.vcpus:<8} {spec.memory_gb:<10.1f} ${spec.cost_per_hour:.4f}"
+                f"  {name:<28} {cspec.display_name:<32} {cspec.vcpus:<8} {cspec.memory_gb:<10.1f} ${cspec.cost_per_hour:.4f}"
             )
         typer.echo("")
 
     if section in ("all", "network") and cat.network:
         typer.echo(f"Network backends ({len(cat.network)}):")
-        for name, spec in sorted(cat.network.items()):
-            typer.echo(f"  {name}: {spec.display_name}")
+        for name, nspec in sorted(cat.network.items()):
+            typer.echo(f"  {name}: {nspec.display_name}")
         typer.echo("")
 
     if not cat.storage and not cat.compute and not cat.network:

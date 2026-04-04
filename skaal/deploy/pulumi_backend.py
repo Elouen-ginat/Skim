@@ -23,8 +23,7 @@ def deploy_from_plan(plan: "PlanFile", *, preview: bool = False) -> dict[str, An
         NotImplementedError: Until Phase 3 is complete.
     """
     raise NotImplementedError(
-        "deploy_from_plan() is not yet implemented. "
-        "Run `skaal deploy` once Phase 3 is complete."
+        "deploy_from_plan() is not yet implemented. " "Run `skaal deploy` once Phase 3 is complete."
     )
 
 

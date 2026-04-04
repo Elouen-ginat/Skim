@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import Any
+from typing import Any, List
 
 
 class DynamoBackend:
@@ -30,8 +30,7 @@ class DynamoBackend:
                 import boto3
             except ImportError as exc:
                 raise ImportError(
-                    "boto3 is required for DynamoBackend. "
-                    "Install it with: pip install boto3"
+                    "boto3 is required for DynamoBackend. " "Install it with: pip install boto3"
                 ) from exc
             self._client = boto3.client("dynamodb", region_name=self.region)
         return self._client
@@ -97,7 +96,7 @@ class DynamoBackend:
 
         return await self._run(_scan)
 
-    async def scan(self, prefix: str = "") -> list[tuple[str, Any]]:
+    async def scan(self, prefix: str = "") -> List[tuple[str, Any]]:
         client = self._get_client()
 
         def _scan() -> list[tuple[str, Any]]:

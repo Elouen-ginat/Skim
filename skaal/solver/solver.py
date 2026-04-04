@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 import hashlib
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from skaal.plan import ComponentSpec, ComputeSpec, PlanFile, StorageSpec
-from skaal.solver.storage import UnsatisfiableConstraints, select_backend
+from skaal.solver.storage import select_backend
 
 if TYPE_CHECKING:
     from skaal.app import App
@@ -84,7 +83,9 @@ def solve(app: "App", catalog: dict[str, Any], target: str = "generic") -> "Plan
         except UnsatisfiableComputeConstraints:
             # Fall back to cheapest available instance rather than failing
             if compute_backends:
-                instance_type = min(compute_backends, key=lambda n: compute_backends[n].get("cost_per_hour", 9999))
+                instance_type = min(
+                    compute_backends, key=lambda n: compute_backends[n].get("cost_per_hour", 9999)
+                )
                 reason = f"fallback: cheapest available ({instance_type})"
             else:
                 instance_type = "c5-large"

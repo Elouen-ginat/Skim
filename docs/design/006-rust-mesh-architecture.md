@@ -1,6 +1,6 @@
 # ADR 006 — Rust Mesh Architecture
 
-**Status:** Proposed  
+**Status:** Proposed
 **Date:** 2024-01-01
 
 ## Context

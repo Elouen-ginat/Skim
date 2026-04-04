@@ -19,15 +19,15 @@ if TYPE_CHECKING:
 
 
 class StabilityVerdict(str, Enum):
-    STABLE = "stable"       # no changes
-    DRIFT = "drift"         # non-breaking changes (new resources, cost tweaks)
-    BREAKING = "breaking"   # backend / instance type changed → migration needed
+    STABLE = "stable"  # no changes
+    DRIFT = "drift"  # non-breaking changes (new resources, cost tweaks)
+    BREAKING = "breaking"  # backend / instance type changed → migration needed
 
 
 @dataclass
 class ResourceDiff:
     name: str
-    kind: str   # "storage" | "compute"
+    kind: str  # "storage" | "compute"
     change: str  # "added" | "removed" | "backend_changed" | "instance_changed"
     old_value: str | None = None
     new_value: str | None = None
@@ -76,18 +76,32 @@ def diff_plans(old: "PlanFile", new: "PlanFile") -> PlanDiff:
 
     for name in set(old_storage) | set(new_storage):
         if name not in old_storage:
-            diffs.append(ResourceDiff(name=name, kind="storage", change="added", new_value=new_storage[name].backend))
+            diffs.append(
+                ResourceDiff(
+                    name=name, kind="storage", change="added", new_value=new_storage[name].backend
+                )
+            )
             continue
         if name not in new_storage:
-            diffs.append(ResourceDiff(name=name, kind="storage", change="removed", old_value=old_storage[name].backend))
+            diffs.append(
+                ResourceDiff(
+                    name=name, kind="storage", change="removed", old_value=old_storage[name].backend
+                )
+            )
             continue
         old_be = old_storage[name].backend
         new_be = new_storage[name].backend
         if old_be != new_be:
-            diffs.append(ResourceDiff(
-                name=name, kind="storage", change="backend_changed",
-                old_value=old_be, new_value=new_be, requires_migration=True,
-            ))
+            diffs.append(
+                ResourceDiff(
+                    name=name,
+                    kind="storage",
+                    change="backend_changed",
+                    old_value=old_be,
+                    new_value=new_be,
+                    requires_migration=True,
+                )
+            )
 
     # ── Compute diff ──────────────────────────────────────────────────────────
     old_compute = old.compute
@@ -95,18 +109,38 @@ def diff_plans(old: "PlanFile", new: "PlanFile") -> PlanDiff:
 
     for name in set(old_compute) | set(new_compute):
         if name not in old_compute:
-            diffs.append(ResourceDiff(name=name, kind="compute", change="added", new_value=new_compute[name].instance_type))
+            diffs.append(
+                ResourceDiff(
+                    name=name,
+                    kind="compute",
+                    change="added",
+                    new_value=new_compute[name].instance_type,
+                )
+            )
             continue
         if name not in new_compute:
-            diffs.append(ResourceDiff(name=name, kind="compute", change="removed", old_value=old_compute[name].instance_type))
+            diffs.append(
+                ResourceDiff(
+                    name=name,
+                    kind="compute",
+                    change="removed",
+                    old_value=old_compute[name].instance_type,
+                )
+            )
             continue
         old_it = old_compute[name].instance_type
         new_it = new_compute[name].instance_type
         if old_it != new_it:
-            diffs.append(ResourceDiff(
-                name=name, kind="compute", change="instance_changed",
-                old_value=old_it, new_value=new_it, requires_migration=False,
-            ))
+            diffs.append(
+                ResourceDiff(
+                    name=name,
+                    kind="compute",
+                    change="instance_changed",
+                    old_value=old_it,
+                    new_value=new_it,
+                    requires_migration=False,
+                )
+            )
 
     # ── Verdict ───────────────────────────────────────────────────────────────
     if not diffs:
