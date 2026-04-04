@@ -19,9 +19,10 @@ env/
 target/
 Cargo.lock
 
-# Skim
-plan.skim.lock
+# Skaal
+plan.skaal.lock
 *.plan.lock
+artifacts/
 
 # Tools
 .ruff_cache/
@@ -39,3 +40,6 @@ htmlcov/
 # OS
 .DS_Store
 Thumbs.db
+
+# uv
+uv.lock

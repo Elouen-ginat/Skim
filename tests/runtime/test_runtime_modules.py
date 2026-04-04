@@ -124,6 +124,7 @@ async def test_channel_subscriber_cleanup():
     await asyncio.sleep(0)
     await ch.publish("t", "go")
     await asyncio.wait_for(task, timeout=1.0)
+    await asyncio.sleep(0)  # Allow async generator cleanup to complete
     # After consumer done, topic queue list should be empty
     assert ch._queues.get("t", []) == []
 

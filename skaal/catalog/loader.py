@@ -19,12 +19,18 @@ _DEFAULT_PATHS: list[str] = [
 ]
 
 
-def load_catalog(path: Path | str | None = None) -> dict[str, Any]:
+def load_catalog(path: Path | str | None = None, target: str | None = None) -> dict[str, Any]:
     """
     Load a catalog TOML and return the raw dict.
 
-    Searches ``CWD/catalogs/aws.toml`` (then other defaults) when *path* is
-    not given.  Raises ``FileNotFoundError`` if nothing is found.
+    Searches ``CWD/catalogs/<target>.toml`` (or catalogs/aws.toml if target is
+    not given) when *path* is not given.  Raises ``FileNotFoundError`` if nothing
+    is found.
+    
+    Args:
+        path: Explicit path to catalog file. If given, target is ignored.
+        target: Deploy target name to search for (e.g., 'aws', 'gcp', 'aws-lambda').
+                Base target extracted from full target name (e.g., 'aws' from 'aws-lambda').
     """
     if path is not None:
         resolved = Path(path)
@@ -36,7 +42,17 @@ def load_catalog(path: Path | str | None = None) -> dict[str, Any]:
         with open(resolved, "rb") as f:
             return tomllib.load(f)
 
-    for candidate in _DEFAULT_PATHS:
+    # Build search order: prioritize target-specific catalog, then cloud catalogs, then local
+    search_order = _DEFAULT_PATHS.copy()
+    if target and target not in ("generic",):
+        # Extract base target from full target name (e.g., 'aws' from 'aws-lambda')
+        base_target = target.split("-")[0]
+        target_catalog = f"catalogs/{base_target}.toml"
+        if target_catalog in search_order:
+            search_order.remove(target_catalog)
+        search_order.insert(0, target_catalog)
+
+    for candidate in search_order:
         p = Path.cwd() / candidate
         if p.exists():
             with open(p, "rb") as f:
@@ -44,7 +60,7 @@ def load_catalog(path: Path | str | None = None) -> dict[str, Any]:
 
     raise FileNotFoundError(
         "No catalog found. Tried: "
-        + ", ".join(_DEFAULT_PATHS)
+        + ", ".join(search_order)
         + ". Pass --catalog <path> or create catalogs/aws.toml."
     )
 

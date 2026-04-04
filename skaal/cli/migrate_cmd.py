@@ -7,23 +7,10 @@ from typing import Optional
 
 import typer
 
+from skaal.cli._utils import get_app_name
 from skaal.migrate.engine import STAGE_NAMES, MigrationEngine
 
 app = typer.Typer(help="Manage backend migrations.")
-
-
-def _get_app_name() -> str:
-    """Load app name from plan.skaal.lock, fall back to directory name."""
-    plan_path = Path("plan.skaal.lock")
-    if plan_path.exists():
-        try:
-            from skaal.plan import PlanFile
-
-            plan = PlanFile.read(plan_path)
-            return plan.app_name
-        except Exception:  # noqa: BLE001
-            pass
-    return Path.cwd().name
 
 
 @app.command("start")
@@ -39,7 +26,7 @@ def start(
     ),
 ) -> None:
     """Start a new migration for a storage variable."""
-    app_name = _get_app_name()
+    app_name = get_app_name()
     engine = MigrationEngine(app_name, variable)
 
     existing = engine.load_state()
@@ -66,7 +53,7 @@ def advance(
     ),
 ) -> None:
     """Advance a variable's migration to the next stage."""
-    app_name = _get_app_name()
+    app_name = get_app_name()
     engine = MigrationEngine(app_name, variable)
 
     state = engine.load_state()
@@ -95,7 +82,7 @@ def status(
     ),
 ) -> None:
     """Show the current migration stage and readiness for the next stage."""
-    app_name = _get_app_name()
+    app_name = get_app_name()
     engine = MigrationEngine(app_name, variable)
 
     state = engine.load_state()
@@ -120,7 +107,7 @@ def rollback(
     ),
 ) -> None:
     """Roll back a migration to the previous stage."""
-    app_name = _get_app_name()
+    app_name = get_app_name()
     engine = MigrationEngine(app_name, variable)
 
     state = engine.load_state()
@@ -144,7 +131,7 @@ def rollback(
 @app.command("list")
 def list_migrations() -> None:
     """List all pending and in-progress migrations."""
-    app_name = _get_app_name()
+    app_name = get_app_name()
     # List migrations across all apps under .skaal/migrations/
     base_dir = Path(".skaal/migrations")
     if not base_dir.exists():

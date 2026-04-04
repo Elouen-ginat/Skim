@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-import importlib
-import sys
 from pathlib import Path
 from typing import Optional
 
 import typer
+
+from skaal.cli._utils import load_app
 
 app = typer.Typer(help="Show what changes between plan versions.")
 
@@ -144,31 +144,7 @@ def diff(
         _print_plan_summary(existing_plan)
         return
 
-    # Re-solve the app and diff
-    if ":" not in module_app:
-        typer.echo(
-            f"Error: MODULE:APP must contain ':', got {module_app!r}", err=True
-        )
-        raise typer.Exit(1)
-
-    module_path, _, var_name = module_app.partition(":")
-
-    cwd = str(Path.cwd())
-    if cwd not in sys.path:
-        sys.path.insert(0, cwd)
-
-    try:
-        module = importlib.import_module(module_path)
-    except ModuleNotFoundError as exc:
-        typer.echo(f"Error: cannot import {module_path!r}: {exc}", err=True)
-        raise typer.Exit(1) from exc
-
-    skim_app = getattr(module, var_name, None)
-    if skim_app is None:
-        typer.echo(
-            f"Error: {module_path!r} has no attribute {var_name!r}", err=True
-        )
-        raise typer.Exit(1)
+    skim_app = load_app(module_app)
 
     try:
         from skaal.catalog.loader import load_catalog

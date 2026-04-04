@@ -1,0 +1,18 @@
+version: '3.8'
+
+services:
+  # Main application service
+  app:
+    build: .
+    container_name: skaal-app
+    ports:
+      - "${port}:8000"
+    environment:
+${service_env_vars}
+    depends_on:
+${service_dependencies}
+    volumes:
+      - .:/app
+    command: gunicorn --bind 0.0.0.0:8000 --workers 2 --timeout 120 --reload main:application
+
+${additional_services}

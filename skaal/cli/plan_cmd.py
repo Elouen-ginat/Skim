@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-import importlib
-import sys
 from pathlib import Path
 from typing import Optional
 
 import typer
+
+from skaal.cli._utils import load_app
+from skaal.cli.config import SkaalSettings
 
 app = typer.Typer(help="Run the constraint solver and generate a plan.")
 
@@ -16,19 +17,25 @@ app = typer.Typer(help="Run the constraint solver and generate a plan.")
 def plan(
     target_app: Optional[str] = typer.Argument(
         None,
-        help="App to plan as 'module:variable', e.g. 'examples.counter:app'.",
+        help=(
+            "App to plan as 'module:variable', e.g. 'examples.counter:app'. "
+            "Falls back to 'app' in [tool.skaal] of pyproject.toml."
+        ),
         metavar="MODULE:APP",
     ),
-    target: str = typer.Option(
-        "generic",
+    target: Optional[str] = typer.Option(
+        None,
         "--target",
         "-t",
-        help="Deploy target: generic, aws-lambda, k8s, ecs.",
+        help=(
+            "Deploy target: aws, gcp, aws-lambda, gcp-cloudrun, k8s, ecs. "
+            "Env: SKAAL_TARGET. pyproject: tool.skaal.target."
+        ),
     ),
     catalog: Optional[Path] = typer.Option(
         None,
         "--catalog",
-        help="Path to catalog TOML. Defaults to catalogs/aws.toml.",
+        help="Path to catalog TOML. Env: SKAAL_CATALOG. pyproject: tool.skaal.catalog.",
     ),
     reoptimize: bool = typer.Option(False, "--reoptimize", help="Force re-solving all backend choices."),
     pin: list[str] = typer.Option([], "--pin", help="Pin a variable to a backend, e.g. profiles=redis."),
@@ -41,53 +48,39 @@ def plan(
 
     Example:
 
-        skaal plan examples.counter:app --target aws-lambda
+        skaal plan examples.counter:app --target aws
     """
-    if target_app is None:
-        typer.echo("Error: missing required argument MODULE:APP.", err=True)
-        typer.echo("  Example: skaal plan examples.counter:app", err=True)
-        raise typer.Exit(1)
+    cfg = SkaalSettings()
 
-    if ":" not in target_app:
+    resolved_app     = target_app or cfg.app
+    resolved_target  = target     or cfg.target
+    resolved_catalog = catalog    or cfg.catalog
+
+    if resolved_app is None:
         typer.echo(
-            f"Error: target must be 'module:variable', got {target_app!r}", err=True
+            "Error: missing MODULE:APP.\n"
+            "  Pass it as an argument: skaal plan mypackage.app:skaal_app\n"
+            "  Or set 'app' in [tool.skaal] of pyproject.toml.",
+            err=True,
         )
         raise typer.Exit(1)
 
-    module_path, _, var_name = target_app.partition(":")
-
-    # Make the current directory importable.
-    cwd = str(Path.cwd())
-    if cwd not in sys.path:
-        sys.path.insert(0, cwd)
-
-    try:
-        module = importlib.import_module(module_path)
-    except ModuleNotFoundError as exc:
-        typer.echo(f"Error: cannot import {module_path!r}: {exc}", err=True)
-        raise typer.Exit(1) from exc
-
-    skim_app = getattr(module, var_name, None)
-    if skim_app is None:
-        typer.echo(
-            f"Error: {module_path!r} has no attribute {var_name!r}", err=True
-        )
-        raise typer.Exit(1)
+    skim_app = load_app(resolved_app)
 
     from skaal.catalog.loader import load_catalog
     from skaal.solver.solver import solve
     from skaal.solver.storage import UnsatisfiableConstraints
 
     try:
-        cat = load_catalog(catalog)
+        cat = load_catalog(resolved_catalog, target=resolved_target)
     except FileNotFoundError as exc:
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(1) from exc
 
-    typer.echo(f"Solving constraints for {skim_app.name!r} → target={target!r} ...")
+    typer.echo(f"Solving constraints for {skim_app.name!r} → target={resolved_target!r} ...")
 
     try:
-        plan_file = solve(skim_app, cat, target=target)
+        plan_file = solve(skim_app, cat, target=resolved_target)
     except UnsatisfiableConstraints as exc:
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(1) from exc

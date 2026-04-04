@@ -149,13 +149,16 @@ reserved_concurrency  = -1
 # ── Network ────────────────────────────────────────────────────────────────
 
 [network.same-az]
+display_name = "Same AZ"
 latency_ms = { min = 0.1, max = 1.0 }
 bandwidth_gbps = 10
 
 [network.same-region]
+display_name = "Same Region"
 latency_ms = { min = 1.0, max = 5.0 }
 bandwidth_gbps = 5
 
 [network.cross-region]
+display_name = "Cross Region"
 latency_ms = { min = 20, max = 200 }
 bandwidth_gbps = 1

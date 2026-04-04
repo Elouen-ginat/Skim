@@ -48,7 +48,7 @@ def plan(
     Returns:
         A solved :class:`~skaal.plan.PlanFile`.
     """
-    catalog: dict[str, Any] = load_catalog(catalog_path)
+    catalog: dict[str, Any] = load_catalog(catalog_path, target=target)
 
     # Validate dependency graph (raises CyclicDependencyError on cycles)
     build_graph(app)

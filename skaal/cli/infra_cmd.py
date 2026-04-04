@@ -1,4 +1,4 @@
-"""`skaal infra` — inspect, clean up, and catalog active infrastructure."""
+"""`skaal infra` — inspect and manage active infrastructure."""
 
 from __future__ import annotations
 
@@ -6,6 +6,8 @@ from pathlib import Path
 from typing import Optional
 
 import typer
+
+from skaal.cli._utils import get_app_name
 
 app = typer.Typer(help="Manage active infrastructure.")
 
@@ -94,7 +96,7 @@ def cleanup(
     """Remove migration state and mark a variable as decommissioned."""
     from skaal.migrate.engine import MigrationEngine
 
-    app_name = _get_app_name()
+    app_name = get_app_name()
     engine = MigrationEngine(app_name, variable)
     state = engine.load_state()
 
@@ -125,71 +127,3 @@ def cleanup(
         typer.echo(f"Migration state file not found for {variable!r}.")
 
 
-@app.command("catalog")
-def catalog(
-    catalog_path: Optional[Path] = typer.Option(
-        None, "--catalog", help="Path to catalog TOML. Defaults to catalogs/aws.toml."
-    ),
-    section: str = typer.Option(
-        "all",
-        "--section",
-        "-s",
-        help="Section to display: all, storage, compute, network.",
-    ),
-) -> None:
-    """Show all available backends from the loaded infrastructure catalog."""
-    from skaal.catalog.loader import load_typed_catalog
-
-    try:
-        cat = load_typed_catalog(catalog_path)
-    except FileNotFoundError as exc:
-        typer.echo(f"Error: {exc}", err=True)
-        raise typer.Exit(1) from exc
-
-    if section in ("all", "storage") and cat.storage:
-        typer.echo(f"Storage backends ({len(cat.storage)}):")
-        typer.echo(
-            f"  {'Name':<28} {'Display':<32} {'Read lat':<12} {'Durability':<22} {'$/GB/mo'}"
-        )
-        typer.echo(f"  {'-'*28} {'-'*32} {'-'*12} {'-'*22} {'-'*8}")
-        for name, spec in sorted(cat.storage.items()):
-            dur = ", ".join(spec.durability)
-            lat = f"{spec.read_latency.min}–{spec.read_latency.max}ms"
-            typer.echo(
-                f"  {name:<28} {spec.display_name:<32} {lat:<12} {dur:<22} ${spec.cost_per_gb_month:.3f}"
-            )
-        typer.echo("")
-
-    if section in ("all", "compute") and cat.compute:
-        typer.echo(f"Compute backends ({len(cat.compute)}):")
-        typer.echo(
-            f"  {'Name':<28} {'Display':<32} {'vCPUs':<8} {'Memory':<10} {'$/hr'}"
-        )
-        typer.echo(f"  {'-'*28} {'-'*32} {'-'*8} {'-'*10} {'-'*8}")
-        for name, spec in sorted(cat.compute.items()):
-            typer.echo(
-                f"  {name:<28} {spec.display_name:<32} {spec.vcpus:<8} {spec.memory_gb:<10.1f} ${spec.cost_per_hour:.4f}"
-            )
-        typer.echo("")
-
-    if section in ("all", "network") and cat.network:
-        typer.echo(f"Network backends ({len(cat.network)}):")
-        for name, spec in sorted(cat.network.items()):
-            typer.echo(f"  {name}: {spec.display_name}")
-        typer.echo("")
-
-    if not cat.storage and not cat.compute and not cat.network:
-        typer.echo("Catalog is empty.")
-
-
-def _get_app_name() -> str:
-    """Load app name from plan.skaal.lock, fall back to directory name."""
-    plan_path = Path("plan.skaal.lock")
-    if plan_path.exists():
-        try:
-            from skaal.plan import PlanFile
-            plan = PlanFile.read(plan_path)
-            return plan.app_name
-        except Exception:  # noqa: BLE001
-            pass
-    return Path.cwd().name

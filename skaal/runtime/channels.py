@@ -48,3 +48,6 @@ class LocalChannel(Channel):
             queues = self._queues.get(topic, [])
             if q in queues:
                 queues.remove(q)
+            # Clean up topic if no subscribers remain
+            if not queues:
+                self._queues.pop(topic, None)

@@ -3,20 +3,25 @@
 from __future__ import annotations
 
 import asyncio
-import importlib
-import sys
 from pathlib import Path
+from typing import Optional
 
 import typer
+
+from skaal.cli._utils import load_app
+from skaal.cli.config import SkaalSettings
 
 app = typer.Typer(help="Run a Skaal app locally.")
 
 
 @app.callback(invoke_without_command=True)
 def run(
-    target: str = typer.Argument(
-        ...,
-        help="App to run as 'module:variable', e.g. 'examples.counter:app'.",
+    target: Optional[str] = typer.Argument(
+        None,
+        help=(
+            "App to run as 'module:variable', e.g. 'examples.counter:app'. "
+            "Falls back to 'app' in [tool.skaal] of pyproject.toml."
+        ),
         metavar="MODULE:APP",
     ),
     host: str = typer.Option("127.0.0.1", "--host", "-H", help="Bind address."),
@@ -45,31 +50,16 @@ def run(
         skaal run examples.counter:app --persist
         curl -s localhost:8000/increment -d '{"name": "hits"}' | jq
     """
-    if ":" not in target:
+    resolved_app = target or SkaalSettings().app
+    if resolved_app is None:
         typer.echo(
-            f"Error: target must be 'module:variable', got {target!r}", err=True
+            "Error: missing MODULE:APP.\n"
+            "  Pass it as an argument: skaal run mypackage.app:skaal_app\n"
+            "  Or set 'app' in [tool.skaal] of pyproject.toml.",
+            err=True,
         )
         raise typer.Exit(1)
-
-    module_path, _, var_name = target.partition(":")
-
-    # Make the current directory importable so `skaal run myapp:app` works.
-    cwd = str(Path.cwd())
-    if cwd not in sys.path:
-        sys.path.insert(0, cwd)
-
-    try:
-        module = importlib.import_module(module_path)
-    except ModuleNotFoundError as exc:
-        typer.echo(f"Error: cannot import {module_path!r}: {exc}", err=True)
-        raise typer.Exit(1) from exc
-
-    skim_app = getattr(module, var_name, None)
-    if skim_app is None:
-        typer.echo(
-            f"Error: {module_path!r} has no attribute {var_name!r}", err=True
-        )
-        raise typer.Exit(1)
+    skim_app = load_app(resolved_app)
 
     from skaal.runtime.local import LocalRuntime
 

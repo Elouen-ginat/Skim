@@ -60,65 +60,61 @@ class Sessions(Map[str, UserState]):
 
 # ── Dash layout and callbacks ─────────────────────────────────────────────────
 
-try:
-    import dash
-    from dash import dcc, html, callback, Input, Output, State
-    import dash_bootstrap_components as dbc  # type: ignore[import]
+import dash
+from dash import dcc, html, callback, Input, Output, State
+import dash_bootstrap_components as dbc  # type: ignore[import]
 
-    dash_app = dash.Dash(
-        __name__,
-        external_stylesheets=[dbc.themes.BOOTSTRAP],
-        suppress_callback_exceptions=True,
-    )
+dash_app = dash.Dash(
+    __name__,
+    external_stylesheets=[dbc.themes.BOOTSTRAP],
+    suppress_callback_exceptions=True,
+)
 
-    dash_app.layout = html.Div([
-        # Session ID lives in the browser — stateless server side
-        dcc.Store(id="session-id", storage_type="session"),
-        dcc.Interval(id="init", interval=1, n_intervals=0, max_intervals=1),
+dash_app.layout = html.Div([
+    # Session ID lives in the browser — stateless server side
+    dcc.Store(id="session-id", storage_type="session"),
+    dcc.Interval(id="init", interval=1, n_intervals=0, max_intervals=1),
 
-        html.H2("Skaal + Dash Demo"),
-        html.P("Server-side state per user. Scalable across multiple instances."),
+    html.H2("Skaal + Dash Demo"),
+    html.P("Server-side state per user. Scalable across multiple instances."),
 
-        html.Button("Click me!", id="click-btn", n_clicks=0),
-        html.Div(id="output"),
-    ])
+    html.Button("Click me!", id="click-btn", n_clicks=0),
+    html.Div(id="output"),
+])
 
-    @callback(
-        Output("session-id", "data"),
-        Input("init", "n_intervals"),
-        State("session-id", "data"),
-    )
-    def init_session(_, existing_id):
-        """Assign a session ID on first load if none exists."""
-        if existing_id:
-            return existing_id
-        session_id = str(uuid.uuid4())
-        # sync_set is safe in Dash callbacks — no event loop conflict
-        Sessions.sync_set(session_id, UserState(session_id=session_id))
-        return session_id
+@callback(
+    Output("session-id", "data"),
+    Input("init", "n_intervals"),
+    State("session-id", "data"),
+)
+def init_session(_, existing_id):
+    """Assign a session ID on first load if none exists."""
+    if existing_id:
+        return existing_id
+    session_id = str(uuid.uuid4())
+    # sync_set is safe in Dash callbacks — no event loop conflict
+    Sessions.sync_set(session_id, UserState(session_id=session_id))
+    return session_id
 
-    @callback(
-        Output("output", "children"),
-        Input("click-btn", "n_clicks"),
-        State("session-id", "data"),
-        prevent_initial_call=True,
-    )
-    def handle_click(n_clicks, session_id):
-        """Increment this user's click counter in server-side state."""
-        if not session_id:
-            return "No session yet."
+@callback(
+    Output("output", "children"),
+    Input("click-btn", "n_clicks"),
+    State("session-id", "data"),
+    prevent_initial_call=True,
+)
+def handle_click(n_clicks, session_id):
+    """Increment this user's click counter in server-side state."""
+    if not session_id:
+        return "No session yet."
 
-        # sync_get / sync_set — safe in sync Dash callbacks
-        state = Sessions.sync_get(session_id) or UserState(session_id=session_id)
-        state.click_count += 1
-        state.last_clicked = datetime.now(timezone.utc).isoformat()
-        Sessions.sync_set(session_id, state)
+    # sync_get / sync_set — safe in sync Dash callbacks
+    state = Sessions.sync_get(session_id) or UserState(session_id=session_id)
+    state.click_count += 1
+    state.last_clicked = datetime.now(timezone.utc).isoformat()
+    Sessions.sync_set(session_id, state)
 
-        return f"Clicks: {state.click_count} — last at {state.last_clicked}"
+    return f"Clicks: {state.click_count} — last at {state.last_clicked}"
 
-except ImportError:
-    # Dash is optional — skaal_app is importable without it for planning/deploy
-    dash_app = None  # type: ignore[assignment]
 
 
 # ── Tell Skaal which WSGI app to serve ────────────────────────────────────────

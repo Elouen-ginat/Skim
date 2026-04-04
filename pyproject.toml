@@ -17,9 +17,11 @@ dependencies = [
     "tomllib; python_version < '3.11'",
     "redis>=5.0",
     "aiosqlite>=0.19",
+    "uvicorn>=0.29",
+    "starlette>=0.34",
 ]
 
-[project.optional-dependencies]
+[dependency-groups]
 aws = [
     "boto3>=1.34",
     "pulumi>=3.0",
@@ -42,6 +44,11 @@ dev = [
     "mypy>=1.8",
     "hatchling",
     "maturin>=1.4",
+]
+examples = [
+    "dash",
+    "fastapi",
+    "dash-bootstrap-components>=1.0",
 ]
 
 [project.scripts]
@@ -73,3 +80,15 @@ plugins = ["pydantic.mypy"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+
+# ── Skaal project defaults ────────────────────────────────────────────────────
+# All fields are optional. CLI flags and SKAAL_* env vars take precedence.
+#
+# [tool.skaal]
+# app         = "mypackage.app:skaal_app"  # default MODULE:APP for run/plan/build
+# target      = "aws"                       # aws | gcp
+# region      = "us-east-1"
+# out         = "artifacts"                 # artifact output directory
+# catalog     = "catalogs/aws.toml"         # path to catalog TOML
+# stack       = "dev"                       # Pulumi stack name
+# gcp_project = "my-gcp-project"            # GCP only

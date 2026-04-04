@@ -141,7 +141,7 @@ class Module:
 
     def agent(self, *, persistent: bool = True) -> Callable[[type], type]:
         """Register an agent class."""
-        from skaal.decorators import agent as _agent_dec
+        from skaal.agent import agent as _agent_dec
 
         outer = _agent_dec(persistent=persistent)
 

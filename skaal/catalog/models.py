@@ -53,6 +53,7 @@ class NetworkSpec(BaseModel):
     """Specification for a network/CDN backend entry in a catalog TOML."""
 
     display_name: str
+    latency_ms: LatencyRange | None = None
     regions: list[str] = Field(default_factory=lambda: ["all"])
     bandwidth_gbps: float = 0.0
     cost_per_gb_transfer: float = 0.0
