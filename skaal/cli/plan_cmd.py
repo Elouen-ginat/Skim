@@ -69,6 +69,7 @@ def plan(
         )
         raise typer.Exit(1)
 
+    module_path, _, var_name = resolved_app.partition(":")
     skim_app = load_app(resolved_app)
 
     from skaal.catalog.loader import load_catalog
@@ -88,6 +89,9 @@ def plan(
     except UnsatisfiableConstraints as exc:
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(1) from exc
+
+    plan_file.source_module = module_path
+    plan_file.app_var = var_name or "app"
 
     out_path = plan_file.write()
     typer.echo(f"Wrote {out_path}\n")
