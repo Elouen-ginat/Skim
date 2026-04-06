@@ -3,7 +3,9 @@ version: '3.8'
 services:
   # Main application service
   app:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile
     container_name: skaal-app
     ports:
       - "${port}:8000"
@@ -12,7 +14,8 @@ ${service_env_vars}
     depends_on:
 ${service_dependencies}
     volumes:
-      - .:/app
-    command: gunicorn --bind 0.0.0.0:8000 --workers 2 --timeout 120 --reload main:application
+      # Mount the source package from the project root for live reload during development
+      - ../${source_pkg}:/app/${source_pkg}
+    command: uv run gunicorn --bind 0.0.0.0:8000 --workers 2 --timeout 120 --reload main:application
 
 ${additional_services}

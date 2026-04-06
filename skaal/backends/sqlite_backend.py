@@ -101,12 +101,42 @@ class SqliteBackend:
 
     async def scan(self, prefix: str = "") -> List[tuple[str, Any]]:
         await self._ensure_connected()
+        # Escape LIKE wildcards to prevent injection: % and _ are special in LIKE
+        escaped_prefix = prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
         async with self._db.execute(
-            "SELECT key, value FROM kv WHERE ns = ? AND key LIKE ?",
-            (self.namespace, f"{prefix}%"),
+            "SELECT key, value FROM kv WHERE ns = ? AND key LIKE ? ESCAPE '\\'",
+            (self.namespace, f"{escaped_prefix}%"),
         ) as cursor:
             rows = await cursor.fetchall()
         return [(row[0], json.loads(row[1])) for row in rows]
+
+    async def increment_counter(self, key: str, delta: int = 1) -> int:
+        """Atomically increment a counter using a transaction."""
+        await self._ensure_connected()
+        # Start a transaction to ensure atomicity
+        await self._db.execute("BEGIN IMMEDIATE")
+        try:
+            async with self._db.execute(
+                "SELECT value FROM kv WHERE ns = ? AND key = ?",
+                (self.namespace, key),
+            ) as cursor:
+                row = await cursor.fetchone()
+
+            current = int(json.loads(row[0])) if row else 0
+            new_value = current + delta
+
+            await self._db.execute(
+                """
+                INSERT INTO kv (ns, key, value) VALUES (?, ?, ?)
+                ON CONFLICT (ns, key) DO UPDATE SET value = excluded.value
+                """,
+                (self.namespace, key, json.dumps(new_value)),
+            )
+            await self._db.commit()
+            return new_value
+        except Exception:
+            await self._db.rollback()
+            raise
 
     async def close(self) -> None:
         if self._db is not None:

@@ -119,6 +119,61 @@ class DynamoBackend:
 
         return await self._run(_scan)
 
+    async def increment_counter(self, key: str, delta: int = 1) -> int:
+        """Atomically increment a counter using DynamoDB UpdateItem."""
+        client = self._get_client()
+
+        def _increment() -> int:
+            # First ensure the item exists with value 0
+            client.put_item(
+                TableName=self.table_name,
+                Item={"pk": {"S": key}, "value": {"S": json.dumps(0)}},
+                ConditionExpression="attribute_not_exists(pk)",
+            )
+            # Now increment by delta using Update
+            resp = client.update_item(
+                TableName=self.table_name,
+                Key={"pk": {"S": key}},
+                UpdateExpression="SET #v = if_not_exists(#v, :zero) + :d",
+                ExpressionAttributeNames={"#v": "value"},
+                ExpressionAttributeValues={
+                    ":zero": 0,
+                    ":d": delta,
+                },
+                ReturnValues="ALL_NEW",
+            )
+            new_val = resp["Attributes"]["value"]
+            # DynamoDB returns numeric values as numbers; if it's a string, parse it
+            if isinstance(new_val, dict) and "N" in new_val:
+                return int(new_val["N"])
+            return int(new_val)
+
+        try:
+            return await self._run(_increment)
+        except Exception:
+            # If put_item fails due to attribute_exists, just do the increment
+            # (item already existed)
+            client = self._get_client()
+
+            def _increment_exist() -> int:
+                resp = client.update_item(
+                    TableName=self.table_name,
+                    Key={"pk": {"S": key}},
+                    UpdateExpression="SET #v = if_not_exists(#v, :zero) + :d",
+                    ExpressionAttributeNames={"#v": "value"},
+                    ExpressionAttributeValues={
+                        ":zero": 0,
+                        ":d": delta,
+                    },
+                    ReturnValues="ALL_NEW",
+                )
+                new_val = resp["Attributes"]["value"]
+                if isinstance(new_val, dict) and "N" in new_val:
+                    return int(new_val["N"])
+                return int(new_val)
+
+            return await self._run(_increment_exist)
+
     async def close(self) -> None:
         # boto3 clients don't need explicit closing
         self._client = None

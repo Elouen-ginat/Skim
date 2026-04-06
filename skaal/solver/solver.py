@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import hashlib
+import inspect
+import json
+import warnings
 from typing import TYPE_CHECKING, Any
 
 from skaal.plan import ComponentSpec, ComputeSpec, PlanFile, StorageSpec
@@ -10,6 +13,44 @@ from skaal.solver.storage import select_backend
 
 if TYPE_CHECKING:
     from skaal.app import App
+
+
+def _compute_schema_hash(obj: Any) -> str:
+    """
+    Compute a stable hash of a class schema from its annotations.
+
+    This hash changes when fields are added, removed, or their types change,
+    enabling proper schema migration detection.
+
+    Args:
+        obj: The class object to hash.
+
+    Returns:
+        A 12-character hex string (first 12 chars of SHA256).
+    """
+    # Collect all annotations from the class and its bases
+    annotations: dict[str, str] = {}
+    for base in reversed(inspect.getmro(obj)):
+        if base is object:
+            continue
+        base_annotations = getattr(base, "__annotations__", {})
+        for field_name, field_type in base_annotations.items():
+            # Normalize type annotations to string
+            if hasattr(field_type, "__module__") and hasattr(field_type, "__qualname__"):
+                type_str = f"{field_type.__module__}.{field_type.__qualname__}"
+            else:
+                type_str = str(field_type)
+            annotations[field_name] = type_str
+
+    # Sort for stability and JSON-encode
+    if not annotations:
+        # No annotations; fall back to qualname
+        qname = getattr(obj, "__module__", "") + "." + getattr(obj, "__qualname__", "Unknown")
+        payload = qname.encode()
+    else:
+        payload = json.dumps(annotations, sort_keys=True, default=str).encode()
+
+    return hashlib.sha256(payload).hexdigest()[:12]
 
 
 def solve(app: "App", catalog: dict[str, Any], target: str = "generic") -> "PlanFile":
@@ -50,12 +91,15 @@ def solve(app: "App", catalog: dict[str, Any], target: str = "generic") -> "Plan
             target=target,
         )
 
-        # Compute a stable schema hash from the class name
-        schema_hash = hashlib.sha256(qname.encode()).hexdigest()[:12]
+        # Compute a stable schema hash from the class's annotated fields
+        # This changes when fields are added, removed, or their types change
+        schema_hash = _compute_schema_hash(obj)
 
         # Carry deploy-time provisioning params from the catalog into the plan.
         # The solver never reads these; they are only consumed by deploy generators.
-        deploy_params = storage_backends.get(backend_name, {}).get("deploy", {})
+        backend_entry = storage_backends.get(backend_name, {})
+        deploy_params = backend_entry.get("deploy", {})
+        wire_params = backend_entry.get("wire", {})
 
         storage_specs[qname] = StorageSpec(
             variable_name=qname,
@@ -66,6 +110,7 @@ def solve(app: "App", catalog: dict[str, Any], target: str = "generic") -> "Plan
             schema_hash=schema_hash,
             reason=reason,
             deploy_params=deploy_params,
+            wire_params=wire_params,
         )
 
     # ── Solve compute ──────────────────────────────────────────────────────
@@ -80,8 +125,14 @@ def solve(app: "App", catalog: dict[str, Any], target: str = "generic") -> "Plan
             instance_type, reason = encode_compute(
                 qname, compute_constraint, compute_backends, target=target
             )
-        except UnsatisfiableComputeConstraints:
-            # Fall back to cheapest available instance rather than failing
+        except UnsatisfiableComputeConstraints as e:
+            # Warn the user that their constraint was violated, then fall back to cheapest
+            warnings.warn(
+                f"Compute constraint for {qname!r} is unsatisfiable: {e}. "
+                "Falling back to cheapest available instance.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
             if compute_backends:
                 instance_type = min(
                     compute_backends, key=lambda n: compute_backends[n].get("cost_per_hour", 9999)

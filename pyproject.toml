@@ -53,11 +53,6 @@ gcp = [
     "pulumi>=3.0",
     "pulumi-gcp>=7.0",
 ]
-examples = [
-    "dash",
-    "fastapi",
-    "dash-bootstrap-components>=1.0",
-]
 
 [dependency-groups]
 dev = [
@@ -69,6 +64,11 @@ dev = [
     "maturin>=1.4",
     "build>=1.0",
     "pre-commit>=3.6",
+]
+examples = [
+    "dash",
+    "fastapi",
+    "dash-bootstrap-components>=1.0",
 ]
 
 [project.scripts]

@@ -55,7 +55,6 @@ skaal_app = App("dash-demo")
 @skaal_app.storage(
     read_latency="< 5ms",
     durability="ephemeral",  # session data; Redis/Memorystore preferred
-    retention="30m",  # expire inactive sessions after 30 minutes
     access_pattern="random-read",
 )
 class Sessions(Map[str, UserState]):

@@ -3,9 +3,10 @@
 #
 # Storage classes are wired before gunicorn starts.  Use sync_get / sync_set
 # in your callbacks — they are safe to call from synchronous code.
+import importlib
 import os
 
-import $source_module as _user_module
+_user_module = importlib.import_module("$source_module")
 $backend_imports
 from skaal.runtime.local import LocalRuntime
 

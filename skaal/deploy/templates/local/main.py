@@ -3,9 +3,10 @@
 #
 # Storage classes are wired before uvicorn starts.  Use async_get / async_set
 # in your callbacks.
+import importlib
 import os
 
-import $source_module as _user_module
+_user_module = importlib.import_module("$source_module")
 $backend_imports
 from skaal.runtime.local import LocalRuntime
 

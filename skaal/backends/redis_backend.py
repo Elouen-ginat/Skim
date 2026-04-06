@@ -75,14 +75,28 @@ class RedisBackend:
         return result
 
     async def scan(self, prefix: str = "") -> List[tuple[str, Any]]:
+        """Scan keys with prefix, using MGET for efficient bulk retrieval."""
         await self._ensure_connected()
         pattern = f"skaal:{self.namespace}:{prefix}*"
-        result = []
+        # Collect all matching keys first
+        keys: list[str] = []
         async for k in self._client.scan_iter(match=pattern):
-            raw = await self._client.get(k)
-            if raw is not None:
-                result.append((self._strip_prefix(k), json.loads(raw)))
+            keys.append(k)
+        if not keys:
+            return []
+        # Use MGET to fetch all values in one round trip
+        values = await self._client.mget(*keys)
+        result = []
+        for k, v in zip(keys, values):
+            if v is not None:
+                result.append((self._strip_prefix(k), json.loads(v)))
         return result
+
+    async def increment_counter(self, key: str, delta: int = 1) -> int:
+        """Atomically increment a counter using Redis INCR."""
+        await self._ensure_connected()
+        new_value = await self._client.incrby(self._key(key), delta)
+        return int(new_value)
 
     async def close(self) -> None:
         if self._client is not None:

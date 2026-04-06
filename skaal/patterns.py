@@ -52,6 +52,8 @@ class EventLog(Generic[T]):
 
     def __init__(
         self,
+        backend: Any | None = None,
+        *,
         retention: str = "7d",
         partitions: int = 1,
         throughput: Throughput | str | None = None,
@@ -66,8 +68,10 @@ class EventLog(Generic[T]):
         self.throughput = throughput
 
         # Lazily import to avoid circular imports at module level
-        if _backend is not None:
-            self._backend = _backend
+        # Support both positional 'backend' and keyword '_backend' for backward compatibility
+        actual_backend = backend if backend is not None else _backend
+        if actual_backend is not None:
+            self._backend = actual_backend
         else:
             from skaal.backends.local_backend import LocalMap
 
@@ -91,10 +95,9 @@ class EventLog(Generic[T]):
 
     async def append(self, event: T) -> int:
         """Append *event* to the log. Returns the assigned offset (0-based)."""
-        raw = await self._backend.get("meta:next_offset")
-        offset = int(raw) if raw is not None else 0
+        # Use atomic increment to prevent race conditions with concurrent appends
+        offset = await self._backend.increment_counter("meta:next_offset", delta=1) - 1
         await self._backend.set(f"event:{offset:020d}", event)
-        await self._backend.set("meta:next_offset", offset + 1)
         return offset
 
     async def replay(self, from_offset: int = 0) -> AsyncIterator[tuple[int, T]]:
@@ -122,7 +125,8 @@ class EventLog(Generic[T]):
         raw = await self._backend.get(f"consumer:{consumer_group}:offset")
         offset = 0 if from_beginning else (int(raw) if raw is not None else 0)
         while True:
-            entries = await self._backend.scan(f"event:{offset:020d}")
+            # Scan all events with full prefix (not offset-prefixed), then filter by range
+            entries = await self._backend.scan("event:")
             sorted_entries = sorted((e for e in entries if e[0] >= f"event:{offset:020d}"))
             for key, value in sorted_entries:
                 current_offset = int(key.split(":")[-1])

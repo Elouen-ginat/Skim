@@ -104,6 +104,21 @@ class FirestoreBackend:
 
         return await self._run(_scan)
 
+    async def increment_counter(self, key: str, delta: int = 1) -> int:
+        """Atomically increment a counter using Firestore transaction."""
+
+        def _increment() -> int:
+            transaction = self._get_client().transaction()
+            with transaction:
+                doc_ref = self._col().document(key)
+                doc = doc_ref.get(transaction=transaction)
+                current = json.loads(doc.get("value")) if doc.exists else 0
+                new_value = int(current) + delta
+                doc_ref.set({"pk": key, "value": json.dumps(new_value)}, transaction=transaction)
+            return new_value
+
+        return await self._run(_increment)
+
     async def close(self) -> None:
         # google-cloud-firestore clients don't require explicit closing
         self._client = None

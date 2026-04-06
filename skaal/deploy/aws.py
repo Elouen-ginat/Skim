@@ -1,10 +1,11 @@
-"""AWS Lambda artifact generator — thin orchestrator over deploy/templates/aws/."""
+"""AWS Lambda artifact generator."""
 
 from __future__ import annotations
 
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from skaal.deploy._backends import build_wiring_aws
 from skaal.deploy._deps import collect_user_packages
 from skaal.deploy._render import render, to_pulumi_yaml, to_pyproject_toml
 from skaal.deploy.config import DynamoDBDeployConfig, LambdaDeployConfig
@@ -13,44 +14,28 @@ from skaal.deploy.push import write_meta
 if TYPE_CHECKING:
     from skaal.plan import PlanFile
 
+# IAM managed policy ARN — stable AWS value, never changes.
+_LAMBDA_BASIC_EXEC_POLICY = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
 
-# ── Wiring helpers (backend_imports / backend_overrides for entry-point template)
-
-
-def _build_wiring(plan: "PlanFile") -> tuple[str, str]:
-    """
-    Return ``(backend_imports, backend_overrides)`` template variables.
-
-    Lambda uses DynamoDB for all storage classes resolved by the solver.
-    Table names are injected at runtime via environment variables set by the
-    Pulumi stack.
-    """
-    import_lines: list[str] = []
-    override_lines: list[str] = []
-
-    if plan.storage:
-        import_lines.append("from skaal.backends.dynamodb_backend import DynamoBackend")
-
-    for qname, _spec in plan.storage.items():
-        class_name = qname.split(".")[-1]
-        env_var = f"SKAAL_TABLE_{class_name.upper()}"
-        override_lines.append(f'        "{class_name}": DynamoBackend(os.environ["{env_var}"]),')
-
-    return "\n".join(import_lines), "\n".join(override_lines)
+# DynamoDB actions granted to the Lambda execution role.
+_DYNAMODB_ACTIONS = [
+    "dynamodb:GetItem",
+    "dynamodb:PutItem",
+    "dynamodb:DeleteItem",
+    "dynamodb:Scan",
+    "dynamodb:Query",
+]
 
 
 # ── Pulumi YAML stack builder ─────────────────────────────────────────────────
 
 
 def _build_pulumi_stack(app: Any, plan: "PlanFile") -> dict[str, Any]:
-    """
-    Return the Pulumi stack as a plain Python dict.
+    """Return the Pulumi stack as a plain Python dict.
 
-    The dict is serialised to ``Pulumi.yaml`` by ``to_pulumi_yaml()``.
-    Hard-coded values are gone: provisioning parameters come from
-    ``plan.storage[qname].deploy_params`` and ``plan.deploy_config``,
-    which were sourced from the catalog's ``[storage/compute.X.deploy]``
-    sections when the plan was solved.
+    All provisioning parameters come from ``plan.storage[qname].deploy_params``
+    and ``plan.deploy_config``, which were sourced from the catalog's
+    ``[storage/compute.X.deploy]`` sections when the plan was solved.
 
     User-overridable parameters (Lambda memory, timeout) are exposed as
     Pulumi ``config:`` entries with catalog-derived defaults so that
@@ -76,17 +61,13 @@ def _build_pulumi_stack(app: Any, plan: "PlanFile") -> dict[str, Any]:
         resource_key = f"{class_name.lower()}-table"
         d = DynamoDBDeployConfig.model_validate(spec.deploy_params)
 
-        billing_mode = d.billing_mode
-        hash_key = d.hash_key
-        hash_key_type = d.hash_key_type
-
         resources[resource_key] = {
             "type": "aws:dynamodb:Table",
             "properties": {
                 "name": f"${{pulumi.stack}}-{class_name.lower()}",
-                "hashKey": hash_key,
-                "billingMode": billing_mode,
-                "attributes": [{"name": hash_key, "type": hash_key_type}],
+                "hashKey": d.hash_key,
+                "billingMode": d.billing_mode,
+                "attributes": [{"name": d.hash_key, "type": d.hash_key_type}],
                 "tags": {"skaal-app": app.name, "skaal-storage": qname},
             },
         }
@@ -116,7 +97,7 @@ def _build_pulumi_stack(app: Any, plan: "PlanFile") -> dict[str, Any]:
         "type": "aws:iam:RolePolicyAttachment",
         "properties": {
             "role": "${lambda-role.name}",
-            "policyArn": "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole",
+            "policyArn": _LAMBDA_BASIC_EXEC_POLICY,
         },
     }
     resources["dynamodb-policy"] = {
@@ -129,13 +110,7 @@ def _build_pulumi_stack(app: Any, plan: "PlanFile") -> dict[str, Any]:
                     "Statement": [
                         {
                             "Effect": "Allow",
-                            "Action": [
-                                "dynamodb:GetItem",
-                                "dynamodb:PutItem",
-                                "dynamodb:DeleteItem",
-                                "dynamodb:Scan",
-                                "dynamodb:Query",
-                            ],
+                            "Action": _DYNAMODB_ACTIONS,
                             "Resource": "*",
                         }
                     ],
@@ -162,8 +137,6 @@ def _build_pulumi_stack(app: Any, plan: "PlanFile") -> dict[str, Any]:
         "memorySize": "${lambdaMemoryMb}",
         "environment": {"variables": env_vars},
     }
-    # Only set reservedConcurrentExecutions when explicitly capped.
-    # Omitting the property lets Lambda scale to the account limit (default).
     if deploy.reserved_concurrency >= 0:
         lambda_props["reservedConcurrentExecutions"] = "${lambdaReservedConcurrency}"
         config["lambdaReservedConcurrency"] = {
@@ -245,21 +218,18 @@ def generate_artifacts(
     source_module: str,
     app_var: str = "app",
 ) -> list[Path]:
-    """
-    Generate Lambda + Pulumi YAML deployment artifacts.
+    """Generate Lambda + Pulumi YAML deployment artifacts.
 
     Writes into *output_dir*:
 
-    - ``handler.py``  — Lambda entry point (rendered from template)
-    - ``requirements.txt`` — Python dependencies for the Lambda package
-    - ``Pulumi.yaml`` — Complete Pulumi stack (YAML runtime, no Python SDK needed)
-    - ``README.md``   — Step-by-step deployment guide
+    - ``handler.py``   — Lambda entry point (rendered from template)
+    - ``pyproject.toml`` — Python dependencies for the Lambda package
+    - ``Pulumi.yaml``  — Complete Pulumi stack (YAML runtime)
+    - ``skaal-meta.json`` — Target metadata consumed by ``skaal deploy``
 
     All provisioning parameters (runtime, memory, timeout, DynamoDB billing
     mode, hash key) come from ``plan.deploy_config`` and
-    ``plan.storage[*].deploy_params``, which are populated by the solver from
-    the catalog's ``[compute.lambda.deploy]`` and ``[storage.X.deploy]``
-    sections.  Override any of them at deploy time with::
+    ``plan.storage[*].deploy_params``.  Override at deploy time with::
 
         pulumi config set lambdaMemoryMb 512
         pulumi config set lambdaTimeout 60
@@ -278,13 +248,12 @@ def generate_artifacts(
     output_dir.mkdir(parents=True, exist_ok=True)
 
     generated: list[Path] = []
-    backend_imports, backend_overrides = _build_wiring(plan)
+    backend_imports, backend_overrides = build_wiring_aws(plan)
     wsgi_attribute: str | None = getattr(app, "_wsgi_attribute", None)
 
     # ── handler.py ────────────────────────────────────────────────────────────
     handler_path = output_dir / "handler.py"
     if wsgi_attribute:
-        # WSGI mode: mangum wraps the user's Flask/Dash/WSGI app
         handler_path.write_text(
             render(
                 "aws/handler_wsgi.py",

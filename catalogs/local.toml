@@ -2,6 +2,11 @@
 # Used by the Z3 solver when target="local" or when no cloud catalog is found.
 # All backends map to local equivalents for zero-setup development.
 
+[storage.local-map.wire]
+class_name = "LocalMap"
+module     = "local_backend"
+# No env_prefix — in-memory, constructed with zero args.
+
 [storage.local-map]
 display_name = "In-Memory LocalMap"
 read_latency  = { min = 0.001, max = 0.1, unit = "ms" }
@@ -14,6 +19,12 @@ access_patterns = ["random-read", "random-write", "pub-sub", "event-log",
 cost_per_gb_month = 0.0
 notes = "Pure in-process Python dict. Used by LocalRuntime automatically."
 
+[storage.sqlite.wire]
+class_name      = "SQLiteBackend"
+module          = "sqlite_backend"
+env_prefix      = "SKAAL_SQLITE_PATH"
+local_env_value = "/app/data/skaal.db"
+
 [storage.sqlite]
 display_name = "SQLite (local file)"
 read_latency  = { min = 0.1, max = 10.0, unit = "ms" }
@@ -23,6 +34,15 @@ max_size_gb   = 500
 access_patterns = ["random-read", "random-write", "transactional", "sequential"]
 cost_per_gb_month = 0.0
 notes = "Persistent local storage via aiosqlite. Use `skaal run --persist`."
+
+[storage.local-redis.wire]
+class_name      = "RedisBackend"
+module          = "redis_backend"
+env_prefix      = "SKAAL_REDIS_URL"
+uses_namespace  = true
+local_service   = "redis"
+local_env_value = "redis://redis:6379"
+extra_deps      = ["redis>=5.0"]
 
 [storage.local-redis]
 display_name = "Redis (localhost)"

@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
-from typing import Any, ClassVar
+import weakref
+from typing import Any, ClassVar, get_type_hints
 
 
 class AgentMeta(type):
     """Metaclass that registers agent types and their handlers."""
 
-    _registry: ClassVar[dict[str, type]] = {}
+    # Use WeakValueDictionary so garbage-collected agent classes are automatically removed.
+    # This prevents unbounded growth across test runs and avoids stale class references.
+    _registry: ClassVar[weakref.WeakValueDictionary[str, type]] = weakref.WeakValueDictionary()
 
     def __new__(mcs, name: str, bases: tuple[type, ...], namespace: dict[str, Any]) -> type:
         cls = super().__new__(mcs, name, bases, namespace)
@@ -40,9 +43,24 @@ class Agent(metaclass=AgentMeta):
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
         super().__init_subclass__(**kwargs)
-        # Collect fields annotated as persistent via class variable __persistent__
+        # Collect fields explicitly marked as persistent via Persistent[T] type annotation
+        from skaal.types import Persistent
+
+        # Use get_type_hints to evaluate string annotations (from __future__ import annotations)
+        try:
+            type_hints = get_type_hints(cls)
+        except Exception:
+            # If type hints can't be evaluated, fall back to empty
+            type_hints = {}
+
         cls.__skim_persistent_fields__ = frozenset(
-            name for name, annotation in cls.__annotations__.items() if not name.startswith("_")
+            name
+            for name, annotation in type_hints.items()
+            if
+            (
+                # Check if annotation is Persistent[T] or directly is Persistent
+                getattr(annotation, "__origin__", None) is Persistent or annotation is Persistent
+            )
         )
 
     @classmethod

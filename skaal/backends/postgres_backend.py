@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import Any, List
 
@@ -38,6 +39,7 @@ class PostgresBackend:
         self.min_size = min_size
         self.max_size = max_size
         self._pool: Any = None  # asyncpg pool, lazy-created
+        self._pool_loop: asyncio.AbstractEventLoop | None = None  # loop that owns the pool
 
     async def connect(self) -> None:
         """Create the asyncpg connection pool and ensure table exists."""
@@ -48,19 +50,31 @@ class PostgresBackend:
             min_size=self.min_size,
             max_size=self.max_size,
         )
+        self._pool_loop = asyncio.get_running_loop()
         async with self._pool.acquire() as conn:
-            await conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS skaal_kv (
-                    ns    TEXT    NOT NULL DEFAULT '',
-                    key   TEXT    NOT NULL,
-                    value JSONB   NOT NULL,
-                    PRIMARY KEY (ns, key)
+            try:
+                await conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS skaal_kv (
+                        ns    TEXT    NOT NULL DEFAULT '',
+                        key   TEXT    NOT NULL,
+                        value JSONB   NOT NULL,
+                        PRIMARY KEY (ns, key)
+                    )
+                    """
                 )
-                """
-            )
+            except asyncpg.exceptions.UniqueViolationError:
+                # Another worker created the table concurrently — safe to ignore.
+                pass
 
     async def _ensure_connected(self) -> None:
+        current_loop = asyncio.get_running_loop()
+        if self._pool is not None and self._pool_loop is not current_loop:
+            # asyncio.run() closes its event loop after each call, so the pool
+            # bound to a previous loop is now stale. Discard it (can't await
+            # close() — the old loop is already gone) and create a fresh one.
+            self._pool = None
+            self._pool_loop = None
         if self._pool is None:
             await self.connect()
 
@@ -131,6 +145,38 @@ class PostgresBackend:
             val = json.loads(raw) if isinstance(raw, str) else raw
             result.append((row["key"], val))
         return result
+
+    async def increment_counter(self, key: str, delta: int = 1) -> int:
+        """Atomically increment a counter using Postgres atomic update."""
+        await self._ensure_connected()
+        async with self._pool.acquire() as conn:
+            # Use an atomic increment: first try to insert if not exists, then update
+            await conn.execute(
+                """
+                INSERT INTO skaal_kv (ns, key, value) VALUES ($1, $2, $3::jsonb)
+                ON CONFLICT (ns, key) DO NOTHING
+                """,
+                self.namespace,
+                key,
+                json.dumps(0),
+            )
+            # Now increment
+            row = await conn.fetchrow(
+                """
+                UPDATE skaal_kv
+                SET value = to_jsonb(
+                    (COALESCE((value->>0)::int, 0) + $3)::text
+                )
+                WHERE ns = $1 AND key = $2
+                RETURNING value
+                """,
+                self.namespace,
+                key,
+                delta,
+            )
+        if row:
+            return int(json.loads(row["value"]))
+        return delta
 
     async def close(self) -> None:
         if self._pool is not None:

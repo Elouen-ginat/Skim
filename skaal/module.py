@@ -100,6 +100,7 @@ class Module:
 
     def storage(
         self,
+        cls_to_decorate: type | None = None,
         *,
         read_latency: Latency | str | None = None,
         write_latency: Latency | str | None = None,
@@ -112,8 +113,17 @@ class Module:
         auto_optimize: bool = False,
         decommission_policy: DecommissionPolicy | None = None,
         collocate_with: str | None = None,
-    ) -> Callable[[type], type]:
-        """Register a storage class with infrastructure constraints."""
+    ) -> Callable[[type], type] | type:
+        """Register a storage class with infrastructure constraints.
+
+        Can be used as:
+            @app.storage
+            class MyStorage: ...
+
+        Or:
+            @app.storage(read_latency="< 100ms")
+            class MyStorage: ...
+        """
         from skaal.decorators import storage as _storage_dec
 
         outer = _storage_dec(
@@ -135,10 +145,26 @@ class Module:
             self._storage[cls.__name__] = annotated
             return annotated
 
-        return decorator
+        # If called with parentheses but no class (e.g., @app.storage() or @app.storage(...))
+        if cls_to_decorate is None:
+            return decorator
 
-    def agent(self, *, persistent: bool = True) -> Callable[[type], type]:
-        """Register an agent class."""
+        # If called without parentheses (e.g., @app.storage)
+        return decorator(cls_to_decorate)
+
+    def agent(
+        self, cls_to_decorate: type | None = None, *, persistent: bool = True
+    ) -> Callable[[type], type] | type:
+        """Register an agent class.
+
+        Can be used as:
+            @app.agent
+            class MyAgent: ...
+
+        Or:
+            @app.agent(persistent=True)
+            class MyAgent: ...
+        """
         from skaal.agent import agent as _agent_dec
 
         outer = _agent_dec(persistent=persistent)
@@ -148,10 +174,16 @@ class Module:
             self._agents[cls.__name__] = annotated
             return annotated
 
-        return decorator
+        # If called with parentheses but no class
+        if cls_to_decorate is None:
+            return decorator
+
+        # If called without parentheses
+        return decorator(cls_to_decorate)
 
     def function(
         self,
+        fn_to_decorate: F | None = None,
         *,
         compute: Compute | None = None,
         scale: Scale | None = None,
@@ -159,8 +191,17 @@ class Module:
         circuit_breaker: CircuitBreaker | None = None,
         rate_limit: RateLimitPolicy | None = None,
         bulkhead: Bulkhead | None = None,
-    ) -> Callable[[F], F]:
-        """Register a compute function with optional constraints and resilience policies."""
+    ) -> Callable[[F], F] | F:
+        """Register a compute function with optional constraints and resilience policies.
+
+        Can be used as:
+            @app.function
+            def my_func(): ...
+
+        Or:
+            @app.function(compute=...)
+            def my_func(): ...
+        """
 
         def decorator(fn: F) -> F:
             # Merge resilience params into Compute if provided separately
@@ -179,7 +220,12 @@ class Module:
             self._functions[fn.__name__] = fn
             return fn
 
-        return decorator
+        # If called with parentheses but no function
+        if fn_to_decorate is None:
+            return decorator
+
+        # If called without parentheses
+        return decorator(fn_to_decorate)
 
     def channel(
         self,
@@ -379,6 +425,13 @@ class Module:
             for qname, obj in sub._collect_all().items():
                 # Strip sub's own prefix and re-apply ours
                 bare = qname[len(sub.name) + 1 :] if qname.startswith(sub.name + ".") else qname
+
+                # Only include exported symbols from submodules (respect encapsulation)
+                sym_name = bare.split(".")[-1]
+                if sym_name not in sub._exports and ns:
+                    # Skip non-exported symbols when submodule is namespaced
+                    continue
+
                 result[f"{sub_prefix}{bare}"] = obj
 
         return result

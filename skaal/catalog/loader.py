@@ -65,12 +65,30 @@ def load_catalog(path: Path | str | None = None, target: str | None = None) -> d
     )
 
 
-def load_typed_catalog(path: Path | str | None = None) -> Catalog:
+def load_typed_catalog(path: Path | str | None = None, target: str | None = None) -> Catalog:
     """
     Load a catalog TOML and return a typed :class:`~skaal.catalog.models.Catalog`.
 
-    Tolerates unknown keys in backend entries; extra fields are accessible
-    via ``catalog.raw``.
+    This function automatically validates the catalog structure using Pydantic models.
+    Missing required fields or incorrect types will raise a clear ValueError.
+
+    Args:
+        path:   Explicit path to catalog file. If given, target is ignored.
+        target: Deploy target name (e.g., 'aws', 'gcp') for catalog selection.
+
+    Raises:
+        FileNotFoundError: If catalog file is not found.
+        ValueError: If catalog structure is invalid or required fields are missing.
+
+    Returns:
+        A validated Catalog object.
     """
-    raw = load_catalog(path)
-    return Catalog.from_raw(raw)
+    try:
+        raw = load_catalog(path, target=target)
+        return Catalog.from_raw(raw)
+    except ValueError as e:
+        # Re-raise validation errors with better context
+        raise ValueError(
+            f"Invalid catalog structure: {e}. "
+            "Check that required fields like read_latency.max are present in each backend entry."
+        ) from e

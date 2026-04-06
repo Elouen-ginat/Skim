@@ -42,7 +42,7 @@ def select_backend(
 
     Args:
         variable_name: e.g. "counter.Counts"
-        constraints: __skim_storage__ dict (read_latency, durability, access_pattern, etc.)
+        constraints: __skim_storage__ dict (read_latency, write_latency, durability, access_pattern, etc.)
         backends: dict of name -> spec from catalog TOML
         target: "generic" | "aws-lambda" | "k8s"
 
@@ -54,10 +54,16 @@ def select_backend(
     """
     from z3 import Bool, If, Optimize, Sum, sat
 
-    # Extract constraints
+    # Extract ALL declared constraints (not just the few we check)
     read_latency = constraints.get("read_latency")
+    write_latency = constraints.get("write_latency")
     durability = constraints.get("durability")
     access_pattern = constraints.get("access_pattern")
+    write_throughput = constraints.get("write_throughput")
+    size_hint = constraints.get("size_hint")
+    residency = constraints.get("residency")
+    retention = constraints.get("retention")
+    consistency = constraints.get("consistency")
 
     # Build Z3 optimizer
     opt = Optimize()
@@ -103,6 +109,51 @@ def select_backend(
                 if lat_max > ms:
                     compatible = False
 
+        # Check write_latency
+        if write_latency is not None:
+            op = write_latency.op
+            ms = write_latency.ms
+            spec_write_latency = spec.get("write_latency", {})
+            lat_max = spec_write_latency.get("max", float("inf"))
+            if op in ("<", "<="):
+                if lat_max > ms:
+                    compatible = False
+
+        # Check write_throughput (ops/sec)
+        if write_throughput is not None:
+            spec_throughput = spec.get("write_throughput", {}).get("max", 0)
+            if write_throughput > spec_throughput:
+                compatible = False
+
+        # Check size_hint (GB)
+        if size_hint is not None:
+            spec_max_size = spec.get("max_size_gb", float("inf"))
+            if size_hint > spec_max_size:
+                compatible = False
+
+        # Check consistency
+        if consistency is not None:
+            consistency_val = (
+                consistency.value if hasattr(consistency, "value") else str(consistency)
+            )
+            spec_consistencies = spec.get("consistency", [])
+            if consistency_val not in spec_consistencies:
+                compatible = False
+
+        # Check residency constraint (geographic location)
+        if residency is not None:
+            residency_val = residency.value if hasattr(residency, "value") else str(residency)
+            spec_residencies = spec.get("residency", [])
+            if residency_val not in spec_residencies:
+                compatible = False
+
+        # Check retention (how long to keep data)
+        if retention is not None:
+            retention_val = retention.value if hasattr(retention, "value") else str(retention)
+            spec_retentions = spec.get("retention", [])
+            if retention_val not in spec_retentions:
+                compatible = False
+
         if not compatible:
             opt.add(var == False)  # noqa: E712
 
@@ -123,10 +174,12 @@ def select_backend(
 
     result = opt.check()
     if result != sat:
-        # Determine reason
+        # Determine reason — list all unsatisfiable constraints
         reasons = []
         if read_latency is not None:
             reasons.append(f"read_latency {read_latency.expr}")
+        if write_latency is not None:
+            reasons.append(f"write_latency {write_latency.expr}")
         if durability is not None:
             dur_val = durability.value if hasattr(durability, "value") else str(durability)
             reasons.append(f"durability={dur_val}")
@@ -135,6 +188,19 @@ def select_backend(
                 access_pattern.value if hasattr(access_pattern, "value") else str(access_pattern)
             )
             reasons.append(f"access_pattern={ap_val}")
+        if write_throughput is not None:
+            reasons.append(f"write_throughput={write_throughput} ops/sec")
+        if size_hint is not None:
+            reasons.append(f"size_hint={size_hint} GB")
+        if consistency is not None:
+            con_val = consistency.value if hasattr(consistency, "value") else str(consistency)
+            reasons.append(f"consistency={con_val}")
+        if residency is not None:
+            res_val = residency.value if hasattr(residency, "value") else str(residency)
+            reasons.append(f"residency={res_val}")
+        if retention is not None:
+            ret_val = retention.value if hasattr(retention, "value") else str(retention)
+            reasons.append(f"retention={ret_val}")
         raise UnsatisfiableConstraints(
             variable_name,
             f"No backend satisfies: {', '.join(reasons)}",
@@ -172,5 +238,25 @@ def select_backend(
 
     cost = spec.get("cost_per_gb_month", 0)
     reason_parts.append(f"cost=${cost}/GB/mo")
+
+    # Add reason details for all checked constraints
+    if write_latency is not None:
+        lat_max = spec.get("write_latency", {}).get("max", "?")
+        reason_parts.append(f"write_latency max={lat_max}ms satisfies {write_latency.expr}")
+    if write_throughput is not None:
+        tp_max = spec.get("write_throughput", {}).get("max", "?")
+        reason_parts.append(f"write_throughput max={tp_max} ops/sec satisfies {write_throughput}")
+    if size_hint is not None:
+        max_sz = spec.get("max_size_gb", "unlimited")
+        reason_parts.append(f"max_size_gb={max_sz} satisfies {size_hint} GB request")
+    if consistency is not None:
+        con_val = consistency.value if hasattr(consistency, "value") else str(consistency)
+        reason_parts.append(f"consistency={con_val}")
+    if residency is not None:
+        res_val = residency.value if hasattr(residency, "value") else str(residency)
+        reason_parts.append(f"residency={res_val}")
+    if retention is not None:
+        ret_val = retention.value if hasattr(retention, "value") else str(retention)
+        reason_parts.append(f"retention={ret_val}")
 
     return selected, "; ".join(reason_parts)

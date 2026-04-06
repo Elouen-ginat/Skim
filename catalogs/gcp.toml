@@ -16,6 +16,16 @@ redis_version  = "REDIS_7_0"
 tier           = "BASIC"
 memory_size_gb = 1
 
+[storage.memorystore-redis.wire]
+class_name      = "RedisBackend"
+module          = "redis_backend"
+env_prefix      = "SKAAL_REDIS_URL"
+uses_namespace  = true
+requires_vpc    = true
+local_service   = "redis"
+local_env_value = "redis://redis:6379"
+extra_deps      = []
+
 [storage.cloud-sql-postgres]
 display_name = "Cloud SQL (PostgreSQL 16)"
 read_latency  = { min = 1.0, max = 50.0, unit = "ms" }
@@ -32,6 +42,16 @@ tier                = "db-f1-micro"
 backup_enabled      = true
 deletion_protection = false
 
+[storage.cloud-sql-postgres.wire]
+class_name      = "PostgresBackend"
+module          = "postgres_backend"
+env_prefix      = "SKAAL_DB_DSN"
+uses_namespace  = true
+requires_vpc    = true
+local_service   = "postgres"
+local_env_value = "postgresql://skaal_user:skaal_pass@postgres/skaal_db"
+extra_deps      = ["cloud-sql-python-connector[asyncpg]>=1.9"]
+
 [storage.gcs]
 display_name = "Google Cloud Storage"
 read_latency  = { min = 50, max = 500, unit = "ms" }
@@ -41,6 +61,11 @@ max_size_gb   = 0
 access_patterns = ["append-only", "bulk-read"]
 cost_per_gb_month = 0.020
 regions = ["all"]
+
+[storage.firestore.wire]
+class_name  = "FirestoreBackend"
+module      = "firestore_backend"
+env_prefix  = "SKAAL_COLLECTION"
 
 [storage.firestore]
 display_name = "Cloud Firestore"

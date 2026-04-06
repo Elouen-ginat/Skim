@@ -5,6 +5,9 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from enum import Enum
+from typing import Generic, TypeVar
+
+T = TypeVar("T")
 
 
 class Durability(str, Enum):
@@ -87,3 +90,25 @@ class DecommissionPolicy:
     retention_days: int = 30
     archive: bool = True
     archive_target: str = "s3"
+
+
+class Persistent(Generic[T]):
+    """
+    Type annotation marker for Agent fields that should persist across restarts.
+
+    Usage in Agent subclasses::
+
+        from skaal.types import Persistent
+
+        class MyAgent(Agent):
+            # Field will be persisted
+            score: Persistent[float] = 0.0
+
+            # Field will NOT be persisted (no Persistent wrapper)
+            _internal_state: dict = {}
+
+    This enables explicit opt-in for persistent fields rather than marking
+    all non-underscore fields as persistent by default.
+    """
+
+    __origin__ = None  # Mark this as a special type annotation

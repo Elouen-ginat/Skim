@@ -34,6 +34,22 @@ class StorageBackend(Protocol):
         """Return all (key, value) pairs where key starts with prefix."""
         ...
 
+    async def increment_counter(self, key: str, delta: int = 1) -> int:
+        """
+        Atomically increment a counter and return the new value.
+
+        This method must be atomic to prevent race conditions in concurrent increment scenarios.
+        Backends that don't support atomic operations should use a lock or transaction.
+
+        Args:
+            key: The counter key.
+            delta: Amount to increment (default 1).
+
+        Returns:
+            The new counter value after the increment.
+        """
+        ...
+
     async def close(self) -> None:
         """Release any resources held by this backend."""
         ...

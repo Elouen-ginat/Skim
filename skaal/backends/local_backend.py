@@ -5,17 +5,35 @@ from __future__ import annotations
 import asyncio
 import concurrent.futures
 import json
+import threading
 from typing import Any, List
 
 # ── Sync/async bridge ─────────────────────────────────────────────────────────
 
-# A module-level thread executor used by the sync wrappers to safely run async
-# operations from synchronous contexts (Dash callbacks, Flask views, Django
-# views, etc.) even when an event loop is already running in the current thread.
+# A module-level thread executor used by the sync wrappers when called from
+# inside an already-running event loop (e.g. uvicorn / async code paths).
 _sync_executor = concurrent.futures.ThreadPoolExecutor(
     max_workers=4,
     thread_name_prefix="skaal-sync",
 )
+
+# A single, persistent event loop that lives in a background daemon thread.
+# Used by sync frameworks (Dash/Flask/gunicorn) where there is no running loop
+# in the caller's thread.  Keeping one loop alive means asyncpg connection
+# pools stay valid across calls — asyncio.run() would close the loop after each
+# call, turning every pool stale on the next request.
+_bg_loop: asyncio.AbstractEventLoop | None = None
+_bg_loop_lock = threading.Lock()
+
+
+def _get_bg_loop() -> asyncio.AbstractEventLoop:
+    global _bg_loop
+    with _bg_loop_lock:
+        if _bg_loop is None or _bg_loop.is_closed():
+            _bg_loop = asyncio.new_event_loop()
+            t = threading.Thread(target=_bg_loop.run_forever, daemon=True)
+            t.start()
+    return _bg_loop
 
 
 def _sync_run(coro: Any) -> Any:
@@ -24,12 +42,15 @@ def _sync_run(coro: Any) -> Any:
 
     Handles both cases:
 
-    - **No running event loop** (typical in sync frameworks like Dash/Flask):
-      uses ``asyncio.run()``.
+    - **No running event loop** (typical in sync frameworks like Dash/Flask /
+      gunicorn sync workers): submits to a single persistent background event
+      loop that lives in a daemon thread.  The persistent loop keeps connection
+      pools (asyncpg, redis, …) alive across calls — ``asyncio.run()`` would
+      create *and close* a fresh loop each time, invalidating every pool on the
+      very next request.
     - **Running event loop in current thread** (e.g., called from inside
-      uvicorn/asyncio code): submits to a separate thread with its own loop,
-      blocking until done.  This avoids the "cannot run nested event loop"
-      error.
+      uvicorn/asyncio code): off-loads to a separate thread with its own loop
+      via the thread-pool executor, blocking until done.
 
     Example (Dash callback)::
 
@@ -44,8 +65,11 @@ def _sync_run(coro: Any) -> Any:
         # Off-load to a dedicated thread that can create its own loop.
         return _sync_executor.submit(asyncio.run, coro).result()
     except RuntimeError:
-        # No running loop — create one inline.
-        return asyncio.run(coro)
+        # No running loop (gunicorn sync worker, Flask dev server, etc.).
+        # Submit to the persistent background loop and block until done.
+        loop = _get_bg_loop()
+        future = asyncio.run_coroutine_threadsafe(coro, loop)
+        return future.result()
 
 
 # ── Serialization helpers ──────────────────────────────────────────────────────
@@ -120,6 +144,9 @@ class LocalMap:
 
     def __init__(self) -> None:
         self._data: dict[str, Any] = {}
+        import asyncio
+
+        self._lock = asyncio.Lock()
 
     async def get(self, key: str) -> Any | None:
         return self._data.get(key)
@@ -135,6 +162,14 @@ class LocalMap:
 
     async def scan(self, prefix: str = "") -> List[tuple[str, Any]]:
         return [(k, v) for k, v in self._data.items() if k.startswith(prefix)]
+
+    async def increment_counter(self, key: str, delta: int = 1) -> int:
+        """Atomically increment a counter using a lock."""
+        async with self._lock:
+            current = int(self._data.get(key, 0))
+            new_value = current + delta
+            self._data[key] = new_value
+            return new_value
 
     async def close(self) -> None:
         pass

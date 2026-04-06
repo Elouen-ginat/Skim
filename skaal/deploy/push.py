@@ -1,12 +1,13 @@
 """Cross-platform artifact packaging and Pulumi deployment.
 
-``package_and_push()`` is the single entry point used by ``skaal push``.
-It reads ``skaal-meta.json`` from the artifacts directory to discover the
-target platform and source package, then:
+``package_and_push()`` is the single public entry point used by ``skaal deploy``.
+It reads ``skaal-meta.json`` from the artifacts directory, resolves the target
+via :func:`~skaal.deploy.registry.get_target`, and delegates all platform-specific
+logic to the target's :meth:`~skaal.deploy.target.DeployTarget.package_and_push` method.
 
-  AWS  — installs deps into ``lambda_package/``, copies source, runs ``pulumi up``.
-  GCP  — runs ``pulumi up`` (provisions infra), builds + pushes the Docker image,
-          then runs ``pulumi up`` again (deploys the new image to Cloud Run).
+The private helpers in this module (``_package_aws``, ``_pulumi_*``,
+``_build_push_image``) are the low-level subprocess layer.  They are called by
+the target adapter classes in :mod:`skaal.deploy.registry`.
 
 All I/O uses :mod:`pathlib` and :mod:`shutil` — no shell syntax, works on
 Windows, macOS, and Linux.  External tools (``pulumi``, ``docker``,
@@ -180,87 +181,35 @@ def package_and_push(
     gcp_project: str | None = None,
     yes: bool = True,
 ) -> dict[str, str]:
-    """
-    Package the app and deploy it using Pulumi.
+    """Package the app and deploy it using Pulumi.
 
     Reads ``skaal-meta.json`` from *artifacts_dir* to determine the target
-    platform, source module, and app name.  All steps are cross-platform.
+    platform, then delegates to the appropriate
+    :class:`~skaal.deploy.target.DeployTarget` adapter.
 
     Args:
-        artifacts_dir: Path to the generated artifacts directory.
+        artifacts_dir: Path to the artifacts directory produced by ``skaal build``.
         stack:         Pulumi stack name (default: ``"dev"``).
-        region:        Cloud region override.  For AWS defaults to
-                       ``us-east-1``; for GCP defaults to ``us-central1``.
+        region:        Cloud region override.
         gcp_project:   GCP project ID (required for GCP target).
         yes:           Pass ``--yes`` to ``pulumi up`` (non-interactive).
 
     Returns:
         Dict of Pulumi stack outputs (e.g. ``{"apiUrl": "https://..."}``)
-        — empty dict for GCP until outputs are implemented.
+        — empty dict for the local target.
     """
+    from skaal.deploy.registry import get_target
+
     artifacts_dir = Path(artifacts_dir).resolve()
     meta = read_meta(artifacts_dir)
 
-    target: str = meta["target"]
-    source_module: str = meta["source_module"]
-    app_name: str = meta["app_name"]
-    project_root = artifacts_dir.parent
-
-    if target == "local":
-        print("==> Starting local stack (docker compose up --build) ...")
-        _run(["docker", "compose", "up", "--build"], cwd=artifacts_dir)
-        return {}
-
-    # Cloud targets need Pulumi stack initialisation.
-    _pulumi_stack_select_or_init(artifacts_dir, stack)
-
-    if target == "aws":
-        aws_region = region or "us-east-1"
-        _pulumi_config_set(artifacts_dir, {"aws:region": aws_region})
-
-        print("==> Packaging Lambda ...")
-        _package_aws(artifacts_dir, project_root, source_module)
-
-        print("==> Deploying (pulumi up) ...")
-        _pulumi_up(artifacts_dir, yes=yes)
-
-        api_url = _pulumi_output(artifacts_dir, "apiUrl")
-        print(f"\nApp URL: {api_url}")
-        return {"apiUrl": api_url}
-
-    elif target == "gcp":
-        gcp_region = region or "us-central1"
-
-        if not gcp_project:
-            raise ValueError(
-                "GCP project is required for --target=gcp. "
-                "Pass --gcp-project PROJECT or set SKAAL_GCP_PROJECT."
-            )
-
-        _pulumi_config_set(
-            artifacts_dir,
-            {
-                "gcp:project": gcp_project,
-                "gcp:region": gcp_region,
-            },
-        )
-
-        # Phase 1: provision infrastructure (Artifact Registry + storage).
-        print("==> Provisioning infrastructure (pulumi up) ...")
-        _pulumi_up(artifacts_dir, yes=yes)
-
-        # Phase 2: build and push the container image.
-        repo = _pulumi_output(artifacts_dir, "imageRepository")
-        print(f"==> Building and pushing image to {repo} ...")
-        _build_push_image(artifacts_dir, gcp_project, gcp_region, repo, app_name)
-
-        # Phase 3: deploy the new image to Cloud Run.
-        print("==> Deploying image to Cloud Run (pulumi up) ...")
-        _pulumi_up(artifacts_dir, yes=yes)
-
-        service_url = _pulumi_output(artifacts_dir, "serviceUrl")
-        print(f"\nApp URL: {service_url}")
-        return {"serviceUrl": service_url}
-
-    else:
-        raise ValueError(f"Unknown deploy target {target!r}. Expected 'aws', 'gcp', or 'local'.")
+    return get_target(meta["target"]).package_and_push(
+        artifacts_dir,
+        stack=stack,
+        region=region,
+        gcp_project=gcp_project,
+        yes=yes,
+        project_root=artifacts_dir.parent,
+        source_module=meta["source_module"],
+        app_name=meta["app_name"],
+    )

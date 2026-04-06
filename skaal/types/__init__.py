@@ -20,6 +20,7 @@ from skaal.types.constraints import (
     DecommissionPolicy,
     Durability,
     Latency,
+    Persistent,
     Throughput,
 )
 from skaal.types.schema import apply_migrations, migrate_from
@@ -31,6 +32,7 @@ __all__ = [
     "DecommissionPolicy",
     "Durability",
     "Latency",
+    "Persistent",
     "Throughput",
     # compute
     "Bulkhead",

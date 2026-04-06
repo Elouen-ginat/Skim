@@ -65,6 +65,11 @@ billing_mode   = "PAY_PER_REQUEST"
 hash_key       = "pk"
 hash_key_type  = "S"
 
+[storage.dynamodb.wire]
+class_name  = "DynamoBackend"
+module      = "dynamodb_backend"
+env_prefix  = "SKAAL_TABLE"
+
 [storage.msk-kafka]
 display_name = "Amazon MSK (Kafka)"
 read_latency  = { min = 2.0, max = 20.0, unit = "ms" }

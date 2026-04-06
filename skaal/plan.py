@@ -4,115 +4,89 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
+
+from pydantic import BaseModel, Field
 
 PLAN_FILE_NAME = "plan.skaal.lock"
 
 
-@dataclass
-class StorageSpec:
+class StorageSpec(BaseModel):
     variable_name: str
     backend: str
-    previous_backend: str | None
-    migration_plan: str | None
-    migration_stage: int
-    schema_hash: str
+    previous_backend: str | None = None
+    migration_plan: str | None = None
+    migration_stage: int = 0
+    schema_hash: str = ""
     instance_type: str | None = None
     nodes: int = 1
     storage_gb: int | None = None
     reason: str = ""
     # Provisioning parameters sourced from [storage.<backend>.deploy] in the
     # catalog TOML.  Not used by the constraint solver; only by deploy generators.
-    deploy_params: dict[str, Any] = field(default_factory=dict)
+    deploy_params: dict[str, Any] = Field(default_factory=dict)
+    # Wire metadata sourced from [storage.<backend>.wire] in the catalog TOML.
+    # Tells deploy generators which Python class to instantiate and how.
+    # Not used by the constraint solver.
+    wire_params: dict[str, Any] = Field(default_factory=dict)
 
 
-@dataclass
-class ComputeSpec:
+class ComputeSpec(BaseModel):
     function_name: str
     instance_type: str
     instances: int | str
-    previous_instance_type: str | None
+    previous_instance_type: str | None = None
     scaling: str | None = None
     placement: str | None = None
     schedule: str | None = None
     reason: str = ""
 
 
-@dataclass
-class ComponentSpec:
-    """Serializable spec for a provisioned or external component."""
+class ComponentSpec(BaseModel):
+    """Serialisable spec for a provisioned or external component."""
 
     component_name: str
     kind: str  # "proxy" | "api-gateway" | "external-storage" | ...
-    implementation: str | None  # e.g. "traefik", "kong"; None if solver selects
-    provisioned: bool  # False for ExternalComponent subclasses
-    connection_env: str | None  # env var carrying the DSN (external only)
-    config: dict[str, Any] = field(default_factory=dict)
+    implementation: str | None = None  # e.g. "traefik", "kong"; None if solver selects
+    provisioned: bool = True  # False for ExternalComponent subclasses
+    connection_env: str | None = None  # env var carrying the DSN (external only)
+    config: dict[str, Any] = Field(default_factory=dict)
     reason: str = ""
 
 
-@dataclass
-class PlanFile:
-    """Serializable representation of a `skaal plan` result."""
+class PlanFile(BaseModel):
+    """Serialisable representation of a ``skaal plan`` result."""
 
     app_name: str
-    version: int
-    previous_version: int | None
-    deploy_target: str
-    storage: dict[str, StorageSpec] = field(default_factory=dict)
-    compute: dict[str, ComputeSpec] = field(default_factory=dict)
-    components: dict[str, ComponentSpec] = field(default_factory=dict)
-    extra: dict[str, Any] = field(default_factory=dict)
+    version: int = 1
+    previous_version: int | None = None
+    deploy_target: str = "local"
+    # Source location — set by `skaal plan`, consumed by `skaal build`.
+    source_module: str = ""
+    app_var: str = "app"
+    storage: dict[str, StorageSpec] = Field(default_factory=dict)
+    compute: dict[str, ComputeSpec] = Field(default_factory=dict)
+    components: dict[str, ComponentSpec] = Field(default_factory=dict)
     # Target-level deploy parameters sourced from [compute.<target>.deploy] in
     # the catalog (e.g. Lambda memory/timeout, Cloud Run memory/cpu).
     # Not used by the constraint solver; only by deploy generators.
-    deploy_config: dict[str, Any] = field(default_factory=dict)
+    deploy_config: dict[str, Any] = Field(default_factory=dict)
+    extra: dict[str, Any] = Field(default_factory=dict)
 
     # ── Serialisation ──────────────────────────────────────────────────────
 
     def write(self, path: Path | None = None) -> Path:
-        """Write the plan to plan.skaal.lock (or a custom path)."""
+        """Write the plan to ``plan.skaal.lock`` (or a custom path)."""
         target = path or Path(PLAN_FILE_NAME)
-        target.write_text(json.dumps(self._to_dict(), indent=2))
+        target.write_text(self.model_dump_json(indent=2))
         return target
 
     @classmethod
     def read(cls, path: Path | None = None) -> "PlanFile":
-        """Read and parse a plan.skaal.lock file."""
+        """Read and parse a ``plan.skaal.lock`` file."""
         source = path or Path(PLAN_FILE_NAME)
-        raw = json.loads(source.read_text())
-        return cls._from_dict(raw)
-
-    def _to_dict(self) -> dict[str, Any]:
-        return {
-            "app_name": self.app_name,
-            "version": self.version,
-            "previous_version": self.previous_version,
-            "deploy_target": self.deploy_target,
-            "deploy_config": self.deploy_config,
-            "storage": {k: asdict(v) for k, v in self.storage.items()},
-            "compute": {k: asdict(v) for k, v in self.compute.items()},
-            "components": {k: asdict(v) for k, v in self.components.items()},
-            **self.extra,
-        }
-
-    @classmethod
-    def _from_dict(cls, raw: dict[str, Any]) -> "PlanFile":
-        storage = {k: StorageSpec(**v) for k, v in raw.get("storage", {}).items()}
-        compute = {k: ComputeSpec(**v) for k, v in raw.get("compute", {}).items()}
-        components = {k: ComponentSpec(**v) for k, v in raw.get("components", {}).items()}
-        return cls(
-            app_name=raw["app_name"],
-            version=raw["version"],
-            previous_version=raw.get("previous_version"),
-            deploy_target=raw.get("deploy_target", "k8s"),
-            deploy_config=raw.get("deploy_config", {}),
-            storage=storage,
-            compute=compute,
-            components=components,
-        )
+        return cls.model_validate_json(source.read_text())
 
     # ── Utilities ──────────────────────────────────────────────────────────
 

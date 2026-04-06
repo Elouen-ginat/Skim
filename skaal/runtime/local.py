@@ -11,6 +11,9 @@ from typing import Any
 
 from skaal.backends.local_backend import LocalMap, patch_storage_class
 
+# Maximum request body size: 10 MB
+_MAX_BODY_SIZE = 10 * 1024 * 1024
+
 
 def _wire_channel(channel_obj: Any) -> None:
     """Replace stub send/receive on a Channel instance with LocalChannel methods."""
@@ -63,6 +66,8 @@ class LocalRuntime:
         self._backend_overrides = backend_overrides or {}
         self._patch_storage()
         self._patch_channels()
+        # Cache the function map so it's not rebuilt on every HTTP request
+        self._function_cache = self._collect_functions()
 
     # ── Setup ──────────────────────────────────────────────────────────────────
 
@@ -88,6 +93,24 @@ class LocalRuntime:
 
     # ── Factory methods ────────────────────────────────────────────────────────
 
+    @staticmethod
+    def _build_backends(app: Any, backend_factory: Any) -> dict[str, Any]:
+        """
+        Build a backends dict for all storage classes in app using a factory function.
+
+        Args:
+            app: The Skaal App.
+            backend_factory: Callable that takes (qname, obj) and returns a backend instance.
+
+        Returns:
+            Dict mapping fully-qualified names to backend instances.
+        """
+        return {
+            qname: backend_factory(qname, obj)
+            for qname, obj in app._collect_all().items()
+            if isinstance(obj, type) and hasattr(obj, "__skim_storage__")
+        }
+
     @classmethod
     def from_redis(
         cls,
@@ -99,11 +122,10 @@ class LocalRuntime:
         """Create a ``LocalRuntime`` using Redis backends for all storage classes."""
         from skaal.backends.redis_backend import RedisBackend
 
-        backends = {
-            qname: RedisBackend(url=redis_url, namespace=qname.replace(".", "_").lower())
-            for qname, obj in app._collect_all().items()
-            if isinstance(obj, type) and hasattr(obj, "__skim_storage__")
-        }
+        def _make_backend(qname: str, obj: Any) -> RedisBackend:
+            return RedisBackend(url=redis_url, namespace=qname.replace(".", "_").lower())
+
+        backends = cls._build_backends(app, _make_backend)
         return cls(app, host=host, port=port, backend_overrides=backends)
 
     @classmethod
@@ -117,11 +139,10 @@ class LocalRuntime:
         """Create a ``LocalRuntime`` backed by SQLite."""
         from skaal.backends.sqlite_backend import SqliteBackend
 
-        backends = {
-            qname: SqliteBackend(Path(db_path), namespace=qname)
-            for qname, obj in app._collect_all().items()
-            if isinstance(obj, type) and hasattr(obj, "__skim_storage__")
-        }
+        def _make_backend(qname: str, obj: Any) -> SqliteBackend:
+            return SqliteBackend(Path(db_path), namespace=qname)
+
+        backends = cls._build_backends(app, _make_backend)
         return cls(app, host=host, port=port, backend_overrides=backends)
 
     @classmethod
@@ -147,15 +168,14 @@ class LocalRuntime:
         """
         from skaal.backends.firestore_backend import FirestoreBackend
 
-        backends = {
-            qname: FirestoreBackend(
+        def _make_backend(qname: str, obj: Any) -> FirestoreBackend:
+            return FirestoreBackend(
                 collection=qname.replace(".", "_").lower(),
                 project=project,
                 database=database,
             )
-            for qname, obj in app._collect_all().items()
-            if isinstance(obj, type) and hasattr(obj, "__skim_storage__")
-        }
+
+        backends = cls._build_backends(app, _make_backend)
         return cls(app, host=host, port=port, backend_overrides=backends)
 
     @classmethod
@@ -180,11 +200,10 @@ class LocalRuntime:
         """
         from skaal.backends.postgres_backend import PostgresBackend
 
-        backends = {
-            qname: PostgresBackend(dsn=dsn, namespace=qname, min_size=min_size, max_size=max_size)
-            for qname, obj in app._collect_all().items()
-            if isinstance(obj, type) and hasattr(obj, "__skim_storage__")
-        }
+        def _make_backend(qname: str, obj: Any) -> PostgresBackend:
+            return PostgresBackend(dsn=dsn, namespace=qname, min_size=min_size, max_size=max_size)
+
+        backends = cls._build_backends(app, _make_backend)
         return cls(app, host=host, port=port, backend_overrides=backends)
 
     # ── HTTP dispatch ──────────────────────────────────────────────────────────
@@ -203,7 +222,7 @@ class LocalRuntime:
 
     async def _dispatch(self, method: str, path: str, body: bytes) -> tuple[Any, int]:
         """Route an HTTP request to a registered function."""
-        funcs = self._collect_functions()
+        funcs = self._function_cache
 
         if method == "GET" and path in ("/", ""):
             return {
@@ -264,6 +283,22 @@ class LocalRuntime:
                     headers[k.lower().strip()] = v.strip()
 
             content_length = int(headers.get("content-length", 0))
+
+            # Check for request size limit to prevent memory exhaustion
+            if content_length > _MAX_BODY_SIZE:
+                error_response = json.dumps(
+                    {"error": f"Request body too large; max {_MAX_BODY_SIZE} bytes"}
+                ).encode()
+                response = (
+                    f"HTTP/1.1 413 Payload Too Large\r\n"
+                    f"Content-Type: application/json\r\n"
+                    f"Content-Length: {len(error_response)}\r\n"
+                    f"Connection: close\r\n\r\n"
+                ).encode() + error_response
+                writer.write(response)
+                await writer.drain()
+                return
+
             body = b""
             if content_length > 0:
                 body = await asyncio.wait_for(reader.readexactly(content_length), timeout=30.0)
@@ -314,16 +349,32 @@ class LocalRuntime:
         ``WSGIMiddleware``.  Otherwise falls back to the built-in asyncio TCP
         server that exposes Skaal functions as ``POST /{name}`` endpoints.
         """
-        wsgi_app = getattr(self.app, "_wsgi_app", None)
-        if wsgi_app is not None:
-            await self._serve_wsgi(wsgi_app)
-        else:
-            await self._serve_skaal()
+        try:
+            wsgi_app = getattr(self.app, "_wsgi_app", None)
+            if wsgi_app is not None:
+                await self._serve_wsgi(wsgi_app)
+            else:
+                await self._serve_skaal()
+        finally:
+            await self.shutdown()
+
+    async def shutdown(self) -> None:
+        """
+        Shut down the runtime by closing all backend connections.
+
+        Called automatically when serve() exits. Can also be called explicitly
+        to clean up resources.
+        """
+        import contextlib
+
+        for backend in self._backends.values():
+            with contextlib.suppress(Exception):
+                await backend.close()
 
     async def _serve_skaal(self) -> None:
         """Built-in server: expose @app.function() as POST /{name} endpoints."""
         server = await asyncio.start_server(self._handle_connection, self.host, self.port)
-        funcs = self._collect_functions()
+        funcs = self._function_cache
         print(f"\n  Skaal local runtime — {self.app.name}")
         print(f"  http://{self.host}:{self.port}\n")
         for name in sorted(funcs):
