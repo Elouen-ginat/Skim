@@ -97,7 +97,9 @@ def solve(app: "App", catalog: dict[str, Any], target: str = "generic") -> "Plan
 
         # Carry deploy-time provisioning params from the catalog into the plan.
         # The solver never reads these; they are only consumed by deploy generators.
-        deploy_params = storage_backends.get(backend_name, {}).get("deploy", {})
+        backend_entry = storage_backends.get(backend_name, {})
+        deploy_params = backend_entry.get("deploy", {})
+        wire_params = backend_entry.get("wire", {})
 
         storage_specs[qname] = StorageSpec(
             variable_name=qname,
@@ -108,6 +110,7 @@ def solve(app: "App", catalog: dict[str, Any], target: str = "generic") -> "Plan
             schema_hash=schema_hash,
             reason=reason,
             deploy_params=deploy_params,
+            wire_params=wire_params,
         )
 
     # ── Solve compute ──────────────────────────────────────────────────────

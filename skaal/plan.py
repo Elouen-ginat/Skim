@@ -26,6 +26,10 @@ class StorageSpec(BaseModel):
     # Provisioning parameters sourced from [storage.<backend>.deploy] in the
     # catalog TOML.  Not used by the constraint solver; only by deploy generators.
     deploy_params: dict[str, Any] = Field(default_factory=dict)
+    # Wire metadata sourced from [storage.<backend>.wire] in the catalog TOML.
+    # Tells deploy generators which Python class to instantiate and how.
+    # Not used by the constraint solver.
+    wire_params: dict[str, Any] = Field(default_factory=dict)
 
 
 class ComputeSpec(BaseModel):

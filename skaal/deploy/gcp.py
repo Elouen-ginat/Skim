@@ -1,10 +1,11 @@
-"""GCP Cloud Run artifact generator — thin orchestrator over deploy/templates/gcp/."""
+"""GCP Cloud Run artifact generator."""
 
 from __future__ import annotations
 
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from skaal.deploy._backends import build_wiring, get_handler
 from skaal.deploy._deps import collect_user_packages
 from skaal.deploy._render import render, to_pulumi_yaml, to_pyproject_toml
 from skaal.deploy.config import (
@@ -18,93 +19,21 @@ if TYPE_CHECKING:
     from skaal.plan import PlanFile
 
 
-# ── Per-backend metadata ───────────────────────────────────────────────────────
-
-_BACKENDS: dict[str, dict[str, str]] = {
-    "firestore": {
-        "class": "FirestoreBackend",
-        "import": "from skaal.backends.firestore_backend import FirestoreBackend",
-        "env_prefix": "SKAAL_COLLECTION",
-    },
-    "cloud-sql-postgres": {
-        "class": "PostgresBackend",
-        "import": "from skaal.backends.postgres_backend import PostgresBackend",
-        "env_prefix": "SKAAL_DB_DSN",
-    },
-    "memorystore-redis": {
-        "class": "RedisBackend",
-        "import": "from skaal.backends.redis_backend import RedisBackend",
-        "env_prefix": "SKAAL_REDIS_URL",
-    },
-}
-
-_REQUIRES_VPC = {"cloud-sql-postgres", "memorystore-redis"}
-
-
-def _backend_meta(backend_name: str) -> dict[str, str]:
-    return _BACKENDS.get(backend_name, _BACKENDS["firestore"])
-
-
-def _env_var(backend_name: str, class_name: str) -> str:
-    return f"{_backend_meta(backend_name)['env_prefix']}_{class_name.upper()}"
-
-
-def _constructor(backend_name: str, class_name: str, env_var: str) -> str:
-    cls = _backend_meta(backend_name)["class"]
-    if backend_name in ("cloud-sql-postgres", "memorystore-redis"):
-        return f'{cls}(os.environ["{env_var}"], namespace="{class_name}")'
-    return f'{cls}(os.environ["{env_var}"])'
-
-
-# ── Wiring helpers (backend_imports / backend_overrides for entry-point template)
-
-
-def _build_wiring(plan: "PlanFile") -> tuple[str, str]:
-    """
-    Return ``(backend_imports, backend_overrides)`` template variables.
-
-    backend_imports  — one import line per unique backend class used.
-    backend_overrides — ``"ClassName": BackendInstance(...)`` lines, indented
-                        to fit inside a dict literal with 8-space indent.
-    """
-    seen: set[str] = set()
-    import_lines: list[str] = []
-    override_lines: list[str] = []
-
-    for qname, spec in plan.storage.items():
-        class_name = qname.split(".")[-1]
-        meta = _backend_meta(spec.backend)
-        env_var = _env_var(spec.backend, class_name)
-
-        if meta["import"] not in seen:
-            seen.add(meta["import"])
-            import_lines.append(meta["import"])
-
-        ctor = _constructor(spec.backend, class_name, env_var)
-        override_lines.append(f'        "{class_name}": {ctor},')
-
-    return "\n".join(import_lines), "\n".join(override_lines)
-
-
 # ── Pulumi YAML stack builder ─────────────────────────────────────────────────
 
 
 def _build_pulumi_stack(app: Any, plan: "PlanFile", region: str) -> dict[str, Any]:
-    """
-    Return the Pulumi stack as a plain Python dict.
+    """Return the Pulumi stack as a plain Python dict.
 
-    The dict is serialised to ``Pulumi.yaml`` by ``to_pulumi_yaml()``.
     All provisioning parameters come from ``plan.storage[qname].deploy_params``
-    and ``plan.deploy_config`` — values sourced from the catalog's
+    and ``plan.deploy_config``, sourced from the catalog's
     ``[storage/compute.X.deploy]`` sections when the plan was solved.
 
-    User-overridable parameters (Cloud Run memory/CPU, SQL tier, Redis size)
-    are exposed as Pulumi ``config:`` entries with catalog-derived defaults so
+    User-overridable parameters are exposed as Pulumi ``config:`` entries so
     that ``pulumi config set cloudRunMemory 1Gi`` works without re-planning.
     """
     deploy = CloudRunDeployConfig.model_validate(plan.deploy_config)
-
-    needs_vpc = any(s.backend in _REQUIRES_VPC for s in plan.storage.values())
+    needs_vpc = any(get_handler(s).requires_vpc for s in plan.storage.values())
 
     # ── Pulumi config (user-overridable) ──────────────────────────────────────
     config: dict[str, Any] = {
@@ -117,15 +46,12 @@ def _build_pulumi_stack(app: Any, plan: "PlanFile", region: str) -> dict[str, An
         "cloudRunMaxInstances": {"type": "integer", "default": deploy.max_instances},
     }
 
-    # Per-storage overridable params — validated via the typed config model
+    # Per-storage overridable params validated via typed config models.
     for qname, spec in plan.storage.items():
         class_name = qname.split(".")[-1]
         if spec.backend == "cloud-sql-postgres":
             sql_cfg = CloudSQLDeployConfig.model_validate(spec.deploy_params)
-            config[f"sqlTier{class_name}"] = {
-                "type": "string",
-                "default": sql_cfg.tier,
-            }
+            config[f"sqlTier{class_name}"] = {"type": "string", "default": sql_cfg.tier}
         elif spec.backend == "memorystore-redis":
             redis_cfg = MemorystoreRedisDeployConfig.model_validate(spec.deploy_params)
             config[f"redisSizeGb{class_name}"] = {
@@ -150,12 +76,11 @@ def _build_pulumi_stack(app: Any, plan: "PlanFile", region: str) -> dict[str, An
 
     for qname, spec in plan.storage.items():
         class_name = qname.split(".")[-1]
-        env_var = _env_var(spec.backend, class_name)
+        handler = get_handler(spec)
+        env_var = f"{handler.env_prefix}_{class_name.upper()}"
 
         if spec.backend == "firestore":
             collection = f"{app.name}-{class_name.lower()}"
-            # Firestore is serverless — no Pulumi resource needed, just pass
-            # the collection name as a static env var.
             container_envs.append({"name": env_var, "value": collection})
 
         elif spec.backend == "cloud-sql-postgres":
@@ -259,7 +184,6 @@ def _build_pulumi_stack(app: Any, plan: "PlanFile", region: str) -> dict[str, An
         },
     }
 
-    # Allow public (unauthenticated) access — restrict via IAM if needed
     resources["public-invoker"] = {
         "type": "gcp:cloudrun:IamMember",
         "properties": {
@@ -293,22 +217,19 @@ def generate_artifacts(
     app_var: str = "app",
     region: str = "us-central1",
 ) -> list[Path]:
-    """
-    Generate Cloud Run + Pulumi YAML deployment artifacts.
+    """Generate Cloud Run + Pulumi YAML deployment artifacts.
 
     Writes into *output_dir*:
 
-    - ``main.py``     — Cloud Run entry point (rendered from template)
-    - ``Dockerfile``  — Container build spec (rendered from template)
-    - ``requirements.txt`` — Python dependencies
-    - ``Pulumi.yaml`` — Complete Pulumi stack (YAML runtime, no Python SDK needed)
-    - ``README.md``   — Step-by-step deployment guide
+    - ``main.py``        — Cloud Run entry point (rendered from template)
+    - ``Dockerfile``     — Container build spec (rendered from template)
+    - ``pyproject.toml`` — Python dependencies
+    - ``Pulumi.yaml``    — Complete Pulumi stack (YAML runtime)
+    - ``skaal-meta.json`` — Target metadata consumed by ``skaal deploy``
 
     All provisioning parameters (Cloud Run memory/CPU, SQL tier, Redis version)
-    come from ``plan.deploy_config`` and ``plan.storage[*].deploy_params``,
-    which are populated by the solver from the catalog's
-    ``[compute.cloud-run.deploy]`` and ``[storage.X.deploy]`` sections.
-    Override any of them at deploy time with::
+    come from ``plan.deploy_config`` and ``plan.storage[*].deploy_params``.
+    Override at deploy time with::
 
         pulumi config set cloudRunMemory 1Gi
         pulumi config set sqlTierItems db-g1-small
@@ -319,7 +240,7 @@ def generate_artifacts(
         output_dir:    Directory to write files into (created if absent).
         source_module: Python module path, e.g. ``"examples.counter"``.
         app_var:       Variable name of the App in the module, e.g. ``"app"``.
-        region:        Default GCP region, e.g. ``"us-central1"``.
+        region:        Default GCP region (default: ``"us-central1"``).
 
     Returns:
         List of generated :class:`~pathlib.Path` objects.
@@ -328,13 +249,12 @@ def generate_artifacts(
     output_dir.mkdir(parents=True, exist_ok=True)
 
     generated: list[Path] = []
-    backend_imports, backend_overrides = _build_wiring(plan)
+    backend_imports, backend_overrides = build_wiring(plan)
     wsgi_attribute: str | None = getattr(app, "_wsgi_attribute", None)
 
     # ── main.py ───────────────────────────────────────────────────────────────
     main_path = output_dir / "main.py"
     if wsgi_attribute:
-        # WSGI mode: gunicorn serves the user's Flask/Dash/WSGI app
         main_path.write_text(
             render(
                 "gcp/main_wsgi.py",
@@ -366,13 +286,9 @@ def generate_artifacts(
     generated.append(dockerfile_path)
 
     # ── pyproject.toml ────────────────────────────────────────────────────────
-    if wsgi_attribute:
-        infra_deps = ["skaal[gcp]", "gunicorn>=22.0"]
-    else:
-        infra_deps = ["skaal[gcp]", "uvicorn>=0.29"]
+    infra_deps: list[str] = ["skaal[gcp]", "gunicorn>=22.0" if wsgi_attribute else "uvicorn>=0.29"]
     for spec in plan.storage.values():
-        if spec.backend == "cloud-sql-postgres":
-            infra_deps.append("cloud-sql-python-connector[asyncpg]>=1.9")
+        infra_deps.extend(get_handler(spec).extra_deps)
     user_pkgs = collect_user_packages(source_module)
     deps = list(dict.fromkeys(infra_deps + user_pkgs))
     pyproject_path = output_dir / "pyproject.toml"
