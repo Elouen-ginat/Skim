@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import inspect
 import json
 import traceback
@@ -10,9 +9,6 @@ from pathlib import Path
 from typing import Any
 
 from skaal.backends.local_backend import LocalMap, patch_storage_class
-
-# Maximum request body size: 10 MB
-_MAX_BODY_SIZE = 10 * 1024 * 1024
 
 
 def _wire_channel(channel_obj: Any) -> None:
@@ -288,99 +284,21 @@ class LocalRuntime:
 
         return {"error": f"Method {method} not allowed"}, 405
 
-    # ── TCP server ─────────────────────────────────────────────────────────────
-
-    async def _handle_connection(
-        self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
-    ) -> None:
-        try:
-            raw_line = await asyncio.wait_for(reader.readline(), timeout=10.0)
-            if not raw_line:
-                return
-            parts = raw_line.decode("utf-8", errors="replace").split()
-            if len(parts) < 2:
-                return
-            method, path = parts[0].upper(), parts[1].split("?")[0]
-
-            headers: dict[str, str] = {}
-            while True:
-                line = await asyncio.wait_for(reader.readline(), timeout=10.0)
-                if line in (b"\r\n", b"\n", b""):
-                    break
-                if b":" in line:
-                    k, _, v = line.decode("utf-8", errors="replace").partition(":")
-                    headers[k.lower().strip()] = v.strip()
-
-            content_length = int(headers.get("content-length", 0))
-
-            # Check for request size limit to prevent memory exhaustion
-            if content_length > _MAX_BODY_SIZE:
-                error_response = json.dumps(
-                    {"error": f"Request body too large; max {_MAX_BODY_SIZE} bytes"}
-                ).encode()
-                response = (
-                    f"HTTP/1.1 413 Payload Too Large\r\n"
-                    f"Content-Type: application/json\r\n"
-                    f"Content-Length: {len(error_response)}\r\n"
-                    f"Connection: close\r\n\r\n"
-                ).encode() + error_response
-                writer.write(response)
-                await writer.drain()
-                return
-
-            body = b""
-            if content_length > 0:
-                body = await asyncio.wait_for(reader.readexactly(content_length), timeout=30.0)
-
-            response_data, status_code = await self._dispatch(method, path, body)
-
-            try:
-                payload = json.dumps(response_data, default=str).encode("utf-8")
-            except (TypeError, ValueError):
-                payload = json.dumps({"error": "Response is not JSON-serialisable"}).encode()
-                status_code = 500
-
-            _STATUS = {
-                200: "OK",
-                400: "Bad Request",
-                404: "Not Found",
-                405: "Method Not Allowed",
-                422: "Unprocessable Entity",
-                500: "Internal Server Error",
-            }
-            response = (
-                f"HTTP/1.1 {status_code} {_STATUS.get(status_code, 'Unknown')}\r\n"
-                f"Content-Type: application/json\r\n"
-                f"Content-Length: {len(payload)}\r\n"
-                f"Connection: close\r\n\r\n"
-            ).encode() + payload
-
-            writer.write(response)
-            await writer.drain()
-
-        except (asyncio.TimeoutError, asyncio.IncompleteReadError, ConnectionResetError):
-            pass
-        except Exception:  # noqa: BLE001
-            pass
-        finally:
-            try:
-                writer.close()
-                await writer.wait_closed()
-            except Exception:  # noqa: BLE001
-                pass
-
     async def serve(self) -> None:
         """
         Start the HTTP server and run until cancelled.
 
-        When a WSGI app has been registered via ``app.mount_wsgi()``, delegates
-        to :meth:`_serve_wsgi` which runs the WSGI app under uvicorn + starlette
-        ``WSGIMiddleware``.  Otherwise falls back to the built-in asyncio TCP
-        server that exposes Skaal functions as ``POST /{name}`` endpoints.
+        Dispatch order:
+        - ASGI app registered via ``app.mount_asgi()`` → :meth:`_serve_asgi`
+        - WSGI app registered via ``app.mount_wsgi()`` → :meth:`_serve_wsgi`
+        - Otherwise → :meth:`_serve_skaal` (Skaal functions as POST endpoints)
         """
         try:
+            asgi_app = getattr(self.app, "_asgi_app", None)
             wsgi_app = getattr(self.app, "_wsgi_app", None)
-            if wsgi_app is not None:
+            if asgi_app is not None:
+                await self._serve_asgi(asgi_app)
+            elif wsgi_app is not None:
                 await self._serve_wsgi(wsgi_app)
             else:
                 await self._serve_skaal()
@@ -401,14 +319,25 @@ class LocalRuntime:
                 await backend.close()
 
     async def _serve_skaal(self) -> None:
-        """Built-in server: expose @app.function() as POST /{name} endpoints.
+        """Expose @app.function() as POST /{name} endpoints via uvicorn + Starlette.
 
         Also starts an APScheduler ``AsyncIOScheduler`` for any functions
         registered with ``@app.schedule()``.
         """
         from datetime import timezone
 
-        server = await asyncio.start_server(self._handle_connection, self.host, self.port)
+        try:
+            import uvicorn
+            from starlette.applications import Starlette
+            from starlette.requests import Request as StarletteRequest
+            from starlette.responses import JSONResponse
+            from starlette.routing import Route
+        except ImportError as exc:
+            raise RuntimeError(
+                "skaal run requires uvicorn and starlette.\n"
+                "Install them with:  pip install uvicorn starlette\n"
+                f"Missing: {exc}"
+            ) from exc
 
         # ── Print startup banner ───────────────────────────────────────────────
         funcs = self._function_cache
@@ -426,6 +355,20 @@ class LocalRuntime:
                 trigger = meta["trigger"]
                 print(f"    schedule /{name}  [{trigger!r}]")
         print()
+
+        # ── Starlette ASGI app — delegates to existing _dispatch ──────────────
+        async def _handle(request: StarletteRequest) -> JSONResponse:
+            body = await request.body()
+            result, status = await self._dispatch(request.method, request.url.path, body)
+            return JSONResponse(result, status_code=status)
+
+        asgi_app = Starlette(
+            routes=[
+                Route("/", _handle, methods=["GET"]),
+                Route("/health", _handle, methods=["GET"]),
+                Route("/{path:path}", _handle, methods=["GET", "POST"]),
+            ]
+        )
 
         # ── Start APScheduler for scheduled functions ──────────────────────────
         scheduler = None
@@ -491,8 +434,8 @@ class LocalRuntime:
                 )
 
         try:
-            async with server:
-                await server.serve_forever()
+            config = uvicorn.Config(asgi_app, host=self.host, port=self.port, log_level="info")
+            await uvicorn.Server(config).serve()
         finally:
             if scheduler is not None:
                 scheduler.shutdown(wait=False)
@@ -549,3 +492,47 @@ class LocalRuntime:
         )
         server = uvicorn.Server(config)
         await server.serve()
+
+    async def _serve_asgi(self, asgi_app: Any) -> None:
+        """
+        Serve a native ASGI app (FastAPI, Starlette) directly via uvicorn.
+
+        Unlike WSGI apps, no middleware adapter is needed — the app is passed
+        straight to uvicorn.  A ``/health`` endpoint is grafted in front so
+        load-balancer probes work without touching the user's app.
+
+        Requires ``uvicorn`` and ``starlette``::
+
+            pip install uvicorn starlette
+        """
+        try:
+            import uvicorn
+            from starlette.applications import Starlette
+            from starlette.responses import JSONResponse
+            from starlette.routing import Mount, Route
+        except ImportError as exc:
+            raise RuntimeError(
+                "Serving an ASGI app locally requires uvicorn and starlette.\n"
+                "Install them with:  pip install uvicorn starlette\n"
+                f"Missing: {exc}"
+            ) from exc
+
+        async def _health(request: Any) -> JSONResponse:  # noqa: ANN001
+            return JSONResponse({"status": "ok", "app": self.app.name})
+
+        wrapped = Starlette(
+            routes=[
+                Route("/health", _health),
+                Mount("/", asgi_app),
+            ]
+        )
+
+        attribute = getattr(self.app, "_asgi_attribute", "asgi_app")
+        print(f"\n  Skaal local runtime — {self.app.name}  [ASGI: {attribute}]")
+        print(f"  http://{self.host}:{self.port}\n")
+        print("    /health  → Skaal health check")
+        print(f"    /*       → {attribute}  (FastAPI / Starlette)")
+        print()
+
+        config = uvicorn.Config(wrapped, host=self.host, port=self.port, log_level="info")
+        await uvicorn.Server(config).serve()

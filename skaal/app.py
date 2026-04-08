@@ -84,6 +84,44 @@ class App(Module):
         self._wsgi_app: Any | None = wsgi_app
         self._wsgi_attribute: str = attribute
 
+    def mount_asgi(self, asgi_app: Any | None = None, *, attribute: str) -> None:
+        """
+        Register a native ASGI application (FastAPI, Starlette) to be served by
+        this Skaal app.
+
+        Prefer this over ``mount_wsgi()`` for ASGI-native frameworks — no
+        ``WSGIMiddleware`` adapter is needed, so you get full HTTP/2 and
+        WebSocket support.
+
+        Args:
+            asgi_app:  The ASGI callable (e.g. ``fastapi_app``).
+                       Pass ``None`` when generating deploy artifacts without a
+                       live instance.
+            attribute: Dotted attribute path used by deploy generators in the
+                       generated entry-point files, e.g. ``"fastapi_app"``.
+
+        Example::
+
+            from fastapi import FastAPI
+            from skaal import App, Map
+
+            skaal_app = App("api")
+
+            @skaal_app.storage(read_latency="< 10ms", durability="persistent")
+            class Items(Map[str, Item]):
+                pass
+
+            fastapi_app = FastAPI()
+
+            @fastapi_app.get("/items/{item_id}")
+            async def get_item(item_id: str):
+                return await Items.get(item_id)
+
+            skaal_app.mount_asgi(fastapi_app, attribute="fastapi_app")
+        """
+        self._asgi_app: Any | None = asgi_app
+        self._asgi_attribute: str = attribute
+
     # ── Module mounting ────────────────────────────────────────────────────
 
     def mount(self, module: Module, *, prefix: str) -> ModuleExport:
