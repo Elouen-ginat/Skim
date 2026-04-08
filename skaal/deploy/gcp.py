@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import json
+import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -19,6 +20,157 @@ from skaal.deploy.push import write_meta
 
 if TYPE_CHECKING:
     from skaal.plan import PlanFile
+
+
+# ── GCP API Gateway helpers ───────────────────────────────────────────────────
+
+
+def _gcp_openapi_path(path: str) -> str:
+    """Convert a Skaal wildcard path to OpenAPI 2.0 path format used by GCP.
+
+    ``/api/*``  → ``/api/{proxy}``
+    ``/health`` → ``/health``
+    """
+    if path in ("/*", "*"):
+        return "/{proxy}"
+    if path.endswith("/*"):
+        return path[:-2] + "/{proxy}"
+    if path.endswith("*"):
+        return path[:-1] + "{proxy}"
+    return path
+
+
+def _build_openapi_spec(
+    app_name: str,
+    routes: list[dict[str, Any]],
+    auth: dict[str, Any] | None,
+    cloud_run_url_ref: str,
+) -> dict[str, Any]:
+    """Return a Pulumi ``fn::toBase64`` / ``fn::join`` expression for an
+    OpenAPI 2.0 spec whose backend address is resolved at deploy time.
+
+    *cloud_run_url_ref* is a Pulumi interpolation string such as
+    ``"${cloud-run-service.statuses[0].url}"`` that Pulumi resolves to the
+    Cloud Run URL before base64-encoding the document.
+    """
+    parts: list[Any] = [
+        f'swagger: "2.0"\n',
+        f'info:\n  title: "{app_name} API"\n  description: "Managed by Skaal"\n  version: "1.0.0"\n',
+        'schemes:\n  - https\n',
+        'produces:\n  - "application/json"\n',
+        'x-google-backend:\n  address: ',
+        cloud_run_url_ref,
+        '\npaths:\n',
+    ]
+
+    for route in routes:
+        oai_path = _gcp_openapi_path(route["path"])
+        safe_op = re.sub(r"[^a-z0-9_]", "_", oai_path.lower()).strip("_") or "root"
+        has_proxy = "{proxy}" in oai_path
+
+        parts.append(f'  "{oai_path}":\n')
+        for method in route.get("methods") or ["get", "post"]:
+            m = method.lower()
+            parts.append(f'    {m}:\n')
+            parts.append(f'      operationId: "{safe_op}_{m}"\n')
+            if has_proxy:
+                parts.append(
+                    '      parameters:\n'
+                    '        - in: path\n'
+                    '          name: proxy\n'
+                    '          required: true\n'
+                    '          type: string\n'
+                )
+            parts.append('      responses:\n        "200":\n          description: "Success"\n')
+
+    if auth and auth.get("provider") == "jwt":
+        issuer = auth.get("issuer") or ""
+        audience = auth.get("audience") or ""
+        parts.append(
+            'securityDefinitions:\n'
+            '  jwt:\n'
+            '    authorizationUrl: ""\n'
+            '    flow: "implicit"\n'
+            '    type: "oauth2"\n'
+        )
+        if issuer:
+            parts.append(f'    x-google-issuer: "{issuer}"\n')
+            parts.append(f'    x-google-jwks_uri: "{issuer}/.well-known/jwks.json"\n')
+        if audience:
+            parts.append(f'    x-google-audiences: "{audience}"\n')
+        parts.append('security:\n  - jwt: []\n')
+
+    return {"fn::toBase64": {"fn::join": ["", parts]}}
+
+
+def _add_gcp_api_gateway(
+    app: Any,
+    plan: "PlanFile",
+    resources: dict[str, Any],
+    outputs: dict[str, Any],
+) -> None:
+    """Add GCP API Gateway resources when a proxy / api-gateway component exists.
+
+    Emits ``gcp:apigateway:Api``, ``gcp:apigateway:ApiConfig``, and
+    ``gcp:apigateway:Gateway`` resources driven by the component's route and
+    auth configuration.  Falls back to mount-prefix routes from ``app._mounts``
+    and finally to a single catch-all when neither is defined.
+    """
+    gw_comp = next(
+        (c for c in plan.components.values() if c.kind in ("proxy", "api-gateway")),
+        None,
+    )
+    if gw_comp is None:
+        return
+
+    routes: list[dict[str, Any]] = gw_comp.config.get("routes") or []
+    auth: dict[str, Any] | None = gw_comp.config.get("auth")
+
+    if not routes:
+        mounts: dict[str, str] = getattr(app, "_mounts", {})
+        if mounts:
+            routes = [
+                {"path": prefix.rstrip("/") + "/*", "target": ns, "methods": ["GET", "POST"]}
+                for ns, prefix in mounts.items()
+            ]
+        else:
+            routes = [{"path": "/*", "target": "app", "methods": ["GET", "POST"]}]
+
+    cloud_run_url = "${cloud-run-service.statuses[0].url}"
+    openapi_contents = _build_openapi_spec(app.name, routes, auth, cloud_run_url)
+
+    resources["api-gateway-api"] = {
+        "type": "gcp:apigateway:Api",
+        "properties": {
+            "apiId": f"${{pulumi.stack}}-{app.name}",
+        },
+    }
+    resources["api-gateway-config"] = {
+        "type": "gcp:apigateway:ApiConfig",
+        "properties": {
+            "api": "${api-gateway-api.apiId}",
+            "apiConfigId": f"${{pulumi.stack}}-{app.name}-cfg",
+            "openapiDocuments": [
+                {
+                    "document": {
+                        "path": "spec.yaml",
+                        "contents": openapi_contents,
+                    }
+                }
+            ],
+        },
+        "options": {"dependsOn": ["${cloud-run-service}"]},
+    }
+    resources["api-gateway-gateway"] = {
+        "type": "gcp:apigateway:Gateway",
+        "properties": {
+            "gatewayId": f"${{pulumi.stack}}-{app.name}-gw",
+            "apiConfig": "${api-gateway-config.id}",
+            "region": "${gcp:region}",
+        },
+    }
+
+    outputs["gatewayUrl"] = "${api-gateway-gateway.defaultHostname}"
 
 
 # ── Pulumi YAML stack builder ─────────────────────────────────────────────────
@@ -251,15 +403,20 @@ def _build_pulumi_stack(app: Any, plan: "PlanFile", region: str) -> dict[str, An
             "options": {"dependsOn": ["${cloud-run-service}"]},
         }
 
+    outputs: dict[str, Any] = {
+        "serviceUrl": "${cloud-run-service.statuses[0].url}",
+        "imageRepository": "${repo.name}",
+    }
+
+    # ── GCP API Gateway (proxy / api-gateway components) ─────────────────────
+    _add_gcp_api_gateway(app, plan, resources, outputs)
+
     return {
         "name": f"skaal-{app.name}",
         "runtime": "yaml",
         "config": config,
         "resources": resources,
-        "outputs": {
-            "serviceUrl": "${cloud-run-service.statuses[0].url}",
-            "imageRepository": "${repo.name}",
-        },
+        "outputs": outputs,
     }
 
 
