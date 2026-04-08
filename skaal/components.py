@@ -232,9 +232,32 @@ class APIGateway(ProvisionedComponent):
         self.__skim_component__.update(
             {
                 "routes": [
-                    {"path": r.path, "target": r.target, "methods": r.methods} for r in routes
+                    {
+                        "path": r.path,
+                        "target": r.target,
+                        "methods": r.methods,
+                        "strip_prefix": r.strip_prefix,
+                        "timeout_ms": r.timeout_ms,
+                        "rewrite": r.rewrite,
+                    }
+                    for r in routes
                 ],
-                "auth": {"provider": auth.provider} if auth else None,
+                "auth": {
+                    "provider": auth.provider,
+                    "issuer": auth.issuer,
+                    "audience": auth.audience,
+                    "header": auth.header,
+                    "required": auth.required,
+                }
+                if auth
+                else None,
+                "rate_limit": {
+                    "requests_per_second": rate_limit.requests_per_second,
+                    "burst": rate_limit.burst,
+                    "scope": rate_limit.scope,
+                }
+                if rate_limit
+                else None,
                 "cors_origins": cors_origins,
                 "implementation": implementation,
             }

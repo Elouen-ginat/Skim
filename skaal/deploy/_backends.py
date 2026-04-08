@@ -108,6 +108,43 @@ _COMPOSE_SERVICES: dict[str, dict[str, Any]] = {
             "start_period": "10s",
         },
     },
+    # ── Proxy / API-gateway local backends ───────────────────────────────────
+    "traefik": {
+        "image": "traefik:v3",
+        "ports": ["- '80:80'"],
+        "environment": [],
+        "volumes": ["- /var/run/docker.sock:/var/run/docker.sock:ro"],
+        "command": [
+            "--providers.docker=true",
+            "--providers.docker.exposedbydefault=false",
+            "--entrypoints.web.address=:80",
+        ],
+        "healthcheck": {
+            "test": ["CMD", "traefik", "healthcheck"],
+            "interval": "10s",
+            "timeout": "5s",
+            "retries": 5,
+            "start_period": "5s",
+        },
+    },
+    "kong": {
+        "image": "kong:3",
+        "ports": ["- '8080:8000'"],
+        "environment": [
+            "- KONG_DATABASE=off",
+            "- KONG_DECLARATIVE_CONFIG=/kong/config.yml",
+            "- KONG_PROXY_LISTEN=0.0.0.0:8000",
+            "- KONG_ADMIN_LISTEN=127.0.0.1:8001",
+        ],
+        "volumes": ["- ./kong.yml:/kong/config.yml:ro"],
+        "healthcheck": {
+            "test": ["CMD", "kong", "health"],
+            "interval": "10s",
+            "timeout": "5s",
+            "retries": 5,
+            "start_period": "15s",
+        },
+    },
 }
 
 # Maps cloud backend names to their local Docker Compose equivalents.

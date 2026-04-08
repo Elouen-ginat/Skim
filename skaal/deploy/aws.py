@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -26,6 +27,175 @@ _DYNAMODB_ACTIONS = [
     "dynamodb:Scan",
     "dynamodb:Query",
 ]
+
+
+# ── API Gateway helpers ───────────────────────────────────────────────────────
+
+
+def _apigw_path(path: str) -> str:
+    """Convert a Skaal wildcard path to API Gateway v2 format.
+
+    ``/api/*``  → ``/api/{proxy+}``
+    ``/health`` → ``/health``
+    """
+    if path in ("/*", "*"):
+        return "/{proxy+}"
+    if path.endswith("/*"):
+        return path[:-2] + "/{proxy+}"
+    if path.endswith("*"):
+        return path[:-1] + "{proxy+}"
+    return path
+
+
+def _safe_key(route_key: str) -> str:
+    """Stable Pulumi resource key derived from an API Gateway route key."""
+    return re.sub(r"[^a-zA-Z0-9-]", "-", route_key).strip("-")
+
+
+def _add_apigw_resources(
+    app: Any,
+    plan: "PlanFile",
+    resources: dict[str, Any],
+    config: dict[str, Any],  # noqa: ARG001 — reserved for future config entries
+) -> None:
+    """Populate *resources* with API Gateway v2 Pulumi resources.
+
+    - Reads proxy / api-gateway components from ``plan.components``.
+    - Generates per-route resources (instead of a single ``$default`` catch-all)
+      when explicit ``Route`` specs are present.
+    - Falls back to mount-prefix catch-all routes from ``app._mounts``.
+    - Final fallback: ``$default`` catch-all (original behaviour).
+    - Adds a JWT authorizer when ``auth.provider == "jwt"``.
+    - Sets CORS on the API resource when ``cors_origins`` is present.
+    - Sets stage throttling when ``rate_limit`` is present.
+    """
+    gw_comp = next(
+        (c for c in plan.components.values() if c.kind in ("proxy", "api-gateway")),
+        None,
+    )
+    mounts: dict[str, str] = getattr(app, "_mounts", {})
+
+    # ── API resource (with optional CORS) ─────────────────────────────────────
+    api_props: dict[str, Any] = {
+        "name": f"${{pulumi.stack}}-{app.name}-api",
+        "protocolType": "HTTP",
+    }
+    cors_origins = gw_comp.config.get("cors_origins") if gw_comp else None
+    if cors_origins:
+        api_props["corsConfiguration"] = {
+            "allowOrigins": cors_origins,
+            "allowMethods": ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
+            "allowHeaders": ["Content-Type", "Authorization"],
+        }
+    resources["api"] = {"type": "aws:apigatewayv2:Api", "properties": api_props}
+
+    # ── Lambda permission + integration ───────────────────────────────────────
+    resources["api-invoke-permission"] = {
+        "type": "aws:lambda:Permission",
+        "properties": {
+            "action": "lambda:InvokeFunction",
+            "function": "${lambda-fn.arn}",
+            "principal": "apigateway.amazonaws.com",
+            "sourceArn": "${api.executionArn}/*/*",
+        },
+    }
+    resources["lambda-integration"] = {
+        "type": "aws:apigatewayv2:Integration",
+        "properties": {
+            "apiId": "${api.id}",
+            "integrationType": "AWS_PROXY",
+            "integrationUri": "${lambda-fn.invokeArn}",
+            "payloadFormatVersion": "2.0",
+        },
+    }
+
+    # ── JWT authorizer ────────────────────────────────────────────────────────
+    authorizer_ref: str | None = None
+    if gw_comp:
+        auth_cfg = gw_comp.config.get("auth") or {}
+        if auth_cfg.get("provider") == "jwt":
+            jwt_conf: dict[str, Any] = {"issuer": auth_cfg.get("issuer", "")}
+            audience = auth_cfg.get("audience")
+            if audience:
+                jwt_conf["audiences"] = [audience]
+            resources["jwt-authorizer"] = {
+                "type": "aws:apigatewayv2:Authorizer",
+                "properties": {
+                    "apiId": "${api.id}",
+                    "authorizerType": "JWT",
+                    "identitySources": ["$request.header.Authorization"],
+                    "jwtConfiguration": jwt_conf,
+                    "name": f"{app.name}-jwt",
+                },
+            }
+            authorizer_ref = "${jwt-authorizer.id}"
+
+    # ── Routes ────────────────────────────────────────────────────────────────
+    route_resource_keys: list[str] = []
+
+    def _add_route(route_key: str, res_key: str, extra: dict[str, Any] | None = None) -> None:
+        props: dict[str, Any] = {
+            "apiId": "${api.id}",
+            "routeKey": route_key,
+            "target": "integrations/${lambda-integration.id}",
+        }
+        if extra:
+            props.update(extra)
+        resources[res_key] = {"type": "aws:apigatewayv2:Route", "properties": props}
+        route_resource_keys.append(res_key)
+
+    if gw_comp and gw_comp.config.get("routes"):
+        auth_extra: dict[str, Any] = {}
+        if authorizer_ref:
+            auth_extra = {"authorizerId": authorizer_ref, "authorizationType": "JWT"}
+
+        seen_keys: set[str] = set()
+        for route in gw_comp.config["routes"]:
+            gw_path = _apigw_path(route["path"])
+            methods: list[str] = route.get("methods") or ["GET", "POST"]
+            # Collapse to ANY when all common verbs are covered
+            if {"GET", "POST", "PUT", "DELETE", "PATCH"}.issubset(
+                {m.upper() for m in methods}
+            ):
+                methods = ["ANY"]
+            for method in methods:
+                rk = f"{method.upper()} {gw_path}"
+                if rk in seen_keys:
+                    continue
+                seen_keys.add(rk)
+                _add_route(rk, f"route-{_safe_key(rk)}", auth_extra or None)
+
+    elif mounts:
+        # Auto-generate prefix catch-all routes from app.mount() calls
+        for ns, prefix in mounts.items():
+            mount_path = _apigw_path(prefix.rstrip("/") + "/*")
+            _add_route(f"ANY {mount_path}", f"route-mount-{_safe_key(ns)}")
+
+    else:
+        # Original fallback: single $default catch-all
+        _add_route("$default", "default-route")
+
+    # ── Stage (with optional throttling) ─────────────────────────────────────
+    stage_props: dict[str, Any] = {
+        "apiId": "${api.id}",
+        "name": "$default",
+        "autoDeploy": True,
+    }
+    if gw_comp:
+        rl_cfg = gw_comp.config.get("rate_limit") or {}
+        if rl_cfg:
+            rps = float(rl_cfg.get("requests_per_second", 1000))
+            burst = int(rl_cfg.get("burst", max(1, int(rps * 2))))
+            stage_props["defaultRouteSettings"] = {
+                "throttlingBurstLimit": burst,
+                "throttlingRateLimit": rps,
+            }
+
+    resources["default-stage"] = {
+        "type": "aws:apigatewayv2:Stage",
+        "properties": stage_props,
+        "options": {"dependsOn": [f"${{{k}}}" for k in route_resource_keys]},
+    }
 
 
 # ── Pulumi YAML stack builder ─────────────────────────────────────────────────
@@ -151,48 +321,7 @@ def _build_pulumi_stack(app: Any, plan: "PlanFile") -> dict[str, Any]:
     }
 
     # ── HTTP API Gateway v2 ───────────────────────────────────────────────────
-    resources["api"] = {
-        "type": "aws:apigatewayv2:Api",
-        "properties": {
-            "name": f"${{pulumi.stack}}-{app.name}-api",
-            "protocolType": "HTTP",
-        },
-    }
-    resources["api-invoke-permission"] = {
-        "type": "aws:lambda:Permission",
-        "properties": {
-            "action": "lambda:InvokeFunction",
-            "function": "${lambda-fn.arn}",
-            "principal": "apigateway.amazonaws.com",
-            "sourceArn": "${api.executionArn}/*/*",
-        },
-    }
-    resources["lambda-integration"] = {
-        "type": "aws:apigatewayv2:Integration",
-        "properties": {
-            "apiId": "${api.id}",
-            "integrationType": "AWS_PROXY",
-            "integrationUri": "${lambda-fn.invokeArn}",
-            "payloadFormatVersion": "2.0",
-        },
-    }
-    resources["default-route"] = {
-        "type": "aws:apigatewayv2:Route",
-        "properties": {
-            "apiId": "${api.id}",
-            "routeKey": "$default",
-            "target": "integrations/${lambda-integration.id}",
-        },
-    }
-    resources["default-stage"] = {
-        "type": "aws:apigatewayv2:Stage",
-        "properties": {
-            "apiId": "${api.id}",
-            "name": "$default",
-            "autoDeploy": True,
-        },
-        "options": {"dependsOn": ["${default-route}"]},
-    }
+    _add_apigw_resources(app, plan, resources, config)
 
     # ── EventBridge rules for schedule triggers ───────────────────────────────
     for comp_name, comp in plan.components.items():

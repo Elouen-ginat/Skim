@@ -17,5 +17,5 @@ ${service_dependencies}
       # Mount the source package from the project root for live reload during development
       - ../${source_pkg}:/app/${source_pkg}
     command: uv run gunicorn --bind 0.0.0.0:8000 --workers 2 --timeout 120 --reload main:application
-
+${app_labels}
 ${additional_services}

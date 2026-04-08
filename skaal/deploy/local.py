@@ -16,16 +16,112 @@ if TYPE_CHECKING:
     from skaal.plan import PlanFile
 
 
+# ── Local gateway helpers ─────────────────────────────────────────────────────
+
+
+def _traefik_labels(routes: list[dict[str, Any]], app_name: str) -> str:
+    """Generate docker-compose label lines that wire Traefik routing rules.
+
+    Each route produces a Traefik router + service label pair.  The app
+    container retains its direct port binding so it is reachable without
+    Traefik during development.
+    """
+    if not routes:
+        return (
+            "    labels:\n"
+            f'      - "traefik.enable=true"\n'
+            f'      - "traefik.http.routers.{app_name}.rule=PathPrefix(`/`)"\n'
+            f'      - "traefik.http.services.{app_name}.loadbalancer.server.port=8000"\n'
+        )
+
+    label_lines: list[str] = ['    labels:', f'      - "traefik.enable=true"']
+    for i, route in enumerate(routes):
+        path = route["path"].rstrip("*").rstrip("/") or "/"
+        router = f"{app_name}-r{i}"
+        # PathPrefix strips trailing /* so /api/* → PathPrefix(`/api`)
+        rule = f"PathPrefix(`{path}`)" if path != "/" else "PathPrefix(`/`)"
+        label_lines.append(f'      - "traefik.http.routers.{router}.rule={rule}"')
+        label_lines.append(
+            f'      - "traefik.http.services.{router}.loadbalancer.server.port=8000"'
+        )
+    return "\n".join(label_lines) + "\n"
+
+
+def _kong_config(routes: list[dict[str, Any]], auth: dict[str, Any] | None, rate_limit: dict[str, Any] | None, cors_origins: list[str] | None) -> str:
+    """Generate a Kong DB-less declarative configuration (kong.yml)."""
+    lines: list[str] = [
+        '_format_version: "3.0"',
+        "_transform: true",
+        "",
+        "services:",
+        "  - name: skaal-app",
+        "    url: http://app:8000",
+        "    routes:",
+    ]
+
+    for i, route in enumerate(routes):
+        path = route["path"].rstrip("*").rstrip("/") or "/"
+        methods = route.get("methods") or ["GET", "POST"]
+        lines.append(f"      - name: route-{i}")
+        lines.append(f"        paths:")
+        lines.append(f"          - {path}")
+        lines.append(f"        methods:")
+        for m in methods:
+            lines.append(f"          - {m.upper()}")
+
+    # Global plugins
+    has_plugins = auth or rate_limit or cors_origins
+    if has_plugins:
+        lines.append("")
+        lines.append("plugins:")
+
+    if rate_limit:
+        rps = rate_limit.get("requests_per_second", 100)
+        lines += [
+            "  - name: rate-limiting",
+            "    config:",
+            f"      minute: {max(1, int(rps * 60))}",
+            "      policy: local",
+        ]
+
+    if cors_origins:
+        origins_str = ", ".join(f'"{o}"' for o in cors_origins)
+        lines += [
+            "  - name: cors",
+            "    config:",
+            f"      origins: [{origins_str}]",
+            "      methods: [GET, POST, PUT, DELETE, PATCH, OPTIONS]",
+            "      headers: [Content-Type, Authorization]",
+            "      preflight_continue: false",
+        ]
+
+    if auth and auth.get("provider") == "jwt":
+        lines += [
+            "  - name: jwt",
+            "    config:",
+            "      uri_param_names: []",
+            "      cookie_names: []",
+            "      # Configure consumers and JWT credentials separately",
+        ]
+        if auth.get("issuer"):
+            lines.append(f"      # Issuer: {auth['issuer']}")
+
+    return "\n".join(lines) + "\n"
+
+
 # ── Docker Compose YAML builder ───────────────────────────────────────────────
 
 
-def _build_docker_compose(plan: "PlanFile", port: int, source_pkg: str) -> str:
+def _build_docker_compose(plan: "PlanFile", port: int, source_pkg: str, app: Any = None) -> str:
     """Build a ``docker-compose.yml`` string with the app service and any
     required storage backend services.
 
     Cloud backends (e.g. firestore, cloud-sql-postgres) are automatically
     resolved to their local equivalents via :func:`~skaal.deploy._backends.get_handler`
     with ``local=True``.
+
+    When *plan.components* includes a proxy or api-gateway component, the
+    matching local gateway service (Traefik or Kong) is added automatically.
     """
     services_needed: dict[str, dict[str, Any]] = {}
     service_dependencies: list[str] = []
@@ -46,13 +142,45 @@ def _build_docker_compose(plan: "PlanFile", port: int, source_pkg: str) -> str:
             if handler.local_service not in service_dependencies:
                 service_dependencies.append(handler.local_service)
 
-    # Build the additional services section
+    # ── Proxy / API-gateway services ──────────────────────────────────────────
+    app_labels = ""
+    gw_comp = next(
+        (c for c in plan.components.values() if c.kind in ("proxy", "api-gateway")),
+        None,
+    )
+    if gw_comp is not None:
+        impl = gw_comp.implementation or ("traefik" if gw_comp.kind == "proxy" else "kong")
+        gateway_svc = "traefik" if impl == "traefik" else "kong"
+        compose_spec = _COMPOSE_SERVICES.get(gateway_svc)
+        if compose_spec and gateway_svc not in services_needed:
+            services_needed[gateway_svc] = compose_spec
+        if gateway_svc not in service_dependencies:
+            service_dependencies.append(gateway_svc)
+
+        routes: list[dict[str, Any]] = gw_comp.config.get("routes") or []
+        mounts: dict[str, str] = getattr(app, "_mounts", {}) if app is not None else {}
+        if not routes and mounts:
+            routes = [
+                {"path": prefix.rstrip("/") + "/*", "target": ns, "methods": ["GET", "POST"]}
+                for ns, prefix in mounts.items()
+            ]
+
+        if gateway_svc == "traefik":
+            app_name = getattr(app, "name", "app") if app is not None else "app"
+            app_labels = _traefik_labels(routes, app_name)
+
+    # Re-build additional_services after gateway was potentially added
     additional_services = ""
     if services_needed:
         service_lines: list[str] = []
         for service_name, service_config in services_needed.items():
             service_lines.append(f"  {service_name}:")
             service_lines.append(f"    image: {service_config['image']}")
+
+            if service_config.get("command"):
+                service_lines.append("    command:")
+                for cmd in service_config["command"]:
+                    service_lines.append(f"      - {cmd}")
 
             if service_config.get("ports"):
                 service_lines.append("    ports:")
@@ -63,6 +191,11 @@ def _build_docker_compose(plan: "PlanFile", port: int, source_pkg: str) -> str:
                 service_lines.append("    environment:")
                 for env in service_config["environment"]:
                     service_lines.append(f"      {env}")
+
+            if service_config.get("volumes"):
+                service_lines.append("    volumes:")
+                for vol in service_config["volumes"]:
+                    service_lines.append(f"      {vol}")
 
             if service_config.get("healthcheck"):
                 hc = service_config["healthcheck"]
@@ -85,6 +218,7 @@ def _build_docker_compose(plan: "PlanFile", port: int, source_pkg: str) -> str:
         source_pkg=source_pkg,
         service_env_vars="\n".join(env_vars) if env_vars else "      {}",
         service_dependencies=depends_on_str,
+        app_labels=app_labels,
         additional_services=additional_services,
     )
 
@@ -208,10 +342,44 @@ def generate_artifacts(
         shutil.copytree(src_pkg_dir, dst_pkg_dir, dirs_exist_ok=True)
         generated.append(dst_pkg_dir)
 
+    # ── kong.yml (DB-less config for Kong api-gateway) ────────────────────────
+    gw_comp = next(
+        (c for c in plan.components.values() if c.kind in ("proxy", "api-gateway")),
+        None,
+    )
+    if gw_comp is not None:
+        impl = gw_comp.implementation or ("traefik" if gw_comp.kind == "proxy" else "kong")
+        if impl == "kong":
+            routes: list[dict[str, Any]] = gw_comp.config.get("routes") or []
+            mounts: dict[str, str] = getattr(app, "_mounts", {})
+            if not routes and mounts:
+                routes = [
+                    {
+                        "path": prefix.rstrip("/") + "/*",
+                        "target": ns,
+                        "methods": ["GET", "POST"],
+                    }
+                    for ns, prefix in mounts.items()
+                ]
+            if not routes:
+                routes = [{"path": "/", "target": "app", "methods": ["GET", "POST"]}]
+            kong_path = output_dir / "kong.yml"
+            kong_path.write_text(
+                _kong_config(
+                    routes,
+                    auth=gw_comp.config.get("auth"),
+                    rate_limit=gw_comp.config.get("rate_limit"),
+                    cors_origins=gw_comp.config.get("cors_origins"),
+                ),
+                encoding="utf-8",
+            )
+            generated.append(kong_path)
+
     # ── docker-compose.yml ────────────────────────────────────────────────────
     compose_path = output_dir / "docker-compose.yml"
     compose_path.write_text(
-        _build_docker_compose(plan, deploy_config.port, source_pkg=top_pkg), encoding="utf-8"
+        _build_docker_compose(plan, deploy_config.port, source_pkg=top_pkg, app=app),
+        encoding="utf-8",
     )
     generated.append(compose_path)
 
