@@ -44,11 +44,17 @@ Usage::
 
 from __future__ import annotations
 
+import json
 from typing import Any, Generic, TypeVar, get_args, get_origin
 
 K = TypeVar("K")
 V = TypeVar("V")
 T = TypeVar("T")
+
+
+# ── Serialization helpers ────────────────────────────────────────────────────
+# These are used by Map/Collection classmethods and by patch_storage_class
+# (backward-compat path for plain classes).
 
 
 def _is_pydantic(t: Any) -> bool:
@@ -58,6 +64,60 @@ def _is_pydantic(t: Any) -> bool:
         return isinstance(t, type) and issubclass(t, BaseModel)
     except ImportError:
         return False
+
+
+def _serialize(value: Any, value_type: type | None) -> Any:
+    """
+    Convert *value* to a backend-storable form.
+
+    - Pydantic model instance → ``dict`` (via ``model_dump()``)
+    - Plain ``dict`` when *value_type* is a Pydantic model → validated first,
+      then converted to ``dict`` (catches bad data early)
+    - Anything else → returned unchanged
+    """
+    if value_type is None:
+        return value
+    try:
+        from pydantic import BaseModel
+
+        if isinstance(value_type, type) and issubclass(value_type, BaseModel):
+            if isinstance(value, BaseModel):
+                return value.model_dump()
+            if isinstance(value, dict):
+                return value_type.model_validate(value).model_dump()
+    except ImportError:
+        pass
+    return value
+
+
+def _deserialize(raw: Any, value_type: type | None) -> Any:
+    """
+    Reconstruct a typed value from the raw backend representation.
+
+    - ``dict`` + Pydantic *value_type* → run ``apply_migrations()`` then
+      ``value_type.model_validate(migrated)``
+    - JSON ``str``/``bytes`` + Pydantic *value_type* → parse to ``dict`` first
+    - Already the right type → returned as-is
+    - ``None`` → ``None``
+    - Anything else → returned unchanged
+    """
+    if raw is None or value_type is None:
+        return raw
+    try:
+        from pydantic import BaseModel
+
+        if isinstance(value_type, type) and issubclass(value_type, BaseModel):
+            if isinstance(raw, value_type):
+                return raw
+            if isinstance(raw, (str, bytes)):
+                raw = json.loads(raw)
+            if isinstance(raw, dict):
+                from skaal.types.schema import apply_migrations
+
+                return value_type.model_validate(apply_migrations(raw, value_type))
+    except ImportError:
+        pass
+    return raw
 
 
 def _primary_key_field(model: type) -> str:
@@ -98,6 +158,9 @@ def _schema_hints(cls: type) -> dict[str, Any]:
     return hints
 
 
+# ── Map ──────────────────────────────────────────────────────────────────────
+
+
 class Map(Generic[K, V]):
     """
     Typed key-value storage.
@@ -119,13 +182,14 @@ class Map(Generic[K, V]):
         class Sessions(Map[str, SessionToken]):
             pass
 
-    Methods below are **type stubs** for IDE autocomplete.  The runtime
-    (:func:`~skaal.backends.local_backend.patch_storage_class`) replaces them
-    with real implementations backed by the selected storage backend.
+    The runtime sets ``cls._backend`` to a
+    :class:`~skaal.backends.base.StorageBackend` instance.  All methods
+    delegate to it — no monkey-patching needed.
     """
 
     __skaal_key_type__: type = str
     __skaal_value_type__: type | None = None
+    _backend: Any = None  # set per-subclass by the runtime
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
         super().__init_subclass__(**kwargs)
@@ -139,62 +203,104 @@ class Map(Generic[K, V]):
                     cls.__skaal_value_type__ = args[1]
                 break
 
-    # ── Type stubs (replaced at runtime by patch_storage_class) ───────────
+    @classmethod
+    def _ensure_wired(cls) -> None:
+        if cls._backend is None:
+            raise NotImplementedError(
+                f"{cls.__name__} storage not wired. Use LocalRuntime or deploy first."
+            )
 
-    @staticmethod
-    async def get(key: str) -> Any | None:
+    # ── Async API ─────────────────────────────────────────────────────────
+
+    @classmethod
+    async def get(cls, key: str) -> Any | None:
         """Return the value for *key*, or ``None`` if not found."""
-        raise NotImplementedError("Storage not wired. Use LocalRuntime or deploy first.")
+        cls._ensure_wired()
+        raw = await cls._backend.get(key)
+        if cls.__skaal_value_type__ is not None:
+            return _deserialize(raw, cls.__skaal_value_type__)
+        return raw
 
-    @staticmethod
-    async def set(key: str, value: Any) -> None:
+    @classmethod
+    async def set(cls, key: str, value: Any) -> None:
         """Store *value* under *key*."""
-        raise NotImplementedError("Storage not wired. Use LocalRuntime or deploy first.")
+        cls._ensure_wired()
+        payload = (
+            _serialize(value, cls.__skaal_value_type__)
+            if cls.__skaal_value_type__ is not None
+            else value
+        )
+        await cls._backend.set(key, payload)
 
-    @staticmethod
-    async def delete(key: str) -> None:
+    @classmethod
+    async def delete(cls, key: str) -> None:
         """Remove *key* (no-op if not present)."""
-        raise NotImplementedError("Storage not wired. Use LocalRuntime or deploy first.")
+        cls._ensure_wired()
+        await cls._backend.delete(key)
 
-    @staticmethod
-    async def list() -> list[tuple[str, Any]]:
+    @classmethod
+    async def list(cls) -> list[tuple[str, Any]]:
         """Return all ``(key, value)`` pairs."""
-        raise NotImplementedError("Storage not wired. Use LocalRuntime or deploy first.")
+        cls._ensure_wired()
+        entries = await cls._backend.list()
+        if cls.__skaal_value_type__ is not None:
+            return [(k, _deserialize(v, cls.__skaal_value_type__)) for k, v in entries]
+        return entries
 
-    @staticmethod
-    async def scan(prefix: str = "") -> list[tuple[str, Any]]:
+    @classmethod
+    async def scan(cls, prefix: str = "") -> list[tuple[str, Any]]:
         """Return all ``(key, value)`` pairs where key starts with *prefix*."""
-        raise NotImplementedError("Storage not wired. Use LocalRuntime or deploy first.")
+        cls._ensure_wired()
+        entries = await cls._backend.scan(prefix)
+        if cls.__skaal_value_type__ is not None:
+            return [(k, _deserialize(v, cls.__skaal_value_type__)) for k, v in entries]
+        return entries
 
-    @staticmethod
-    async def close() -> None:
+    @classmethod
+    async def close(cls) -> None:
         """Release any resources held by the backend."""
-        raise NotImplementedError("Storage not wired. Use LocalRuntime or deploy first.")
+        if cls._backend is not None:
+            await cls._backend.close()
 
-    @staticmethod
-    def sync_get(key: str) -> Any | None:
-        """Synchronous wrapper for :meth:`get`. Safe in Dash / Flask callbacks."""
-        raise NotImplementedError("Storage not wired. Use LocalRuntime or deploy first.")
+    # ── Sync API (safe in Dash / Flask callbacks) ─────────────────────────
 
-    @staticmethod
-    def sync_set(key: str, value: Any) -> None:
+    @classmethod
+    def sync_get(cls, key: str) -> Any | None:
+        """Synchronous wrapper for :meth:`get`."""
+        from skaal.backends.local_backend import _sync_run
+
+        return _sync_run(cls.get(key))
+
+    @classmethod
+    def sync_set(cls, key: str, value: Any) -> None:
         """Synchronous wrapper for :meth:`set`."""
-        raise NotImplementedError("Storage not wired. Use LocalRuntime or deploy first.")
+        from skaal.backends.local_backend import _sync_run
 
-    @staticmethod
-    def sync_delete(key: str) -> None:
+        _sync_run(cls.set(key, value))
+
+    @classmethod
+    def sync_delete(cls, key: str) -> None:
         """Synchronous wrapper for :meth:`delete`."""
-        raise NotImplementedError("Storage not wired. Use LocalRuntime or deploy first.")
+        from skaal.backends.local_backend import _sync_run
 
-    @staticmethod
-    def sync_list() -> list[tuple[str, Any]]:
+        _sync_run(cls.delete(key))
+
+    @classmethod
+    def sync_list(cls) -> list[tuple[str, Any]]:
         """Synchronous wrapper for :meth:`list`."""
-        raise NotImplementedError("Storage not wired. Use LocalRuntime or deploy first.")
+        from skaal.backends.local_backend import _sync_run
 
-    @staticmethod
-    def sync_scan(prefix: str = "") -> list[tuple[str, Any]]:
+        return _sync_run(cls.list())
+
+    @classmethod
+    def sync_scan(cls, prefix: str = "") -> list[tuple[str, Any]]:
         """Synchronous wrapper for :meth:`scan`."""
-        raise NotImplementedError("Storage not wired. Use LocalRuntime or deploy first.")
+        from skaal.backends.local_backend import _sync_run
+
+        return _sync_run(cls.scan(prefix))
+
+
+# ── Collection ───────────────────────────────────────────────────────────────
 
 
 class Collection(Generic[T]):
@@ -229,6 +335,7 @@ class Collection(Generic[T]):
 
     __skaal_value_type__: type | None = None
     __skaal_key_field__: str = "id"
+    _backend: Any = None  # set per-subclass by the runtime
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
         super().__init_subclass__(**kwargs)
@@ -245,101 +352,159 @@ class Collection(Generic[T]):
                         cls.__skaal_key_field__ = _primary_key_field(args[0])
                 break
 
-    # ── Type stubs (replaced at runtime by patch_storage_class) ───────────
-    # Collection inherits get/set/delete/list/scan/close from Map via
-    # patch_storage_class.  The additional methods below are Collection-only.
+    @classmethod
+    def _ensure_wired(cls) -> None:
+        if cls._backend is None:
+            raise NotImplementedError(
+                f"{cls.__name__} storage not wired. Use LocalRuntime or deploy first."
+            )
 
-    @staticmethod
-    async def get(key: str) -> Any | None:
+    @classmethod
+    def _extract_key(cls, item: Any) -> str:
+        """Extract the primary key from *item* using ``cls.__skaal_key_field__``."""
+        key_field = cls.__skaal_key_field__
+        if hasattr(item, key_field):
+            return str(getattr(item, key_field))
+        if isinstance(item, dict) and key_field in item:
+            return str(item[key_field])
+        raise ValueError(
+            f"Cannot extract key field {key_field!r} from {type(item).__name__}. "
+            f"Set __skaal_key_field__ on the storage class to override."
+        )
+
+    # ── Async API (shared with Map) ───────────────────────────────────────
+
+    @classmethod
+    async def get(cls, key: str) -> Any | None:
         """Return the item for *key*, or ``None``."""
-        raise NotImplementedError("Storage not wired. Use LocalRuntime or deploy first.")
+        cls._ensure_wired()
+        raw = await cls._backend.get(key)
+        if cls.__skaal_value_type__ is not None:
+            return _deserialize(raw, cls.__skaal_value_type__)
+        return raw
 
-    @staticmethod
-    async def set(key: str, value: Any) -> None:
+    @classmethod
+    async def set(cls, key: str, value: Any) -> None:
         """Store *value* under *key*."""
-        raise NotImplementedError("Storage not wired. Use LocalRuntime or deploy first.")
+        cls._ensure_wired()
+        payload = (
+            _serialize(value, cls.__skaal_value_type__)
+            if cls.__skaal_value_type__ is not None
+            else value
+        )
+        await cls._backend.set(key, payload)
 
-    @staticmethod
-    async def delete(key: str) -> None:
+    @classmethod
+    async def delete(cls, key: str) -> None:
         """Remove *key*."""
-        raise NotImplementedError("Storage not wired. Use LocalRuntime or deploy first.")
+        cls._ensure_wired()
+        await cls._backend.delete(key)
 
-    @staticmethod
-    async def list() -> list[tuple[str, Any]]:
+    @classmethod
+    async def list(cls) -> list[tuple[str, Any]]:
         """Return all ``(key, value)`` pairs."""
-        raise NotImplementedError("Storage not wired. Use LocalRuntime or deploy first.")
+        cls._ensure_wired()
+        entries = await cls._backend.list()
+        if cls.__skaal_value_type__ is not None:
+            return [(k, _deserialize(v, cls.__skaal_value_type__)) for k, v in entries]
+        return entries
 
-    @staticmethod
-    async def scan(prefix: str = "") -> list[tuple[str, Any]]:
+    @classmethod
+    async def scan(cls, prefix: str = "") -> list[tuple[str, Any]]:
         """Return all ``(key, value)`` pairs matching *prefix*."""
-        raise NotImplementedError("Storage not wired. Use LocalRuntime or deploy first.")
+        cls._ensure_wired()
+        entries = await cls._backend.scan(prefix)
+        if cls.__skaal_value_type__ is not None:
+            return [(k, _deserialize(v, cls.__skaal_value_type__)) for k, v in entries]
+        return entries
 
-    @staticmethod
-    async def close() -> None:
+    @classmethod
+    async def close(cls) -> None:
         """Release backend resources."""
-        raise NotImplementedError("Storage not wired. Use LocalRuntime or deploy first.")
+        if cls._backend is not None:
+            await cls._backend.close()
 
-    @staticmethod
-    async def add(item: Any) -> None:
+    # ── Collection-specific async API ─────────────────────────────────────
+
+    @classmethod
+    async def add(cls, item: Any) -> None:
         """Store *item* using its auto-extracted primary key."""
-        raise NotImplementedError("Storage not wired. Use LocalRuntime or deploy first.")
+        await cls.set(cls._extract_key(item), item)
 
-    @staticmethod
-    async def remove(key: str) -> None:
+    @classmethod
+    async def remove(cls, key: str) -> None:
         """Remove the item with *key*. Alias for ``delete``."""
-        raise NotImplementedError("Storage not wired. Use LocalRuntime or deploy first.")
+        await cls.delete(key)
 
-    @staticmethod
-    async def update(key: str, item: Any) -> None:
+    @classmethod
+    async def update(cls, key: str, item: Any) -> None:
         """Replace the value at *key* with *item*."""
-        raise NotImplementedError("Storage not wired. Use LocalRuntime or deploy first.")
+        await cls.set(key, item)
 
-    @staticmethod
-    async def all() -> list[Any]:
+    @classmethod
+    async def all(cls) -> list[Any]:
         """Return all items as a flat list."""
-        raise NotImplementedError("Storage not wired. Use LocalRuntime or deploy first.")
+        return [v for _, v in await cls.list()]
 
-    @staticmethod
-    async def find(prefix: str = "") -> list[Any]:
+    @classmethod
+    async def find(cls, prefix: str = "") -> list[Any]:
         """Return items whose key starts with *prefix*."""
-        raise NotImplementedError("Storage not wired. Use LocalRuntime or deploy first.")
+        return [v for _, v in await cls.scan(prefix)]
 
-    @staticmethod
-    def sync_get(key: str) -> Any | None:
+    # ── Sync API ──────────────────────────────────────────────────────────
+
+    @classmethod
+    def sync_get(cls, key: str) -> Any | None:
         """Synchronous wrapper for :meth:`get`."""
-        raise NotImplementedError("Storage not wired. Use LocalRuntime or deploy first.")
+        from skaal.backends.local_backend import _sync_run
 
-    @staticmethod
-    def sync_set(key: str, value: Any) -> None:
+        return _sync_run(cls.get(key))
+
+    @classmethod
+    def sync_set(cls, key: str, value: Any) -> None:
         """Synchronous wrapper for :meth:`set`."""
-        raise NotImplementedError("Storage not wired. Use LocalRuntime or deploy first.")
+        from skaal.backends.local_backend import _sync_run
 
-    @staticmethod
-    def sync_delete(key: str) -> None:
+        _sync_run(cls.set(key, value))
+
+    @classmethod
+    def sync_delete(cls, key: str) -> None:
         """Synchronous wrapper for :meth:`delete`."""
-        raise NotImplementedError("Storage not wired. Use LocalRuntime or deploy first.")
+        from skaal.backends.local_backend import _sync_run
 
-    @staticmethod
-    def sync_list() -> list[tuple[str, Any]]:
+        _sync_run(cls.delete(key))
+
+    @classmethod
+    def sync_list(cls) -> list[tuple[str, Any]]:
         """Synchronous wrapper for :meth:`list`."""
-        raise NotImplementedError("Storage not wired. Use LocalRuntime or deploy first.")
+        from skaal.backends.local_backend import _sync_run
 
-    @staticmethod
-    def sync_scan(prefix: str = "") -> list[tuple[str, Any]]:
+        return _sync_run(cls.list())
+
+    @classmethod
+    def sync_scan(cls, prefix: str = "") -> list[tuple[str, Any]]:
         """Synchronous wrapper for :meth:`scan`."""
-        raise NotImplementedError("Storage not wired. Use LocalRuntime or deploy first.")
+        from skaal.backends.local_backend import _sync_run
 
-    @staticmethod
-    def sync_add(item: Any) -> None:
+        return _sync_run(cls.scan(prefix))
+
+    @classmethod
+    def sync_add(cls, item: Any) -> None:
         """Synchronous wrapper for :meth:`add`."""
-        raise NotImplementedError("Storage not wired. Use LocalRuntime or deploy first.")
+        from skaal.backends.local_backend import _sync_run
 
-    @staticmethod
-    def sync_all() -> list[Any]:
+        _sync_run(cls.add(item))
+
+    @classmethod
+    def sync_all(cls) -> list[Any]:
         """Synchronous wrapper for :meth:`all`."""
-        raise NotImplementedError("Storage not wired. Use LocalRuntime or deploy first.")
+        from skaal.backends.local_backend import _sync_run
 
-    @staticmethod
-    def sync_find(prefix: str = "") -> list[Any]:
+        return _sync_run(cls.all())
+
+    @classmethod
+    def sync_find(cls, prefix: str = "") -> list[Any]:
         """Synchronous wrapper for :meth:`find`."""
-        raise NotImplementedError("Storage not wired. Use LocalRuntime or deploy first.")
+        from skaal.backends.local_backend import _sync_run
+
+        return _sync_run(cls.find(prefix))
