@@ -12,21 +12,10 @@ from skaal.backends.local_backend import LocalMap, patch_storage_class
 
 
 def _wire_channel(channel_obj: Any) -> None:
-    """Replace stub send/receive on a Channel instance with LocalChannel methods."""
-    from skaal.runtime.channels import LocalChannel
+    """Replace stub send/receive on a Channel instance with a local backend."""
+    from skaal.channel import wire_local
 
-    local = LocalChannel()
-
-    async def _send(item: Any) -> None:
-        await local.publish("default", item)
-
-    async def _receive() -> Any:
-        async for msg in local.subscribe("default"):
-            yield msg
-
-    channel_obj.send = _send
-    channel_obj.receive = _receive
-    channel_obj._local_channel = local
+    wire_local(channel_obj)
 
 
 class LocalRuntime:
@@ -201,6 +190,44 @@ class LocalRuntime:
 
         backends = cls._build_backends(app, _make_backend)
         return cls(app, host=host, port=port, backend_overrides=backends)
+
+    @classmethod
+    def from_dynamodb(
+        cls,
+        app: Any,
+        table_name: str,
+        region: str = "us-east-1",
+        host: str = "127.0.0.1",
+        port: int = 8000,
+    ) -> "LocalRuntime":
+        """Create a ``LocalRuntime`` backed by DynamoDB."""
+        from skaal.backends.dynamodb_backend import DynamoBackend
+
+        def _make_backend(qname: str, obj: Any) -> DynamoBackend:
+            return DynamoBackend(table_name=f"{table_name}_{qname.replace('.', '_').lower()}", region=region)
+
+        backends = cls._build_backends(app, _make_backend)
+        return cls(app, host=host, port=port, backend_overrides=backends)
+
+    def wire_channels_redis(
+        self,
+        redis_url: str = "redis://localhost:6379",
+        namespace: str | None = None,
+    ) -> None:
+        """Re-wire all Channel instances to use Redis Streams instead of local queues.
+
+        Call after construction to upgrade channels to distributed pub/sub::
+
+            runtime = LocalRuntime(app)
+            runtime.wire_channels_redis("redis://localhost:6379")
+        """
+        from skaal.channel import Channel as SkaalChannel
+        from skaal.channel import wire_redis
+
+        ns = namespace or self.app.name
+        for name, obj in self.app._collect_all().items():
+            if isinstance(obj, SkaalChannel):
+                wire_redis(obj, url=redis_url, namespace=ns, topic=name)
 
     # ── HTTP dispatch ──────────────────────────────────────────────────────────
 

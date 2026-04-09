@@ -109,6 +109,9 @@ class Persistent(Generic[T]):
 
     This enables explicit opt-in for persistent fields rather than marking
     all non-underscore fields as persistent by default.
-    """
 
-    __origin__ = None  # Mark this as a special type annotation
+    Detection in :class:`~skaal.agent.Agent.__init_subclass__`:
+
+    - ``Persistent[float]`` → ``__origin__`` is ``Persistent`` (set by Generic)
+    - bare ``Persistent`` → matched via ``annotation is Persistent``
+    """

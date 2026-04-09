@@ -147,27 +147,15 @@ class PostgresBackend:
         return result
 
     async def increment_counter(self, key: str, delta: int = 1) -> int:
-        """Atomically increment a counter using Postgres atomic update."""
+        """Atomically increment a counter using a single Postgres upsert."""
         await self._ensure_connected()
         async with self._pool.acquire() as conn:
-            # Use an atomic increment: first try to insert if not exists, then update
-            await conn.execute(
-                """
-                INSERT INTO skaal_kv (ns, key, value) VALUES ($1, $2, $3::jsonb)
-                ON CONFLICT (ns, key) DO NOTHING
-                """,
-                self.namespace,
-                key,
-                json.dumps(0),
-            )
-            # Now increment
             row = await conn.fetchrow(
                 """
-                UPDATE skaal_kv
-                SET value = to_jsonb(
-                    (COALESCE((value->>0)::int, 0) + $3)::text
-                )
-                WHERE ns = $1 AND key = $2
+                INSERT INTO skaal_kv (ns, key, value)
+                VALUES ($1, $2, to_jsonb($3::int))
+                ON CONFLICT (ns, key)
+                DO UPDATE SET value = to_jsonb((skaal_kv.value::int + $3::int))
                 RETURNING value
                 """,
                 self.namespace,
@@ -175,7 +163,8 @@ class PostgresBackend:
                 delta,
             )
         if row:
-            return int(json.loads(row["value"]))
+            raw = row["value"]
+            return int(json.loads(raw)) if isinstance(raw, str) else int(raw)
         return delta
 
     async def close(self) -> None:

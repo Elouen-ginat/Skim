@@ -28,6 +28,10 @@ def __getattr__(name: str) -> object:
         from skaal.backends.postgres_backend import PostgresBackend
 
         return PostgresBackend
+    if name == "RedisStreamChannel":
+        from skaal.backends.redis_channel import RedisStreamChannel
+
+        return RedisStreamChannel
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
@@ -36,6 +40,7 @@ __all__ = [
     "LocalMap",
     "PostgresBackend",
     "RedisBackend",
+    "RedisStreamChannel",
     "SqliteBackend",
     "StorageBackend",
     "patch_storage_class",

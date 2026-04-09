@@ -105,17 +105,23 @@ class FirestoreBackend:
         return await self._run(_scan)
 
     async def increment_counter(self, key: str, delta: int = 1) -> int:
-        """Atomically increment a counter using Firestore transaction."""
+        """Atomically increment a counter using a Firestore transaction."""
 
         def _increment() -> int:
-            transaction = self._get_client().transaction()
-            with transaction:
-                doc_ref = self._col().document(key)
-                doc = doc_ref.get(transaction=transaction)
+            from google.cloud import firestore
+
+            db = self._get_client()
+            doc_ref = self._col().document(key)
+
+            @firestore.transactional
+            def _update_in_txn(txn: Any) -> int:
+                doc = doc_ref.get(transaction=txn)
                 current = json.loads(doc.get("value")) if doc.exists else 0
                 new_value = int(current) + delta
-                doc_ref.set({"pk": key, "value": json.dumps(new_value)}, transaction=transaction)
-            return new_value
+                txn.set(doc_ref, {"pk": key, "value": json.dumps(new_value)})
+                return new_value
+
+            return _update_in_txn(db.transaction())
 
         return await self._run(_increment)
 

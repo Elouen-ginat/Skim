@@ -1,10 +1,12 @@
-"""In-memory storage backend and schema-aware class patching utilities."""
+"""In-memory storage backend and backward-compat wiring for plain classes."""
 
 from __future__ import annotations
 
 import asyncio
+
+# Re-export for backward compatibility — canonical location is now skaal.storage.
+from skaal.storage import _deserialize, _serialize  # noqa: F401
 import concurrent.futures
-import json
 import threading
 from typing import Any, List
 
@@ -72,63 +74,6 @@ def _sync_run(coro: Any) -> Any:
         return future.result()
 
 
-# ── Serialization helpers ──────────────────────────────────────────────────────
-
-
-def _serialize(value: Any, value_type: type | None) -> Any:
-    """
-    Convert *value* to a backend-storable form.
-
-    - Pydantic model instance → ``dict`` (via ``model_dump()``)
-    - Plain ``dict`` when *value_type* is a Pydantic model → validated first,
-      then converted to ``dict`` (catches bad data early)
-    - Anything else → returned unchanged
-    """
-    if value_type is None:
-        return value
-    try:
-        from pydantic import BaseModel
-
-        if isinstance(value_type, type) and issubclass(value_type, BaseModel):
-            if isinstance(value, BaseModel):
-                return value.model_dump()
-            if isinstance(value, dict):
-                return value_type.model_validate(value).model_dump()
-    except ImportError:
-        pass
-    return value
-
-
-def _deserialize(raw: Any, value_type: type | None) -> Any:
-    """
-    Reconstruct a typed value from the raw backend representation.
-
-    - ``dict`` + Pydantic *value_type* → run ``apply_migrations()`` then
-      ``value_type.model_validate(migrated)``
-    - JSON ``str``/``bytes`` + Pydantic *value_type* → parse to ``dict`` first
-    - Already the right type → returned as-is
-    - ``None`` → ``None``
-    - Anything else → returned unchanged
-    """
-    if raw is None or value_type is None:
-        return raw
-    try:
-        from pydantic import BaseModel
-
-        if isinstance(value_type, type) and issubclass(value_type, BaseModel):
-            if isinstance(raw, value_type):
-                return raw
-            if isinstance(raw, (str, bytes)):
-                raw = json.loads(raw)
-            if isinstance(raw, dict):
-                from skaal.types.schema import apply_migrations
-
-                return value_type.model_validate(apply_migrations(raw, value_type))
-    except ImportError:
-        pass
-    return raw
-
-
 # ── LocalMap ───────────────────────────────────────────────────────────────────
 
 
@@ -186,56 +131,43 @@ class LocalMap:
 
 def patch_storage_class(cls: type, backend: Any) -> None:
     """
-    Inject *backend* as class-level async methods on *cls*.
+    Wire *backend* into a storage class.
 
-    Plain storage classes (``class Counts: pass``) get raw get/set/delete/
-    list/scan/close with zero overhead.
+    For :class:`~skaal.storage.Map` and :class:`~skaal.storage.Collection`
+    subclasses this simply sets ``cls._backend = backend`` — the real methods
+    live on the class and delegate to ``_backend`` automatically.
 
-    Typed storage classes (``class Profiles(Map[str, User])`` or
-    ``class Profiles(Collection[User])``) additionally get:
-
-    - Automatic Pydantic validation and schema migration on read/write
-    - ``Collection`` subclasses also get ``add()``, ``remove()``,
-      ``update()``, ``all()``, ``find()``
-
-    The backend is also available as ``cls._backend`` for direct access.
+    For **plain classes** (``class Counts: pass``) that don't inherit from
+    Map/Collection, this injects thin async wrappers as static methods for
+    backward compatibility.
     """
     from skaal.storage import Collection, Map
 
-    value_type: type | None = getattr(cls, "__skaal_value_type__", None)
-    is_map = isinstance(cls, type) and issubclass(cls, Map)
-    is_collection = isinstance(cls, type) and issubclass(cls, Collection)
-    use_schema = (is_map or is_collection) and value_type is not None
-
     cls._backend = backend  # type: ignore[attr-defined]
 
+    # Map/Collection subclasses already have real classmethods — done.
+    if isinstance(cls, type) and issubclass(cls, (Map, Collection)):
+        return
+
+    # ── Plain-class backward compat: inject thin wrappers ─────────────────
+
     async def _get(key: str) -> Any | None:
-        raw = await backend.get(key)
-        return _deserialize(raw, value_type) if use_schema else raw
+        return await backend.get(key)
 
     async def _set(key: str, value: Any) -> None:
-        payload = _serialize(value, value_type) if use_schema else value
-        await backend.set(key, payload)
+        await backend.set(key, value)
 
     async def _delete(key: str) -> None:
         await backend.delete(key)
 
     async def _list() -> list[tuple[str, Any]]:
-        entries = await backend.list()
-        if use_schema:
-            return [(k, _deserialize(v, value_type)) for k, v in entries]
-        return entries
+        return await backend.list()
 
     async def _scan(prefix: str = "") -> list[tuple[str, Any]]:
-        entries = await backend.scan(prefix)
-        if use_schema:
-            return [(k, _deserialize(v, value_type)) for k, v in entries]
-        return entries
+        return await backend.scan(prefix)
 
     async def _close() -> None:
         await backend.close()
-
-    # ── Sync wrappers — safe to call from Dash callbacks, Flask views, etc. ──
 
     def _sync_get(key: str) -> Any | None:
         return _sync_run(_get(key))
@@ -263,49 +195,3 @@ def patch_storage_class(cls: type, backend: Any) -> None:
     cls.sync_delete = staticmethod(_sync_delete)  # type: ignore[attr-defined]
     cls.sync_list = staticmethod(_sync_list)  # type: ignore[attr-defined]
     cls.sync_scan = staticmethod(_sync_scan)  # type: ignore[attr-defined]
-
-    if is_collection:
-        key_field: str = getattr(cls, "__skaal_key_field__", "id")
-
-        def _extract_key(item: Any) -> str:
-            if hasattr(item, key_field):
-                return str(getattr(item, key_field))
-            if isinstance(item, dict) and key_field in item:
-                return str(item[key_field])
-            raise ValueError(
-                f"Cannot extract key field {key_field!r} from {type(item).__name__}. "
-                f"Set __skaal_key_field__ on the storage class to override."
-            )
-
-        async def _add(item: Any) -> None:
-            await _set(_extract_key(item), item)
-
-        async def _remove(key: str) -> None:
-            await backend.delete(key)
-
-        async def _update(key: str, item: Any) -> None:
-            await _set(key, item)
-
-        async def _all() -> list[Any]:
-            return [v for _, v in await _list()]
-
-        async def _find(prefix: str = "") -> list[Any]:
-            return [v for _, v in await _scan(prefix)]
-
-        def _sync_add(item: Any) -> None:
-            _sync_run(_add(item))
-
-        def _sync_all() -> list[Any]:
-            return _sync_run(_all())
-
-        def _sync_find(prefix: str = "") -> list[Any]:
-            return _sync_run(_find(prefix))
-
-        cls.add = staticmethod(_add)  # type: ignore[attr-defined]
-        cls.remove = staticmethod(_remove)  # type: ignore[attr-defined]
-        cls.update = staticmethod(_update)  # type: ignore[attr-defined]
-        cls.all = staticmethod(_all)  # type: ignore[attr-defined]
-        cls.find = staticmethod(_find)  # type: ignore[attr-defined]
-        cls.sync_add = staticmethod(_sync_add)  # type: ignore[attr-defined]
-        cls.sync_all = staticmethod(_sync_all)  # type: ignore[attr-defined]
-        cls.sync_find = staticmethod(_sync_find)  # type: ignore[attr-defined]

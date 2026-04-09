@@ -160,8 +160,13 @@ def solve(app: "App", catalog: dict[str, Any], target: str = "generic") -> "Plan
             try:
                 spec = encode_component(comp_name, comp_obj, catalog, target=target)
                 component_specs[comp_name] = spec
-            except Exception:  # noqa: BLE001
-                pass  # non-critical — components don't block the plan
+            except Exception as exc:  # noqa: BLE001
+                warnings.warn(
+                    f"Component {comp_name!r} encoding failed: {exc}. "
+                    "It will be omitted from the plan.",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
 
     # ── Target-level deploy config ─────────────────────────────────────────
     # Read the deploy params for the target compute backend (e.g. Lambda,
