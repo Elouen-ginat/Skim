@@ -27,8 +27,6 @@ from typing import Optional
 
 import typer
 
-from skaal.cli.config import SkaalSettings
-
 app = typer.Typer(help="Package and deploy previously-built artifacts.")
 
 
@@ -80,29 +78,14 @@ def deploy(
       AWS: AWS credentials configured, Pulumi CLI installed.
       GCP: gcloud authenticated, Docker installed, Pulumi CLI installed.
     """
-    cfg = SkaalSettings()
-
-    resolved_stack = stack or cfg.stack
-    resolved_region = region or cfg.region
-    resolved_gcp_project = gcp_project or cfg.gcp_project
-
-    resolved = artifacts_dir.resolve()
-    if not resolved.is_dir():
-        typer.echo(
-            f"Error: artifacts directory {resolved} does not exist.\n"
-            "Run `skaal build MODULE:APP --target aws` first.",
-            err=True,
-        )
-        raise typer.Exit(1)
-
-    from skaal.deploy.push import package_and_push
+    from skaal import api
 
     try:
-        package_and_push(
-            artifacts_dir=resolved,
-            stack=resolved_stack,
-            region=resolved_region,
-            gcp_project=resolved_gcp_project,
+        api.deploy(
+            artifacts_dir=artifacts_dir,
+            stack=stack,
+            region=region,
+            gcp_project=gcp_project,
             yes=yes,
         )
     except FileNotFoundError as exc:
@@ -111,6 +94,6 @@ def deploy(
     except ValueError as exc:
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(1) from exc
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         typer.echo(f"Deploy failed: {exc}", err=True)
         raise typer.Exit(1) from exc

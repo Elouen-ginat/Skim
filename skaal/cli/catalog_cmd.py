@@ -23,10 +23,10 @@ def catalog(
     ),
 ) -> None:
     """Show all available backends from the infrastructure catalog."""
-    from skaal.catalog.loader import load_typed_catalog
+    from skaal import api
 
     try:
-        cat = load_typed_catalog(catalog_path)
+        cat = api.catalog(catalog_path)
     except FileNotFoundError as exc:
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(1) from exc
@@ -34,24 +34,29 @@ def catalog(
     if section in ("all", "storage") and cat.storage:
         typer.echo(f"Storage backends ({len(cat.storage)}):")
         typer.echo(
-            f"  {'Name':<28} {'Display':<32} {'Read lat':<12} {'Durability':<22} {'$/GB/mo'}"
+            f"  {'Name':<28} {'Display':<32} {'Read lat':<12} "
+            f"{'Durability':<22} {'$/GB/mo'}"
         )
         typer.echo(f"  {'-'*28} {'-'*32} {'-'*12} {'-'*22} {'-'*8}")
         for name, spec in sorted(cat.storage.items()):
             dur = ", ".join(spec.durability)
             lat = f"{spec.read_latency.min}–{spec.read_latency.max}ms"
             typer.echo(
-                f"  {name:<28} {spec.display_name:<32} {lat:<12} {dur:<22} ${spec.cost_per_gb_month:.3f}"
+                f"  {name:<28} {spec.display_name:<32} {lat:<12} "
+                f"{dur:<22} ${spec.cost_per_gb_month:.3f}"
             )
         typer.echo("")
 
     if section in ("all", "compute") and cat.compute:
         typer.echo(f"Compute backends ({len(cat.compute)}):")
-        typer.echo(f"  {'Name':<28} {'Display':<32} {'vCPUs':<8} {'Memory':<10} {'$/hr'}")
+        typer.echo(
+            f"  {'Name':<28} {'Display':<32} {'vCPUs':<8} {'Memory':<10} {'$/hr'}"
+        )
         typer.echo(f"  {'-'*28} {'-'*32} {'-'*8} {'-'*10} {'-'*8}")
         for name, cspec in sorted(cat.compute.items()):
             typer.echo(
-                f"  {name:<28} {cspec.display_name:<32} {cspec.vcpus:<8} {cspec.memory_gb:<10.1f} ${cspec.cost_per_hour:.4f}"
+                f"  {name:<28} {cspec.display_name:<32} {cspec.vcpus:<8} "
+                f"{cspec.memory_gb:<10.1f} ${cspec.cost_per_hour:.4f}"
             )
         typer.echo("")
 

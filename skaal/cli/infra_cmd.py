@@ -20,22 +20,23 @@ def status(
     ),
 ) -> None:
     """Show all active infrastructure from the current plan file."""
-    p = Path(plan)
-    if not p.exists():
+    from skaal import api
+
+    plan_path = Path(plan)
+    if not plan_path.exists():
         typer.echo(
-            f"No plan file found at {p}. Run `skaal plan <module:app>` first.",
+            f"No plan file found at {plan_path}. Run `skaal plan <module:app>` first.",
             err=True,
         )
         raise typer.Exit(1)
 
-    from skaal.plan import PlanFile
-
     try:
-        plan_file = PlanFile.read(p)
-    except Exception as exc:
+        snapshot = api.infra_status(plan_path)
+    except Exception as exc:  # noqa: BLE001
         typer.echo(f"Error reading plan: {exc}", err=True)
         raise typer.Exit(1) from exc
 
+    plan_file = snapshot.plan
     typer.echo(f"App:     {plan_file.app_name}")
     typer.echo(f"Version: {plan_file.version}")
     typer.echo(f"Target:  {plan_file.deploy_target}")
@@ -46,17 +47,9 @@ def status(
         col = 36
         for name, spec in sorted(plan_file.storage.items()):
             migration_tag = ""
-            if spec.previous_backend and spec.previous_backend != spec.backend:
-                from skaal.migrate.engine import STAGE_NAMES, MigrationEngine
-
-                try:
-                    engine = MigrationEngine(plan_file.app_name, name)
-                    state = engine.load_state()
-                    if state:
-                        stage_name = STAGE_NAMES.get(state.stage, "?")
-                        migration_tag = f"  [migrating: stage {state.stage} / {stage_name}]"
-                except Exception:  # noqa: BLE001
-                    pass
+            info = snapshot.migrations.get(name)
+            if info is not None:
+                migration_tag = f"  [migrating: stage {info.stage} / {info.stage_name}]"
             typer.echo(f"  {name:<{col}} {spec.backend}{migration_tag}")
     else:
         typer.echo("Storage: (none)")
@@ -98,6 +91,7 @@ def cleanup(
     ),
 ) -> None:
     """Remove migration state and mark a variable as decommissioned."""
+    from skaal import api
     from skaal.migrate.engine import MigrationEngine
 
     app_name = get_app_name()
@@ -116,14 +110,14 @@ def cleanup(
         )
 
     if not confirm:
-        confirmed = typer.confirm(f"Remove migration state for {variable!r}?", default=False)
+        confirmed = typer.confirm(
+            f"Remove migration state for {variable!r}?", default=False
+        )
         if not confirmed:
             typer.echo("Aborted.")
             raise typer.Exit(0)
 
-    state_path = engine._state_path
-    if state_path.exists():
-        state_path.unlink()
+    if api.infra_cleanup(variable, app_name=app_name):
         typer.echo(f"Removed migration state for {variable!r}.")
     else:
         typer.echo(f"Migration state file not found for {variable!r}.")

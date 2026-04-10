@@ -18,7 +18,6 @@ from typing import Optional
 
 import typer
 
-from skaal.cli._utils import load_app
 from skaal.cli.config import SkaalSettings
 
 app = typer.Typer(help="Generate deployment artifacts from plan.skaal.lock.")
@@ -62,7 +61,9 @@ def build(
       gcp   — GCP Cloud Run + Firestore/Redis/Postgres (Pulumi YAML + Dockerfile)
       local — Docker Compose (for local testing)
     """
-    from skaal.plan import PLAN_FILE_NAME, PlanFile
+    from skaal import api
+    from skaal.deploy.registry import get_target
+    from skaal.plan import PLAN_FILE_NAME
 
     cfg = SkaalSettings()
     resolved_region = region or cfg.region
@@ -77,51 +78,49 @@ def build(
         )
         raise typer.Exit(1)
 
-    try:
-        plan_file = PlanFile.read(plan_path)
-    except Exception as exc:
-        typer.echo(f"Error: could not parse {PLAN_FILE_NAME}: {exc}", err=True)
-        raise typer.Exit(1) from exc
+    typer.echo(f"Building from {plan_path} ...")
 
-    if not plan_file.source_module:
-        typer.echo(
-            f"Error: {PLAN_FILE_NAME} is missing source_module — it was created by an "
-            "older version of skaal.\n"
-            "  Re-run `skaal plan MODULE:APP --target TARGET` to regenerate it.",
-            err=True,
+    try:
+        generated = api.build(
+            plan=plan_path,
+            output_dir=resolved_out,
+            region=resolved_region,
+            dev=dev,
         )
-        raise typer.Exit(1)
-
-    from skaal.deploy.registry import get_target
-
-    try:
-        target = get_target(plan_file.deploy_target)
-    except ValueError as exc:
+    except FileNotFoundError as exc:
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(1) from exc
+    except ValueError as exc:
+        # Unknown deploy target or missing source_module in the lock file.
+        msg = str(exc)
+        if "source_module" in msg:
+            typer.echo(
+                f"Error: {PLAN_FILE_NAME} is missing source_module — it was created by an "
+                "older version of skaal.\n"
+                "  Re-run `skaal plan MODULE:APP --target TARGET` to regenerate it.",
+                err=True,
+            )
+        else:
+            typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(1) from exc
+    except Exception as exc:  # noqa: BLE001
+        typer.echo(f"Error: could not build from {PLAN_FILE_NAME}: {exc}", err=True)
+        raise typer.Exit(1) from exc
 
-    module_path = plan_file.source_module
-    var_name = plan_file.app_var
-    skaal_app = load_app(f"{module_path}:{var_name}")
+    # Read the plan once more just to show the deploy target in the banner.
+    from skaal.plan import PlanFile
 
-    typer.echo(f"Building from {plan_path} (target={plan_file.deploy_target!r}) ...")
+    plan_file = PlanFile.read(plan_path)
+
     typer.echo(f"Generating artifacts in {resolved_out}/ ...")
-
-    generated = target.generate_artifacts(
-        app=skaal_app,
-        plan=plan_file,
-        output_dir=resolved_out,
-        source_module=module_path,
-        app_var=var_name,
-        region=resolved_region or None,
-        dev=dev,
-    )
-
     typer.echo(f"\nGenerated {len(generated)} files:")
     for path in generated:
         typer.echo(f"  {path}")
 
-    if target.name == "local":
+    target_adapter = get_target(plan_file.deploy_target)
+    if target_adapter.name == "local":
         typer.echo("\nRun `skaal deploy` to start the local stack.")
     else:
-        typer.echo(f"\nRun `skaal deploy` to push to {plan_file.deploy_target.upper()}.")
+        typer.echo(
+            f"\nRun `skaal deploy` to push to {plan_file.deploy_target.upper()}."
+        )

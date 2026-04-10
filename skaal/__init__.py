@@ -4,7 +4,7 @@ Skaal — Infrastructure as Constraints.
 Write it once. Scale it with a word.
 """
 
-from skaal import types
+from skaal import api, types
 from skaal.agent import Agent, agent
 from skaal.app import App
 from skaal.channel import Channel
@@ -38,6 +38,8 @@ from skaal.types import (
 )
 
 __all__ = [
+    # Python API namespace (run/plan/build/deploy/...)
+    "api",
     # Core
     "App",
     "Module",

@@ -3,14 +3,44 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 import typer
 
-from skaal.cli._utils import load_app
+from skaal.cli._utils import load_app  # noqa: F401 — re-exported for test patching
 from skaal.cli.config import SkaalSettings
 
+if TYPE_CHECKING:
+    from skaal.plan import PlanFile
+
 app = typer.Typer(help="Run the constraint solver and generate a plan.")
+
+
+def _print_plan_table(plan_file: "PlanFile") -> None:
+    """Pretty-print a plan's storage assignments as a bordered table."""
+    col_w = [30, 25, 60]
+    header = (
+        f"| {'Storage variable':<{col_w[0]}} | {'Backend':<{col_w[1]}} | "
+        f"{'Reason':<{col_w[2]}} |"
+    )
+    sep = f"+-{'-' * col_w[0]}-+-{'-' * col_w[1]}-+-{'-' * col_w[2]}-+"
+    typer.echo(sep)
+    typer.echo(header)
+    typer.echo(sep)
+    for spec in plan_file.storage.values():
+        typer.echo(
+            f"| {spec.variable_name:<{col_w[0]}} | "
+            f"{spec.backend:<{col_w[1]}} | "
+            f"{spec.reason[: col_w[2]]:<{col_w[2]}} |"
+        )
+    typer.echo(sep)
+
+    if plan_file.compute:
+        typer.echo("\nCompute assignments:")
+        for cspec in plan_file.compute.values():
+            typer.echo(
+                f"  {cspec.function_name}: {cspec.instance_type}  ({cspec.reason})"
+            )
 
 
 @app.callback(invoke_without_command=True)
@@ -54,11 +84,13 @@ def plan(
 
         skaal plan examples.counter:app --target aws
     """
-    cfg = SkaalSettings()
+    from skaal import api
+    from skaal.plan import PLAN_FILE_NAME
+    from skaal.solver.storage import UnsatisfiableConstraints
 
+    cfg = SkaalSettings()
     resolved_app = target_app or cfg.app
     resolved_target = target or cfg.target
-    resolved_catalog = catalog or cfg.catalog
 
     if resolved_app is None:
         typer.echo(
@@ -69,49 +101,29 @@ def plan(
         )
         raise typer.Exit(1)
 
-    module_path, _, var_name = resolved_app.partition(":")
-    skim_app = load_app(resolved_app)
-
-    from skaal.catalog.loader import load_catalog
-    from skaal.solver.solver import solve
-    from skaal.solver.storage import UnsatisfiableConstraints
-
     try:
-        cat = load_catalog(resolved_catalog, target=resolved_target)
-    except FileNotFoundError as exc:
+        skaal_app = api.resolve_app(resolved_app)
+    except (ValueError, ModuleNotFoundError, AttributeError) as exc:
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(1) from exc
 
-    typer.echo(f"Solving constraints for {skim_app.name!r} → target={resolved_target!r} ...")
+    typer.echo(
+        f"Solving constraints for {skaal_app.name!r} → target={resolved_target!r} ..."
+    )
 
     try:
-        plan_file = solve(skim_app, cat, target=resolved_target)
+        plan_file = api.plan(
+            resolved_app,
+            target=resolved_target,
+            catalog=catalog,
+            write=True,
+        )
+    except FileNotFoundError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(1) from exc
     except UnsatisfiableConstraints as exc:
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(1) from exc
 
-    plan_file.source_module = module_path
-    plan_file.app_var = var_name or "app"
-
-    out_path = plan_file.write()
-    typer.echo(f"Wrote {out_path}\n")
-
-    # Print a human-readable table
-    col_w = [30, 25, 60]
-    header = (
-        f"| {'Storage variable':<{col_w[0]}} | {'Backend':<{col_w[1]}} | {'Reason':<{col_w[2]}} |"
-    )
-    sep = f"+-{'-' * col_w[0]}-+-{'-' * col_w[1]}-+-{'-' * col_w[2]}-+"
-    typer.echo(sep)
-    typer.echo(header)
-    typer.echo(sep)
-    for spec in plan_file.storage.values():
-        typer.echo(
-            f"| {spec.variable_name:<{col_w[0]}} | {spec.backend:<{col_w[1]}} | {spec.reason[:col_w[2]]:<{col_w[2]}} |"
-        )
-    typer.echo(sep)
-
-    if plan_file.compute:
-        typer.echo("\nCompute assignments:")
-        for cspec in plan_file.compute.values():
-            typer.echo(f"  {cspec.function_name}: {cspec.instance_type}  ({cspec.reason})")
+    typer.echo(f"Wrote {PLAN_FILE_NAME}\n")
+    _print_plan_table(plan_file)

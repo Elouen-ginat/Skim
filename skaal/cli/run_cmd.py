@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
-import asyncio
 from typing import Optional
 
 import typer
 
-from skaal.cli._utils import load_app
 from skaal.cli.config import SkaalSettings
 
 app = typer.Typer(help="Run a Skaal app locally.")
@@ -33,7 +31,9 @@ def run(
     persist: bool = typer.Option(
         False, "--persist", help="Use SQLite for persistent local storage."
     ),
-    db: str = typer.Option("skaal_local.db", "--db", help="SQLite database path (with --persist)."),
+    db: str = typer.Option(
+        "skaal_local.db", "--db", help="SQLite database path (with --persist)."
+    ),
 ) -> None:
     """
     Run a Skaal app locally.
@@ -47,6 +47,8 @@ def run(
         skaal run examples.counter:app --persist
         curl -s localhost:8000/increment -d '{"name": "hits"}' | jq
     """
+    from skaal import api
+
     resolved_app = target or SkaalSettings().app
     if resolved_app is None:
         typer.echo(
@@ -56,19 +58,23 @@ def run(
             err=True,
         )
         raise typer.Exit(1)
-    skim_app = load_app(resolved_app)
-
-    from skaal.runtime.local import LocalRuntime
 
     if redis:
         typer.echo(f"Using Redis backend: {redis}")
-        runtime = LocalRuntime.from_redis(skim_app, redis_url=redis, host=host, port=port)
     elif persist:
         typer.echo(f"Using SQLite backend: {db}")
-        runtime = LocalRuntime.from_sqlite(skim_app, db_path=db, host=host, port=port)
-    else:
-        runtime = LocalRuntime(skim_app, host=host, port=port)
+
     try:
-        asyncio.run(runtime.serve())
+        api.run(
+            resolved_app,
+            host=host,
+            port=port,
+            redis=redis or None,
+            persist=persist,
+            db=db,
+        )
+    except (ValueError, ModuleNotFoundError, AttributeError) as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(1) from exc
     except KeyboardInterrupt:
         typer.echo("\nStopped.")

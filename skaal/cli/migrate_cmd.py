@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import typer
 
 from skaal.cli._utils import get_app_name
-from skaal.migrate.engine import STAGE_NAMES, MigrationEngine
+from skaal.migrate.engine import STAGE_NAMES
 
 app = typer.Typer(help="Manage backend migrations.")
 
@@ -20,23 +18,24 @@ def start(
     from_backend: str = typer.Option(
         ..., "--from", help="Source backend name, e.g. 'elasticache-redis'."
     ),
-    to_backend: str = typer.Option(..., "--to", help="Target backend name, e.g. 'dynamodb'."),
+    to_backend: str = typer.Option(
+        ..., "--to", help="Target backend name, e.g. 'dynamodb'."
+    ),
 ) -> None:
     """Start a new migration for a storage variable."""
-    app_name = get_app_name()
-    engine = MigrationEngine(app_name, variable)
+    from skaal import api
 
-    existing = engine.load_state()
-    if existing is not None and existing.stage < 6:
+    try:
+        api.migrate_start(
+            variable, from_backend, to_backend, app_name=get_app_name()
+        )
+    except RuntimeError as exc:
         typer.echo(
-            f"Error: migration for {variable!r} already in progress "
-            f"(stage {existing.stage}: {STAGE_NAMES.get(existing.stage, '?')}). "
-            f"Use `skaal migrate advance` or `skaal migrate rollback`.",
+            f"Error: {exc} Use `skaal migrate advance` or `skaal migrate rollback`.",
             err=True,
         )
-        raise typer.Exit(1)
+        raise typer.Exit(1) from exc
 
-    engine.start(from_backend, to_backend)
     typer.echo(
         f"Migration started: {variable}  {from_backend} → {to_backend}\n"
         f"Stage: 1 ({STAGE_NAMES[1]})"
@@ -50,20 +49,15 @@ def advance(
     ),
 ) -> None:
     """Advance a variable's migration to the next stage."""
-    app_name = get_app_name()
-    engine = MigrationEngine(app_name, variable)
-
-    state = engine.load_state()
-    if state is None:
-        typer.echo(
-            f"Error: no migration in progress for {variable!r}. "
-            "Use `skaal migrate start` first.",
-            err=True,
-        )
-        raise typer.Exit(1)
+    from skaal import api
 
     try:
-        state = engine.advance(state)
+        state = api.migrate_advance(variable, app_name=get_app_name())
+    except RuntimeError as exc:
+        typer.echo(
+            f"Error: {exc} Use `skaal migrate start` first.", err=True
+        )
+        raise typer.Exit(1) from exc
     except ValueError as exc:
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(1) from exc
@@ -79,10 +73,9 @@ def status(
     ),
 ) -> None:
     """Show the current migration stage and readiness for the next stage."""
-    app_name = get_app_name()
-    engine = MigrationEngine(app_name, variable)
+    from skaal import api
 
-    state = engine.load_state()
+    state = api.migrate_status(variable, app_name=get_app_name())
     if state is None:
         typer.echo(f"No migration in progress for {variable!r}.")
         raise typer.Exit(0)
@@ -104,19 +97,13 @@ def rollback(
     ),
 ) -> None:
     """Roll back a migration to the previous stage."""
-    app_name = get_app_name()
-    engine = MigrationEngine(app_name, variable)
-
-    state = engine.load_state()
-    if state is None:
-        typer.echo(
-            f"Error: no migration in progress for {variable!r}.",
-            err=True,
-        )
-        raise typer.Exit(1)
+    from skaal import api
 
     try:
-        state = engine.rollback(state)
+        state = api.migrate_rollback(variable, app_name=get_app_name())
+    except RuntimeError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(1) from exc
     except ValueError as exc:
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(1) from exc
@@ -128,34 +115,16 @@ def rollback(
 @app.command("list")
 def list_migrations() -> None:
     """List all pending and in-progress migrations."""
-    # List migrations across all apps under .skaal/migrations/
-    base_dir = Path(".skaal/migrations")
-    if not base_dir.exists():
-        typer.echo("No migrations found.")
-        return
+    from skaal import api
 
-    all_states = []
-    for app_dir in sorted(base_dir.iterdir()):
-        if not app_dir.is_dir():
-            continue
-        # Use list_all on a representative engine
-        import json as _json
-
-        for path in sorted(app_dir.glob("*.json")):
-            try:
-                from skaal.migrate.engine import MigrationState
-
-                data = _json.loads(path.read_text())
-                all_states.append(MigrationState(**data))
-            except Exception:  # noqa: BLE001
-                pass
-
+    all_states = api.migrate_list()
     if not all_states:
         typer.echo("No migrations found.")
         return
 
-    # Print header
-    header = f"{'Variable':<30} {'From':<20} {'To':<20} {'Stage':<20} {'Discrepancies'}"
+    header = (
+        f"{'Variable':<30} {'From':<20} {'To':<20} {'Stage':<20} {'Discrepancies'}"
+    )
     typer.echo(header)
     typer.echo("-" * len(header))
     for state in all_states:
