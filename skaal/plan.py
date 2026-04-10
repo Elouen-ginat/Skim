@@ -23,6 +23,13 @@ class StorageSpec(BaseModel):
     nodes: int = 1
     storage_gb: int | None = None
     reason: str = ""
+    # Qualified resource name this storage is co-located with (from the
+    # declarative ``collocate_with=`` argument).  Used by deploy generators to
+    # pin placement.
+    collocate_with: str | None = None
+    # Hint that the solver should consider alternative (cheaper) backends on
+    # re-plan if metrics suggest the constraints can be relaxed.
+    auto_optimize: bool = False
     # Provisioning parameters sourced from [storage.<backend>.deploy] in the
     # catalog TOML.  Not used by the constraint solver; only by deploy generators.
     deploy_params: dict[str, Any] = Field(default_factory=dict)
@@ -41,6 +48,32 @@ class ComputeSpec(BaseModel):
     placement: str | None = None
     schedule: str | None = None
     reason: str = ""
+    # Qualified resource name this function is co-located with (from
+    # ``@function(compute=Compute(collocate_with=...))``).  Deploy generators
+    # use this to pin the function to the same region/zone/cluster.
+    collocate_with: str | None = None
+    # Scale strategy from ``@scale(...)`` — one of "round-robin",
+    # "partition-by-key", "broadcast", "race", "competing-consumer".
+    scale_strategy: str | None = None
+    # Resilience policies — serialised so deploy generators can wrap the
+    # function with retry, circuit-breaker, rate-limit, and bulkhead middleware.
+    retry: dict[str, Any] | None = None
+    circuit_breaker: dict[str, Any] | None = None
+    rate_limit: dict[str, Any] | None = None
+    bulkhead: dict[str, Any] | None = None
+
+
+class PatternSpec(BaseModel):
+    """Serialisable spec for a distributed system pattern (EventLog, Saga, …)."""
+
+    pattern_name: str
+    pattern_type: str  # "event-log" | "projection" | "saga" | "outbox"
+    # For event-log / outbox: the selected backing storage backend (e.g. "msk-kafka")
+    backend: str | None = None
+    # Human-readable reason explaining the solver's choices
+    reason: str = ""
+    # Free-form config: saga steps, projection handler, outbox channel, …
+    config: dict[str, Any] = Field(default_factory=dict)
 
 
 class ComponentSpec(BaseModel):
@@ -68,6 +101,10 @@ class PlanFile(BaseModel):
     storage: dict[str, StorageSpec] = Field(default_factory=dict)
     compute: dict[str, ComputeSpec] = Field(default_factory=dict)
     components: dict[str, ComponentSpec] = Field(default_factory=dict)
+    patterns: dict[str, PatternSpec] = Field(default_factory=dict)
+    # Topological order of resources produced by the dependency graph — used
+    # by deploy generators to respect collocate_with ordering at provision time.
+    resource_order: list[str] = Field(default_factory=list)
     # Target-level deploy parameters sourced from [compute.<target>.deploy] in
     # the catalog (e.g. Lambda memory/timeout, Cloud Run memory/cpu).
     # Not used by the constraint solver; only by deploy generators.

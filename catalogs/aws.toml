@@ -32,7 +32,7 @@ read_latency  = { min = 50, max = 500, unit = "ms" }
 write_latency = { min = 100, max = 2000, unit = "ms" }
 durability    = ["durable"]   # 11 nines
 max_size_gb   = 0             # unlimited (0 = no limit)
-access_patterns = ["append-only", "bulk-read"]
+access_patterns = ["append-only", "bulk-read", "worm", "event-log"]
 cost_per_gb_month = 0.023
 regions = ["all"]
 notes = "Cold/archival storage; preferred for size_hint > 100GB + durable"
@@ -77,7 +77,7 @@ read_latency  = { min = 2.0, max = 20.0, unit = "ms" }
 write_latency = { min = 2.0, max = 20.0, unit = "ms" }
 durability    = ["durable"]
 max_size_gb   = 10_000
-access_patterns = ["append-only", "pub-sub"]
+access_patterns = ["append-only", "pub-sub", "event-log"]
 cost_per_gb_month = 0.10
 regions = ["all"]
 notes = "Event streaming; preferred for write_throughput > 100 events/s"
