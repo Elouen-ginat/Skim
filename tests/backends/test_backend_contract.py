@@ -39,7 +39,7 @@ def redis_backend() -> RedisBackend | None:
 
         loop = asyncio.get_event_loop()
         loop.run_until_complete(backend.connect())
-    except ImportError:
+    except Exception:
         return None
 
     # Return the backend object; connection attempt happens in tests

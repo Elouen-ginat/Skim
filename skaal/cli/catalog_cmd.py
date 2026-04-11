@@ -34,8 +34,7 @@ def catalog(
     if section in ("all", "storage") and cat.storage:
         typer.echo(f"Storage backends ({len(cat.storage)}):")
         typer.echo(
-            f"  {'Name':<28} {'Display':<32} {'Read lat':<12} "
-            f"{'Durability':<22} {'$/GB/mo'}"
+            f"  {'Name':<28} {'Display':<32} {'Read lat':<12} " f"{'Durability':<22} {'$/GB/mo'}"
         )
         typer.echo(f"  {'-'*28} {'-'*32} {'-'*12} {'-'*22} {'-'*8}")
         for name, spec in sorted(cat.storage.items()):
@@ -49,9 +48,7 @@ def catalog(
 
     if section in ("all", "compute") and cat.compute:
         typer.echo(f"Compute backends ({len(cat.compute)}):")
-        typer.echo(
-            f"  {'Name':<28} {'Display':<32} {'vCPUs':<8} {'Memory':<10} {'$/hr'}"
-        )
+        typer.echo(f"  {'Name':<28} {'Display':<32} {'vCPUs':<8} {'Memory':<10} {'$/hr'}")
         typer.echo(f"  {'-'*28} {'-'*32} {'-'*8} {'-'*10} {'-'*8}")
         for name, cspec in sorted(cat.compute.items()):
             typer.echo(

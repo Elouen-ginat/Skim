@@ -121,6 +121,4 @@ def build(
     if target_adapter.name == "local":
         typer.echo("\nRun `skaal deploy` to start the local stack.")
     else:
-        typer.echo(
-            f"\nRun `skaal deploy` to push to {plan_file.deploy_target.upper()}."
-        )
+        typer.echo(f"\nRun `skaal deploy` to push to {plan_file.deploy_target.upper()}.")

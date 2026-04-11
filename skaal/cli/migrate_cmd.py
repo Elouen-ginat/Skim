@@ -18,17 +18,13 @@ def start(
     from_backend: str = typer.Option(
         ..., "--from", help="Source backend name, e.g. 'elasticache-redis'."
     ),
-    to_backend: str = typer.Option(
-        ..., "--to", help="Target backend name, e.g. 'dynamodb'."
-    ),
+    to_backend: str = typer.Option(..., "--to", help="Target backend name, e.g. 'dynamodb'."),
 ) -> None:
     """Start a new migration for a storage variable."""
     from skaal import api
 
     try:
-        api.migrate_start(
-            variable, from_backend, to_backend, app_name=get_app_name()
-        )
+        api.migrate_start(variable, from_backend, to_backend, app_name=get_app_name())
     except RuntimeError as exc:
         typer.echo(
             f"Error: {exc} Use `skaal migrate advance` or `skaal migrate rollback`.",
@@ -54,9 +50,7 @@ def advance(
     try:
         state = api.migrate_advance(variable, app_name=get_app_name())
     except RuntimeError as exc:
-        typer.echo(
-            f"Error: {exc} Use `skaal migrate start` first.", err=True
-        )
+        typer.echo(f"Error: {exc} Use `skaal migrate start` first.", err=True)
         raise typer.Exit(1) from exc
     except ValueError as exc:
         typer.echo(f"Error: {exc}", err=True)
@@ -122,9 +116,7 @@ def list_migrations() -> None:
         typer.echo("No migrations found.")
         return
 
-    header = (
-        f"{'Variable':<30} {'From':<20} {'To':<20} {'Stage':<20} {'Discrepancies'}"
-    )
+    header = f"{'Variable':<30} {'From':<20} {'To':<20} {'Stage':<20} {'Discrepancies'}"
     typer.echo(header)
     typer.echo("-" * len(header))
     for state in all_states:

@@ -9,7 +9,6 @@ from skaal.deploy.gcp import _add_gcp_api_gateway, _gcp_openapi_path
 from skaal.plan import PlanFile
 from skaal.solver.components import encode_component
 
-
 # ── Path conversion ───────────────────────────────────────────────────────────
 
 

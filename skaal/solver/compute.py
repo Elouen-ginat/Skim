@@ -123,7 +123,10 @@ def encode_compute(
             opt.add(sel[name] == False)  # noqa: E712
 
     # Minimise cost
-    cost_terms = [If(sel[n], int(spec.get("cost_per_hour", 0) * 1000), 0) for n, spec in instance_types.items()]
+    cost_terms = [
+        If(sel[n], int(spec.get("cost_per_hour", 0) * 1000), 0)
+        for n, spec in instance_types.items()
+    ]
     opt.minimize(Sum(cost_terms))
 
     result = opt.check()
