@@ -20,5 +20,6 @@ ENV PYTHONPATH=/app
 
 EXPOSE 8000
 
-# gunicorn serves the WSGI app defined in main:application
-CMD ["uv", "run", "gunicorn", "--bind", "0.0.0.0:8000", "--workers", "2", "--timeout", "120", "main:application"]
+# gunicorn serves the ASGI app via uvicorn workers.
+# Async @app.function() handlers require the uvicorn worker class.
+CMD ["uv", "run", "gunicorn", "--bind", "0.0.0.0:8000", "--workers", "2", "--timeout", "120", "-k", "uvicorn.workers.UvicornWorker", "main:application"]

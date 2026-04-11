@@ -15,13 +15,13 @@ Then try:
     curl -s http://localhost:8000/reset -d '{"name": "hits"}' | jq
 """
 
-from skaal import App
+from skaal import App, Map
 
 app = App("counter")
 
 
 @app.storage(read_latency="< 5ms", durability="ephemeral")
-class Counts:
+class Counts(Map[str, int]):
     """Named integer counters. Backed by LocalMap in local mode."""
 
 

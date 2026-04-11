@@ -10,11 +10,13 @@ name = "skaal_mesh"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-pyo3 = { version = "0.21", features = ["extension-module"] }
-tokio = { version = "1", features = ["full"] }
-serde = { version = "1", features = ["derive"] }
+pyo3      = { version = "0.21", features = ["extension-module"] }
+tokio     = { version = "1",    features = ["full"] }
+serde     = { version = "1",    features = ["derive"] }
 serde_json = "1"
-tonic = "0.11"
+tonic     = "0.11"
+chrono    = { version = "0.4",  features = ["serde"] }
+uuid      = { version = "1",    features = ["v4"] }
 
 [dev-dependencies]
 pyo3 = { version = "0.21", features = ["extension-module", "auto-initialize"] }

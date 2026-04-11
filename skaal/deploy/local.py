@@ -335,7 +335,8 @@ def generate_artifacts(
         generated.append(skaal_bundle_dir)
 
     # ── pyproject.toml ────────────────────────────────────────────────────────
-    infra_deps = ["skaal", "gunicorn>=22.0"]
+    # uvicorn[standard] is needed for the UvicornWorker class used in the Dockerfile CMD.
+    infra_deps = ["skaal", "gunicorn>=22.0", "uvicorn[standard]>=0.29", "starlette>=0.36"]
     seen_deps: set[str] = set()
     for spec in plan.storage.values():
         for dep in get_handler(spec, local=True).extra_deps:

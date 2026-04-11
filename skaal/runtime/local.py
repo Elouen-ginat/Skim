@@ -381,6 +381,44 @@ class LocalRuntime:
         except Exception:  # noqa: BLE001
             pass
 
+    def build_asgi(self) -> Any:
+        """Return a Starlette ASGI app that serves all ``@app.function()`` endpoints.
+
+        Use this in deployment entry-points where the ASGI server (gunicorn,
+        uvicorn) is started externally rather than via :meth:`serve`::
+
+            runtime   = LocalRuntime(app, backend_overrides={...})
+            application = runtime.build_asgi()   # gunicorn main:application
+
+        Returns:
+            A ``starlette.applications.Starlette`` instance wired to
+            :meth:`_dispatch`.
+        """
+        try:
+            from starlette.applications import Starlette
+            from starlette.requests import Request as StarletteRequest
+            from starlette.responses import JSONResponse
+            from starlette.routing import Route
+        except ImportError as exc:
+            raise RuntimeError(
+                "build_asgi() requires starlette.\n"
+                "Install it with:  pip install starlette\n"
+                f"Missing: {exc}"
+            ) from exc
+
+        async def _handle(request: StarletteRequest) -> JSONResponse:
+            body = await request.body()
+            result, status = await self._dispatch(request.method, request.url.path, body)
+            return JSONResponse(result, status_code=status)
+
+        return Starlette(
+            routes=[
+                Route("/", _handle, methods=["GET"]),
+                Route("/health", _handle, methods=["GET"]),
+                Route("/{path:path}", _handle, methods=["GET", "POST"]),
+            ]
+        )
+
     async def serve(self) -> None:
         """
         Start the HTTP server and run until cancelled.

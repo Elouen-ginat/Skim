@@ -105,7 +105,7 @@ def plan(
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(1) from exc
 
-    typer.echo(f"Solving constraints for {skaal_app.name!r} → target={resolved_target!r} ...")
+    typer.echo(f"Solving constraints for {skaal_app.name!r} -> target={resolved_target!r} ...")
 
     try:
         plan_file = api.plan(
