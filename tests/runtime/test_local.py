@@ -8,8 +8,9 @@ import json
 import pytest
 
 from skaal import App
-from skaal.backends.local_backend import LocalMap, patch_storage_class
+from skaal.backends.local_backend import LocalMap
 from skaal.runtime.local import LocalRuntime
+from skaal.storage import Map
 
 # ── Storage tests ──────────────────────────────────────────────────────────────
 
@@ -36,33 +37,6 @@ async def test_local_map_list_scan():
     assert set(k for k, _ in scanned) == {"a:1", "a:2"}
 
 
-def test_patch_storage_class():
-    class MyStorage:
-        pass
-
-    backend = LocalMap()
-    patch_storage_class(MyStorage, backend)
-
-    assert MyStorage._backend is backend  # type: ignore[attr-defined]
-    assert callable(MyStorage.get)  # type: ignore[attr-defined]
-
-
-@pytest.mark.asyncio
-async def test_patched_class_methods():
-    class Cache:
-        pass
-
-    backend = LocalMap()
-    patch_storage_class(Cache, backend)
-
-    await Cache.set("hello", "world")  # type: ignore[attr-defined]
-    assert await Cache.get("hello") == "world"  # type: ignore[attr-defined]
-    entries = await Cache.list()  # type: ignore[attr-defined]
-    assert ("hello", "world") in entries
-    await Cache.delete("hello")  # type: ignore[attr-defined]
-    assert await Cache.get("hello") is None  # type: ignore[attr-defined]
-
-
 # ── Runtime + dispatch tests ───────────────────────────────────────────────────
 
 
@@ -71,7 +45,7 @@ def _make_counter_app() -> App:
     app = App("test-counter")
 
     @app.storage(read_latency="< 5ms", durability="ephemeral")
-    class Counts:
+    class Counts(Map[str, int]):
         pass
 
     @app.function()

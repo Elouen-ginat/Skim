@@ -5,9 +5,15 @@ from __future__ import annotations
 import pytest
 from pydantic import BaseModel
 
-from skaal.backends.local_backend import LocalMap, patch_storage_class
-from skaal.storage import _deserialize, _serialize
-from skaal.storage import Collection, Map, _primary_key_field, _schema_hints
+from skaal.backends.local_backend import LocalMap
+from skaal.storage import (
+    Collection,
+    Map,
+    _deserialize,
+    _primary_key_field,
+    _schema_hints,
+    _serialize,
+)
 
 # ── Domain models for tests ────────────────────────────────────────────────────
 
@@ -196,7 +202,7 @@ def test_deserialize_json_string():
     assert result.name == "Eve"
 
 
-# ── patch_storage_class with Map ───────────────────────────────────────────────
+# ── Map.wire() ────────────────────────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
@@ -204,7 +210,7 @@ async def test_map_get_set_returns_model():
     class UserStore(Map[str, User]):
         pass
 
-    patch_storage_class(UserStore, LocalMap())
+    UserStore.wire(LocalMap())
 
     user = User(id="u1", name="Frank", address=Address(street="6 Birch", city="PDX"))
     await UserStore.set("u1", user)
@@ -221,7 +227,7 @@ async def test_map_accepts_dict_on_set():
     class UserStore(Map[str, User]):
         pass
 
-    patch_storage_class(UserStore, LocalMap())
+    UserStore.wire(LocalMap())
 
     await UserStore.set(
         "u2", {"id": "u2", "name": "Grace", "address": {"street": "7 Cedar", "city": "SEA"}}
@@ -236,7 +242,7 @@ async def test_map_list_returns_models():
     class UserStore(Map[str, User]):
         pass
 
-    patch_storage_class(UserStore, LocalMap())
+    UserStore.wire(LocalMap())
 
     for i, name in enumerate(["Alice", "Bob", "Carol"]):
         await UserStore.set(
@@ -253,7 +259,7 @@ async def test_map_nested_model_roundtrip():
     class UserStore(Map[str, User]):
         pass
 
-    patch_storage_class(UserStore, LocalMap())
+    UserStore.wire(LocalMap())
 
     user = User(
         id="u1",
@@ -268,7 +274,7 @@ async def test_map_nested_model_roundtrip():
     assert result.address.country == "US"
 
 
-# ── patch_storage_class with Collection ───────────────────────────────────────
+# ── Collection.wire() ─────────────────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
@@ -276,7 +282,7 @@ async def test_collection_add_and_get():
     class UserCol(Collection[User]):
         pass
 
-    patch_storage_class(UserCol, LocalMap())
+    UserCol.wire(LocalMap())
 
     user = User(id="u1", name="Ivan", address=Address(street="9 Elm", city="DEN"))
     await UserCol.add(user)
@@ -291,7 +297,7 @@ async def test_collection_all():
     class UserCol(Collection[User]):
         pass
 
-    patch_storage_class(UserCol, LocalMap())
+    UserCol.wire(LocalMap())
 
     for i in range(3):
         await UserCol.add(
@@ -308,7 +314,7 @@ async def test_collection_remove():
     class UserCol(Collection[User]):
         pass
 
-    patch_storage_class(UserCol, LocalMap())
+    UserCol.wire(LocalMap())
 
     user = User(id="u1", name="Judy", address=Address(street="1 Ave", city="MIA"))
     await UserCol.add(user)
@@ -321,7 +327,7 @@ async def test_collection_update():
     class UserCol(Collection[User]):
         pass
 
-    patch_storage_class(UserCol, LocalMap())
+    UserCol.wire(LocalMap())
 
     user = User(id="u1", name="Karl", address=Address(street="2 Ave", city="MIA"))
     await UserCol.add(user)
@@ -338,7 +344,7 @@ async def test_collection_find_by_prefix():
     class UserCol(Collection[User]):
         pass
 
-    patch_storage_class(UserCol, LocalMap())
+    UserCol.wire(LocalMap())
 
     for prefix, name in [("admin_u1", "Admin1"), ("user_u2", "User2"), ("admin_u3", "Admin3")]:
         await UserCol.add(User(id=prefix, name=name, address=Address(street="X St", city="NYC")))
@@ -346,24 +352,6 @@ async def test_collection_find_by_prefix():
     admins = await UserCol.find("admin_")
     assert len(admins) == 2
     assert all("Admin" in u.name for u in admins)
-
-
-# ── Backward compat: plain class stays raw ────────────────────────────────────
-
-
-@pytest.mark.asyncio
-async def test_plain_class_raw_storage():
-    class Counts:
-        pass
-
-    patch_storage_class(Counts, LocalMap())
-
-    await Counts.set("hits", 42)
-    assert await Counts.get("hits") == 42
-
-    await Counts.set("session", {"user": "alice", "token": "abc"})
-    raw = await Counts.get("session")
-    assert raw == {"user": "alice", "token": "abc"}
 
 
 # ── todo_api.py integration ────────────────────────────────────────────────────

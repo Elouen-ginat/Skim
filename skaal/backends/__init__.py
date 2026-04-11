@@ -7,7 +7,7 @@ missing optional dependencies do not prevent the core library from loading.
 from __future__ import annotations
 
 from skaal.backends.base import StorageBackend
-from skaal.backends.local_backend import LocalMap, patch_storage_class
+from skaal.backends.local_backend import LocalMap
 
 
 def __getattr__(name: str) -> object:
@@ -43,5 +43,4 @@ __all__ = [
     "RedisStreamChannel",
     "SqliteBackend",
     "StorageBackend",
-    "patch_storage_class",
 ]

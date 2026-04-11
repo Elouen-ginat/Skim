@@ -18,6 +18,7 @@ from skaal.types import (
 )
 
 F = TypeVar("F", bound=Callable[..., Any])
+C = TypeVar("C", bound=type)
 
 
 def storage(
@@ -33,10 +34,10 @@ def storage(
     auto_optimize: bool = False,
     decommission_policy: DecommissionPolicy | None = None,
     collocate_with: str | None = None,
-) -> Callable[[type], type]:
+) -> Callable[[C], C]:
     """Declare infrastructure constraints for a storage variable or Map class."""
 
-    def decorator(cls: type) -> type:
+    def decorator(cls: C) -> C:
         _rl: Latency | None
         if isinstance(read_latency, str):
             _rl = Latency(read_latency)
@@ -57,26 +58,32 @@ def storage(
         except Exception:  # noqa: BLE001
             schema = {}
 
-        cls.__skaal_storage__ = {  # type: ignore[attr-defined]
-            "read_latency": _rl,
-            "write_latency": _wl,
-            "durability": Durability(durability) if isinstance(durability, str) else durability,
-            "size_hint": size_hint,
-            "access_pattern": (
-                AccessPattern(access_pattern) if isinstance(access_pattern, str) else access_pattern
-            ),
-            "write_throughput": (
-                Throughput(write_throughput)
-                if isinstance(write_throughput, str)
-                else write_throughput
-            ),
-            "residency": residency,
-            "retention": retention,
-            "auto_optimize": auto_optimize,
-            "decommission_policy": decommission_policy,
-            "collocate_with": collocate_with,
-            "schema": schema,  # empty dict for plain classes
-        }
+        setattr(
+            cls,
+            "__skaal_storage__",
+            {
+                "read_latency": _rl,
+                "write_latency": _wl,
+                "durability": Durability(durability) if isinstance(durability, str) else durability,
+                "size_hint": size_hint,
+                "access_pattern": (
+                    AccessPattern(access_pattern)
+                    if isinstance(access_pattern, str)
+                    else access_pattern
+                ),
+                "write_throughput": (
+                    Throughput(write_throughput)
+                    if isinstance(write_throughput, str)
+                    else write_throughput
+                ),
+                "residency": residency,
+                "retention": retention,
+                "auto_optimize": auto_optimize,
+                "decommission_policy": decommission_policy,
+                "collocate_with": collocate_with,
+                "schema": schema,  # empty dict for plain classes
+            },
+        )
         return cls
 
     return decorator
@@ -94,16 +101,20 @@ def compute(
     """Declare infrastructure constraints for a compute function."""
 
     def decorator(fn: F) -> F:
-        fn.__skaal_compute__ = Compute(  # type: ignore[attr-defined]
-            latency=latency,
-            throughput=throughput,
-            compute_type=ComputeType(compute_type)
-            if isinstance(compute_type, str)
-            else compute_type,
-            memory=memory,
-            schedule=schedule,
+        setattr(
+            fn,
+            "__skaal_compute__",
+            Compute(
+                latency=latency,
+                throughput=throughput,
+                compute_type=ComputeType(compute_type)
+                if isinstance(compute_type, str)
+                else compute_type,
+                memory=memory,
+                schedule=schedule,
+                collocate_with=collocate_with,
+            ),
         )
-        fn.__skaal_compute__.collocate_with = collocate_with  # type: ignore[attr-defined]
         return fn
 
     return decorator
@@ -117,9 +128,13 @@ def scale(
     """Declare scaling policy for a function."""
 
     def decorator(fn: F) -> F:
-        fn.__skaal_scale__ = Scale(  # type: ignore[attr-defined]
-            instances=instances,
-            strategy=ScaleStrategy(strategy) if isinstance(strategy, str) else strategy,
+        setattr(
+            fn,
+            "__skaal_scale__",
+            Scale(
+                instances=instances,
+                strategy=ScaleStrategy(strategy) if isinstance(strategy, str) else strategy,
+            ),
         )
         return fn
 
@@ -133,11 +148,15 @@ def shared(
     """Mark a variable or Channel as distributed across all instances."""
 
     def decorator(fn: F) -> F:
-        fn.__skaal_shared__ = {  # type: ignore[attr-defined]
-            "consistency": (
-                Consistency(consistency) if isinstance(consistency, str) else consistency
-            ),
-        }
+        setattr(
+            fn,
+            "__skaal_shared__",
+            {
+                "consistency": (
+                    Consistency(consistency) if isinstance(consistency, str) else consistency
+                ),
+            },
+        )
         return fn
 
     return decorator
@@ -145,5 +164,5 @@ def shared(
 
 def handler(fn: F) -> F:
     """Mark a method on an Agent as a message handler."""
-    fn.__skaal_handler__ = True  # type: ignore[attr-defined]
+    setattr(fn, "__skaal_handler__", True)
     return fn

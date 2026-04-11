@@ -8,7 +8,7 @@ import traceback
 from pathlib import Path
 from typing import Any
 
-from skaal.backends.local_backend import LocalMap, patch_storage_class
+from skaal.backends.local_backend import LocalMap
 
 
 def _wire_channel(channel_obj: Any) -> None:
@@ -57,16 +57,22 @@ class LocalRuntime:
     # ── Setup ──────────────────────────────────────────────────────────────────
 
     def _patch_storage(self) -> None:
-        """Patch all registered storage classes with appropriate backends."""
+        """Wire all registered storage classes with appropriate backends."""
+        from skaal.storage import Collection, Map
+
         for qname, obj in self.app._collect_all().items():
-            if isinstance(obj, type) and hasattr(obj, "__skaal_storage__"):
+            if (
+                isinstance(obj, type)
+                and hasattr(obj, "__skaal_storage__")
+                and issubclass(obj, (Map, Collection))
+            ):
                 backend = (
                     self._backend_overrides.get(qname)
                     or self._backend_overrides.get(obj.__name__)
                     or LocalMap()
                 )
                 self._backends[qname] = backend
-                patch_storage_class(obj, backend)
+                obj.wire(backend)
 
     def _patch_channels(self) -> None:
         """Wire Channel instances registered with the app to LocalChannel."""

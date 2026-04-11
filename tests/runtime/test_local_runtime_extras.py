@@ -6,6 +6,7 @@ import pytest
 
 from skaal import App
 from skaal.runtime.local import LocalRuntime
+from skaal.storage import Map
 
 
 @pytest.fixture
@@ -13,7 +14,7 @@ def counter_app() -> App:
     app = App("runtime-extras")
 
     @app.storage(read_latency="< 10ms", durability="ephemeral")
-    class Counts:
+    class Counts(Map[str, int]):
         pass
 
     @app.function()
