@@ -3,9 +3,12 @@
 # All backends map to local equivalents for zero-setup development.
 
 [storage.local-map.wire]
-class_name = "LocalMap"
-module     = "local_backend"
-# No env_prefix — in-memory, constructed with zero args.
+class_name     = "SqliteBackend"
+module         = "sqlite_backend"
+uses_namespace = true
+path_default   = "skaal_local.db"
+extra_deps     = ["aiosqlite"]
+# No env_prefix — path is hardcoded; all workers share the same file.
 
 [storage.local-map]
 display_name = "In-Memory LocalMap"
@@ -20,7 +23,7 @@ cost_per_gb_month = 0.0
 notes = "Pure in-process Python dict. Used by LocalRuntime automatically."
 
 [storage.sqlite.wire]
-class_name      = "SQLiteBackend"
+class_name      = "SqliteBackend"
 module          = "sqlite_backend"
 env_prefix      = "SKAAL_SQLITE_PATH"
 local_env_value = "/app/data/skaal.db"

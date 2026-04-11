@@ -54,13 +54,13 @@ def _build_openapi_spec(
     Cloud Run URL before base64-encoding the document.
     """
     parts: list[Any] = [
-        f'swagger: "2.0"\n',
+        'swagger: "2.0"\n',
         f'info:\n  title: "{app_name} API"\n  description: "Managed by Skaal"\n  version: "1.0.0"\n',
-        'schemes:\n  - https\n',
+        "schemes:\n  - https\n",
         'produces:\n  - "application/json"\n',
-        'x-google-backend:\n  address: ',
+        "x-google-backend:\n  address: ",
         cloud_run_url_ref,
-        '\npaths:\n',
+        "\npaths:\n",
     ]
 
     for route in routes:
@@ -71,15 +71,15 @@ def _build_openapi_spec(
         parts.append(f'  "{oai_path}":\n')
         for method in route.get("methods") or ["get", "post"]:
             m = method.lower()
-            parts.append(f'    {m}:\n')
+            parts.append(f"    {m}:\n")
             parts.append(f'      operationId: "{safe_op}_{m}"\n')
             if has_proxy:
                 parts.append(
-                    '      parameters:\n'
-                    '        - in: path\n'
-                    '          name: proxy\n'
-                    '          required: true\n'
-                    '          type: string\n'
+                    "      parameters:\n"
+                    "        - in: path\n"
+                    "          name: proxy\n"
+                    "          required: true\n"
+                    "          type: string\n"
                 )
             parts.append('      responses:\n        "200":\n          description: "Success"\n')
 
@@ -87,8 +87,8 @@ def _build_openapi_spec(
         issuer = auth.get("issuer") or ""
         audience = auth.get("audience") or ""
         parts.append(
-            'securityDefinitions:\n'
-            '  jwt:\n'
+            "securityDefinitions:\n"
+            "  jwt:\n"
             '    authorizationUrl: ""\n'
             '    flow: "implicit"\n'
             '    type: "oauth2"\n'
@@ -98,7 +98,7 @@ def _build_openapi_spec(
             parts.append(f'    x-google-jwks_uri: "{issuer}/.well-known/jwks.json"\n')
         if audience:
             parts.append(f'    x-google-audiences: "{audience}"\n')
-        parts.append('security:\n  - jwt: []\n')
+        parts.append("security:\n  - jwt: []\n")
 
     return {"fn::toBase64": {"fn::join": ["", parts]}}
 
@@ -367,9 +367,7 @@ def _build_pulumi_stack(app: Any, plan: "PlanFile", region: str) -> dict[str, An
         # Cloud Scheduler POSTs to /<target_function_name> on the Cloud Run URL.
         # We embed a _skaal_trigger marker so LocalRuntime._dispatch knows to
         # handle ScheduleContext injection.
-        body_bytes = json.dumps(
-            {"_skaal_trigger": comp_name}
-        ).encode()
+        body_bytes = json.dumps({"_skaal_trigger": comp_name}).encode()
 
         resources[f"{comp_name}-scheduler"] = {
             "type": "gcp:cloudscheduler:Job",
@@ -379,24 +377,15 @@ def _build_pulumi_stack(app: Any, plan: "PlanFile", region: str) -> dict[str, An
                 "timeZone": tz,
                 "region": "${gcp:region}",
                 "httpTarget": {
-                    "uri": (
-                        "${"
-                        "cloud-run-service.statuses[0].url"
-                        "}" + f"/{target_fn}"
-                    ),
+                    "uri": ("${" "cloud-run-service.statuses[0].url" "}" + f"/{target_fn}"),
                     "httpMethod": "POST",
                     "headers": {"Content-Type": "application/json"},
                     "body": base64.b64encode(body_bytes).decode(),
                     "oidcToken": {
                         "serviceAccountEmail": (
-                            "${cloud-run-service.template[0].spec[0]"
-                            ".serviceAccountName}"
+                            "${cloud-run-service.template[0].spec[0]" ".serviceAccountName}"
                         ),
-                        "audience": (
-                            "${"
-                            "cloud-run-service.statuses[0].url"
-                            "}"
-                        ),
+                        "audience": ("${" "cloud-run-service.statuses[0].url" "}"),
                     },
                 },
             },

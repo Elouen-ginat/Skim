@@ -202,7 +202,7 @@ def resolve_app(ref: AppRef) -> "App":
     from skaal.module import Module
 
     if isinstance(ref, Module):
-        return ref  # type: ignore[return-value]
+        return ref
     if isinstance(ref, str):
         return load_app(ref)
     raise TypeError(
@@ -322,8 +322,7 @@ def _coerce_plan(value: PlanFile | Path | str | None) -> PlanFile:
     path = Path(value) if value is not None else Path(PLAN_FILE_NAME)
     if not path.exists():
         raise FileNotFoundError(
-            f"Plan file not found at {path}. "
-            "Run `skaal.api.plan(app, target=...)` first."
+            f"Plan file not found at {path}. " "Run `skaal.api.plan(app, target=...)` first."
         )
     return PlanFile.read(path)
 
@@ -485,9 +484,7 @@ async def serve_async(
     db: str | Path = "skaal_local.db",
 ) -> None:
     """Async variant of :func:`run` — await inside an existing event loop."""
-    runtime = build_runtime(
-        app, host=host, port=port, redis=redis, persist=persist, db=db
-    )
+    runtime = build_runtime(app, host=host, port=port, redis=redis, persist=persist, db=db)
     await runtime.serve()
 
 

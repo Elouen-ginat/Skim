@@ -1,5 +1,5 @@
-# Skim Infrastructure Catalog — Amazon Web Services
-# Loaded by the Z3 solver during `skim plan`.
+# Skaal Infrastructure Catalog — Amazon Web Services
+# Loaded by the Z3 solver during `skaal plan`.
 # Values are ranges; the solver selects within them based on constraints.
 
 [storage.elasticache-redis]

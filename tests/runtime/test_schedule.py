@@ -9,7 +9,6 @@ from skaal.components import ScheduleTrigger
 from skaal.runtime.local import LocalRuntime
 from skaal.schedule import Cron, Every, ScheduleContext
 
-
 # ── Every — interval parsing ───────────────────────────────────────────────────
 
 
@@ -135,15 +134,15 @@ def test_schedule_decorator_registers_function():
     assert app._schedules["my_job"] is my_job
 
 
-def test_schedule_decorator_attaches_skim_schedule():
+def test_schedule_decorator_attaches_skaal_schedule():
     app = App("test-sched2")
 
     @app.schedule(trigger=Cron(expression="0 * * * *"))
     async def hourly():
         pass
 
-    assert hasattr(hourly, "__skim_schedule__")
-    meta = hourly.__skim_schedule__
+    assert hasattr(hourly, "__skaal_schedule__")
+    meta = hourly.__skaal_schedule__
     assert isinstance(meta["trigger"], Cron)
     assert meta["trigger"].expression == "0 * * * *"
 
@@ -160,7 +159,7 @@ def test_schedule_decorator_auto_creates_component():
     comp = app._components["poll-schedule"]
     assert isinstance(comp, ScheduleTrigger)
     assert comp.target_function == "poll"
-    assert comp.__skim_component__["trigger_type"] == "every"
+    assert comp.__skaal_component__["trigger_type"] == "every"
 
 
 def test_schedule_decorator_with_parentheses():

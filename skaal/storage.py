@@ -45,7 +45,10 @@ Usage::
 from __future__ import annotations
 
 import json
-from typing import Any, Generic, TypeVar, get_args, get_origin
+from typing import TYPE_CHECKING, Any, Callable, ClassVar, Generic, TypeVar, get_args, get_origin
+
+if TYPE_CHECKING:
+    from skaal.backends.base import StorageBackend
 
 K = TypeVar("K")
 V = TypeVar("V")
@@ -135,7 +138,7 @@ def _schema_hints(cls: type) -> dict[str, Any]:
     """
     Extract solver-visible hints from a Map or Collection subclass.
 
-    These are stored in ``__skim_storage__["schema_hints"]`` and surfaced
+    These are stored in ``__skaal_storage__["schema_hints"]`` and surfaced
     in ``skaal plan`` output.  They do not yet change backend selection —
     that is reserved for a future solver pass.
     """
@@ -159,6 +162,12 @@ def _schema_hints(cls: type) -> dict[str, Any]:
 
 
 # ── Map ──────────────────────────────────────────────────────────────────────
+
+
+# Preserve the builtin `list` reference before Map/Collection define a
+# classmethod also called `list`.  mypy resolves annotations inside those
+# classes using the class namespace, which shadows the builtin.
+_List = list
 
 
 class Map(Generic[K, V]):
@@ -187,9 +196,9 @@ class Map(Generic[K, V]):
     delegate to it — no monkey-patching needed.
     """
 
-    __skaal_key_type__: type = str
-    __skaal_value_type__: type | None = None
-    _backend: Any = None  # set per-subclass by the runtime
+    __skaal_key_type__: ClassVar[type] = str
+    __skaal_value_type__: ClassVar[type | None] = None
+    _backend: ClassVar[StorageBackend | None] = None  # set per-subclass by the runtime
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
         super().__init_subclass__(**kwargs)
@@ -204,6 +213,11 @@ class Map(Generic[K, V]):
                 break
 
     @classmethod
+    def wire(cls, backend: StorageBackend) -> None:
+        """Bind *backend* to this storage class. Called by :class:`~skaal.runtime.local.LocalRuntime`."""
+        cls._backend = backend
+
+    @classmethod
     def _ensure_wired(cls) -> None:
         if cls._backend is None:
             raise NotImplementedError(
@@ -213,18 +227,20 @@ class Map(Generic[K, V]):
     # ── Async API ─────────────────────────────────────────────────────────
 
     @classmethod
-    async def get(cls, key: str) -> Any | None:
+    async def get(cls, key: str) -> V | None:
         """Return the value for *key*, or ``None`` if not found."""
         cls._ensure_wired()
+        assert cls._backend is not None
         raw = await cls._backend.get(key)
         if cls.__skaal_value_type__ is not None:
             return _deserialize(raw, cls.__skaal_value_type__)
         return raw
 
     @classmethod
-    async def set(cls, key: str, value: Any) -> None:
+    async def set(cls, key: str, value: V) -> None:
         """Store *value* under *key*."""
         cls._ensure_wired()
+        assert cls._backend is not None
         payload = (
             _serialize(value, cls.__skaal_value_type__)
             if cls.__skaal_value_type__ is not None
@@ -236,21 +252,24 @@ class Map(Generic[K, V]):
     async def delete(cls, key: str) -> None:
         """Remove *key* (no-op if not present)."""
         cls._ensure_wired()
+        assert cls._backend is not None
         await cls._backend.delete(key)
 
     @classmethod
-    async def list(cls) -> list[tuple[str, Any]]:
+    async def list(cls) -> _List[tuple[str, V]]:
         """Return all ``(key, value)`` pairs."""
         cls._ensure_wired()
+        assert cls._backend is not None
         entries = await cls._backend.list()
         if cls.__skaal_value_type__ is not None:
             return [(k, _deserialize(v, cls.__skaal_value_type__)) for k, v in entries]
         return entries
 
     @classmethod
-    async def scan(cls, prefix: str = "") -> list[tuple[str, Any]]:
+    async def scan(cls, prefix: str = "") -> _List[tuple[str, V]]:
         """Return all ``(key, value)`` pairs where key starts with *prefix*."""
         cls._ensure_wired()
+        assert cls._backend is not None
         entries = await cls._backend.scan(prefix)
         if cls.__skaal_value_type__ is not None:
             return [(k, _deserialize(v, cls.__skaal_value_type__)) for k, v in entries]
@@ -265,14 +284,14 @@ class Map(Generic[K, V]):
     # ── Sync API (safe in Dash / Flask callbacks) ─────────────────────────
 
     @classmethod
-    def sync_get(cls, key: str) -> Any | None:
+    def sync_get(cls, key: str) -> V | None:
         """Synchronous wrapper for :meth:`get`."""
         from skaal.backends.local_backend import _sync_run
 
         return _sync_run(cls.get(key))
 
     @classmethod
-    def sync_set(cls, key: str, value: Any) -> None:
+    def sync_set(cls, key: str, value: V) -> None:
         """Synchronous wrapper for :meth:`set`."""
         from skaal.backends.local_backend import _sync_run
 
@@ -286,18 +305,58 @@ class Map(Generic[K, V]):
         _sync_run(cls.delete(key))
 
     @classmethod
-    def sync_list(cls) -> list[tuple[str, Any]]:
+    def sync_list(cls) -> _List[tuple[str, V]]:
         """Synchronous wrapper for :meth:`list`."""
         from skaal.backends.local_backend import _sync_run
 
         return _sync_run(cls.list())
 
     @classmethod
-    def sync_scan(cls, prefix: str = "") -> list[tuple[str, Any]]:
+    def sync_scan(cls, prefix: str = "") -> _List[tuple[str, V]]:
         """Synchronous wrapper for :meth:`scan`."""
         from skaal.backends.local_backend import _sync_run
 
         return _sync_run(cls.scan(prefix))
+
+    @classmethod
+    async def update(cls, key: str, fn: Callable[[V | None], V]) -> V:
+        """
+        Atomically read, transform, and write back the value at *key*.
+
+        *fn* receives the current value (deserialized, or ``None`` if absent)
+        and must return the new value.  The read and write are performed inside
+        the backend's lock so concurrent callbacks cannot interleave.
+
+        Returns the new deserialized value.
+
+        Example::
+
+            def increment(state):
+                if state is None:
+                    state = UserState(session_id=sid)
+                state.click_count += 1
+                return state
+
+            new_state = await Sessions.update(sid, increment)
+        """
+        cls._ensure_wired()
+        assert cls._backend is not None
+        value_type = cls.__skaal_value_type__
+
+        def _wrapped(raw: Any) -> Any:
+            current = _deserialize(raw, value_type)
+            updated = fn(current)
+            return _serialize(updated, value_type)
+
+        raw_result = await cls._backend.atomic_update(key, _wrapped)
+        return _deserialize(raw_result, value_type)
+
+    @classmethod
+    def sync_update(cls, key: str, fn: Callable[[V | None], V]) -> V:
+        """Synchronous wrapper for :meth:`update`. Safe in Dash / Flask callbacks."""
+        from skaal.backends.local_backend import _sync_run
+
+        return _sync_run(cls.update(key, fn))
 
 
 # ── Collection ───────────────────────────────────────────────────────────────
@@ -333,9 +392,9 @@ class Collection(Generic[T]):
         all_products = await Products.all()   # list[Product]
     """
 
-    __skaal_value_type__: type | None = None
-    __skaal_key_field__: str = "id"
-    _backend: Any = None  # set per-subclass by the runtime
+    __skaal_value_type__: ClassVar[type | None] = None
+    __skaal_key_field__: ClassVar[str] = "id"
+    _backend: ClassVar[StorageBackend | None] = None  # set per-subclass by the runtime
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
         super().__init_subclass__(**kwargs)
@@ -353,6 +412,11 @@ class Collection(Generic[T]):
                 break
 
     @classmethod
+    def wire(cls, backend: StorageBackend) -> None:
+        """Bind *backend* to this storage class. Called by :class:`~skaal.runtime.local.LocalRuntime`."""
+        cls._backend = backend
+
+    @classmethod
     def _ensure_wired(cls) -> None:
         if cls._backend is None:
             raise NotImplementedError(
@@ -360,7 +424,7 @@ class Collection(Generic[T]):
             )
 
     @classmethod
-    def _extract_key(cls, item: Any) -> str:
+    def _extract_key(cls, item: T) -> str:
         """Extract the primary key from *item* using ``cls.__skaal_key_field__``."""
         key_field = cls.__skaal_key_field__
         if hasattr(item, key_field):
@@ -375,18 +439,20 @@ class Collection(Generic[T]):
     # ── Async API (shared with Map) ───────────────────────────────────────
 
     @classmethod
-    async def get(cls, key: str) -> Any | None:
+    async def get(cls, key: str) -> T | None:
         """Return the item for *key*, or ``None``."""
         cls._ensure_wired()
+        assert cls._backend is not None
         raw = await cls._backend.get(key)
         if cls.__skaal_value_type__ is not None:
             return _deserialize(raw, cls.__skaal_value_type__)
         return raw
 
     @classmethod
-    async def set(cls, key: str, value: Any) -> None:
+    async def set(cls, key: str, value: T) -> None:
         """Store *value* under *key*."""
         cls._ensure_wired()
+        assert cls._backend is not None
         payload = (
             _serialize(value, cls.__skaal_value_type__)
             if cls.__skaal_value_type__ is not None
@@ -398,21 +464,24 @@ class Collection(Generic[T]):
     async def delete(cls, key: str) -> None:
         """Remove *key*."""
         cls._ensure_wired()
+        assert cls._backend is not None
         await cls._backend.delete(key)
 
     @classmethod
-    async def list(cls) -> list[tuple[str, Any]]:
+    async def list(cls) -> _List[tuple[str, T]]:
         """Return all ``(key, value)`` pairs."""
         cls._ensure_wired()
+        assert cls._backend is not None
         entries = await cls._backend.list()
         if cls.__skaal_value_type__ is not None:
             return [(k, _deserialize(v, cls.__skaal_value_type__)) for k, v in entries]
         return entries
 
     @classmethod
-    async def scan(cls, prefix: str = "") -> list[tuple[str, Any]]:
+    async def scan(cls, prefix: str = "") -> _List[tuple[str, T]]:
         """Return all ``(key, value)`` pairs matching *prefix*."""
         cls._ensure_wired()
+        assert cls._backend is not None
         entries = await cls._backend.scan(prefix)
         if cls.__skaal_value_type__ is not None:
             return [(k, _deserialize(v, cls.__skaal_value_type__)) for k, v in entries]
@@ -427,7 +496,7 @@ class Collection(Generic[T]):
     # ── Collection-specific async API ─────────────────────────────────────
 
     @classmethod
-    async def add(cls, item: Any) -> None:
+    async def add(cls, item: T) -> None:
         """Store *item* using its auto-extracted primary key."""
         await cls.set(cls._extract_key(item), item)
 
@@ -437,31 +506,31 @@ class Collection(Generic[T]):
         await cls.delete(key)
 
     @classmethod
-    async def update(cls, key: str, item: Any) -> None:
+    async def update(cls, key: str, item: T) -> None:
         """Replace the value at *key* with *item*."""
         await cls.set(key, item)
 
     @classmethod
-    async def all(cls) -> list[Any]:
+    async def all(cls) -> _List[T]:
         """Return all items as a flat list."""
         return [v for _, v in await cls.list()]
 
     @classmethod
-    async def find(cls, prefix: str = "") -> list[Any]:
+    async def find(cls, prefix: str = "") -> _List[T]:
         """Return items whose key starts with *prefix*."""
         return [v for _, v in await cls.scan(prefix)]
 
     # ── Sync API ──────────────────────────────────────────────────────────
 
     @classmethod
-    def sync_get(cls, key: str) -> Any | None:
+    def sync_get(cls, key: str) -> T | None:
         """Synchronous wrapper for :meth:`get`."""
         from skaal.backends.local_backend import _sync_run
 
         return _sync_run(cls.get(key))
 
     @classmethod
-    def sync_set(cls, key: str, value: Any) -> None:
+    def sync_set(cls, key: str, value: T) -> None:
         """Synchronous wrapper for :meth:`set`."""
         from skaal.backends.local_backend import _sync_run
 
@@ -475,35 +544,35 @@ class Collection(Generic[T]):
         _sync_run(cls.delete(key))
 
     @classmethod
-    def sync_list(cls) -> list[tuple[str, Any]]:
+    def sync_list(cls) -> _List[tuple[str, T]]:
         """Synchronous wrapper for :meth:`list`."""
         from skaal.backends.local_backend import _sync_run
 
         return _sync_run(cls.list())
 
     @classmethod
-    def sync_scan(cls, prefix: str = "") -> list[tuple[str, Any]]:
+    def sync_scan(cls, prefix: str = "") -> _List[tuple[str, T]]:
         """Synchronous wrapper for :meth:`scan`."""
         from skaal.backends.local_backend import _sync_run
 
         return _sync_run(cls.scan(prefix))
 
     @classmethod
-    def sync_add(cls, item: Any) -> None:
+    def sync_add(cls, item: T) -> None:
         """Synchronous wrapper for :meth:`add`."""
         from skaal.backends.local_backend import _sync_run
 
         _sync_run(cls.add(item))
 
     @classmethod
-    def sync_all(cls) -> list[Any]:
+    def sync_all(cls) -> _List[T]:
         """Synchronous wrapper for :meth:`all`."""
         from skaal.backends.local_backend import _sync_run
 
         return _sync_run(cls.all())
 
     @classmethod
-    def sync_find(cls, prefix: str = "") -> list[Any]:
+    def sync_find(cls, prefix: str = "") -> _List[T]:
         """Synchronous wrapper for :meth:`find`."""
         from skaal.backends.local_backend import _sync_run
 

@@ -29,23 +29,23 @@ class ComponentBase:
     """
     Abstract base for all Skaal components.
 
-    Subclasses set ``_skim_component_kind`` as a class variable.
-    On instantiation they populate ``__skim_component__`` — the metadata
-    dict consumed by the solver and Pulumi backend (mirrors ``__skim_storage__``).
+    Subclasses set ``_skaal_component_kind`` as a class variable.
+    On instantiation they populate ``__skaal_component__`` — the metadata
+    dict consumed by the solver and Pulumi backend (mirrors ``__skaal_storage__``).
     """
 
-    _skim_component_kind: ClassVar[str] = "base"
+    _skaal_component_kind: ClassVar[str] = "base"
 
     def __init__(self, name: str) -> None:
         self.name = name
-        self.__skim_component__: dict[str, Any] = {
-            "kind": self._skim_component_kind,
+        self.__skaal_component__: dict[str, Any] = {
+            "kind": self._skaal_component_kind,
             "name": name,
         }
 
     def describe(self) -> dict[str, Any]:
         """Return the component's spec dict. Used by the solver and plan writer."""
-        return dict(self.__skim_component__)
+        return dict(self.__skaal_component__)
 
     def __repr__(self) -> str:
         return f"{type(self).__name__}(name={self.name!r})"
@@ -90,7 +90,7 @@ class ExternalComponent(ComponentBase):
         self.connection_env = connection_env
         self.latency = Latency(latency) if isinstance(latency, str) else latency
         self.region = region
-        self.__skim_component__.update(
+        self.__skaal_component__.update(
             {
                 "external": True,
                 "connection_env": connection_env,
@@ -155,7 +155,7 @@ class Proxy(ProvisionedComponent):
         app.attach(proxy)
     """
 
-    _skim_component_kind = "proxy"
+    _skaal_component_kind = "proxy"
 
     def __init__(
         self,
@@ -175,7 +175,7 @@ class Proxy(ProvisionedComponent):
         self.throughput = Throughput(throughput) if isinstance(throughput, str) else throughput
         self.health_check_path = health_check_path
         self.implementation = implementation
-        self.__skim_component__.update(
+        self.__skaal_component__.update(
             {
                 "tls": tls,
                 "routes": [
@@ -207,7 +207,7 @@ class APIGateway(ProvisionedComponent):
         app.attach(gw)
     """
 
-    _skim_component_kind = "api-gateway"
+    _skaal_component_kind = "api-gateway"
 
     def __init__(
         self,
@@ -229,7 +229,7 @@ class APIGateway(ProvisionedComponent):
         self.throughput = Throughput(throughput) if isinstance(throughput, str) else throughput
         self.cors_origins = cors_origins
         self.implementation = implementation
-        self.__skim_component__.update(
+        self.__skaal_component__.update(
             {
                 "routes": [
                     {
@@ -286,7 +286,7 @@ class ExternalStorage(ExternalComponent):
         app.attach(legacy_db)
     """
 
-    _skim_component_kind = "external-storage"
+    _skaal_component_kind = "external-storage"
 
     def __init__(
         self,
@@ -310,7 +310,7 @@ class ExternalStorage(ExternalComponent):
             AccessPattern(access_pattern) if isinstance(access_pattern, str) else access_pattern
         )
         self.durability = Durability(durability) if isinstance(durability, str) else durability
-        self.__skim_component__.update(
+        self.__skaal_component__.update(
             {
                 "access_pattern": self.access_pattern,
                 "durability": self.durability,
@@ -332,7 +332,7 @@ class ExternalQueue(ExternalComponent):
         app.attach(kafka)
     """
 
-    _skim_component_kind = "external-queue"
+    _skaal_component_kind = "external-queue"
 
     def __init__(
         self,
@@ -350,7 +350,7 @@ class ExternalQueue(ExternalComponent):
             region=region,
         )
         self.throughput = Throughput(throughput) if isinstance(throughput, str) else throughput
-        self.__skim_component__.update(
+        self.__skaal_component__.update(
             {
                 "throughput": str(self.throughput) if self.throughput else None,
             }
@@ -373,7 +373,7 @@ class ExternalObservability(ExternalComponent):
         app.attach(prom)
     """
 
-    _skim_component_kind = "external-observability"
+    _skaal_component_kind = "external-observability"
 
     def __init__(
         self,
@@ -389,7 +389,7 @@ class ExternalObservability(ExternalComponent):
             connection_env=endpoint_env,
         )
         self.provider = provider
-        self.__skim_component__.update({"provider": provider})
+        self.__skaal_component__.update({"provider": provider})
 
 
 # ── Schedule trigger ──────────────────────────────────────────────────────────
@@ -416,7 +416,7 @@ class ScheduleTrigger(ProvisionedComponent):
         app.attach(trigger)
     """
 
-    _skim_component_kind = "schedule-trigger"
+    _skaal_component_kind = "schedule-trigger"
 
     def __init__(
         self,
@@ -432,7 +432,7 @@ class ScheduleTrigger(ProvisionedComponent):
         self.target_function = target_function
         self.timezone = timezone
         self.emit_to = emit_to
-        self.__skim_component__.update(
+        self.__skaal_component__.update(
             {
                 "trigger": trigger.model_dump(),
                 "trigger_type": type(trigger).__name__.lower(),  # "every" | "cron"
@@ -465,7 +465,7 @@ class AppRef(ExternalComponent):
         result = await payments.call("charge", amount=100, currency="USD")
     """
 
-    _skim_component_kind = "app-ref"
+    _skaal_component_kind = "app-ref"
 
     def __init__(
         self,
@@ -477,7 +477,7 @@ class AppRef(ExternalComponent):
     ) -> None:
         super().__init__(name, connection_string=base_url, connection_env=base_url_env)
         self.timeout_ms = timeout_ms
-        self.__skim_component__["timeout_ms"] = timeout_ms
+        self.__skaal_component__["timeout_ms"] = timeout_ms
 
     def _resolve_base_url(self) -> str:
         if self.connection_string:

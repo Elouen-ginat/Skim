@@ -4,14 +4,10 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-import pytest
-
-from skaal.components import APIGateway, AuthConfig, Proxy, Route
+from skaal.components import APIGateway, Proxy, Route
 from skaal.deploy.local import _build_docker_compose, _kong_config, _traefik_labels
 from skaal.plan import PlanFile
 from skaal.solver.components import encode_component
-from skaal.types import RateLimitPolicy
-
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
 

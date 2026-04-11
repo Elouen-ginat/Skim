@@ -94,7 +94,7 @@ def build_graph(app: "App") -> ResourceGraph:
     """
     Build a :class:`ResourceGraph` from an app's registered resources.
 
-    Reads ``__skim_compute__.collocate_with`` on functions to infer edges.
+    Reads ``__skaal_compute__.collocate_with`` on functions to infer edges.
     """
     graph = ResourceGraph()
     all_resources: dict[str, Any] = app._collect_all()
@@ -103,8 +103,8 @@ def build_graph(app: "App") -> ResourceGraph:
         graph.add_node(qname)
 
     for qname, obj in all_resources.items():
-        if callable(obj) and hasattr(obj, "__skim_compute__"):
-            compute = obj.__skim_compute__
+        if callable(obj) and hasattr(obj, "__skaal_compute__"):
+            compute = obj.__skaal_compute__
             target = getattr(compute, "collocate_with", None)
             if target:
                 graph.add_edge(qname, target)

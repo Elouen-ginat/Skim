@@ -108,12 +108,16 @@ def handle_click(n_clicks, session_id):
     if not session_id:
         return "No session yet."
 
-    # sync_get / sync_set — safe in sync Dash callbacks
-    state = Sessions.sync_get(session_id) or UserState(session_id=session_id)
-    state.click_count += 1
-    state.last_clicked = datetime.now(timezone.utc).isoformat()
-    Sessions.sync_set(session_id, state)
+    # sync_update performs the read-modify-write atomically — no race condition
+    # even when Dash fires concurrent callbacks (rapid clicks, multiple workers).
+    def increment(state: UserState | None) -> UserState:
+        if state is None:
+            state = UserState(session_id=session_id)
+        state.click_count += 1
+        state.last_clicked = datetime.now(timezone.utc).isoformat()
+        return state
 
+    state = Sessions.sync_update(session_id, increment)
     return f"Clicks: {state.click_count} — last at {state.last_clicked}"
 
 

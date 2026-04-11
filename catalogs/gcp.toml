@@ -1,5 +1,5 @@
-# Skim Infrastructure Catalog — Google Cloud Platform
-# Loaded by the Z3 solver during `skim plan`.
+# Skaal Infrastructure Catalog — Google Cloud Platform
+# Loaded by the Z3 solver during `skaal plan`.
 
 [storage.memorystore-redis]
 display_name = "Cloud Memorystore (Redis)"

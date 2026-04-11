@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import asyncio
-
-# Re-export for backward compatibility — canonical location is now skaal.storage.
-from skaal.storage import _deserialize, _serialize  # noqa: F401
 import concurrent.futures
 import threading
 from typing import Any, List
+
+# Re-export for backward compatibility — canonical location is now skaal.storage.
+from skaal.storage import _deserialize, _serialize  # noqa: F401
 
 # ── Sync/async bridge ─────────────────────────────────────────────────────────
 
@@ -116,6 +116,14 @@ class LocalMap:
             self._data[key] = new_value
             return new_value
 
+    async def atomic_update(self, key: str, fn: Any) -> Any:
+        """Atomically read, apply fn to the raw value, write back, and return the result."""
+        async with self._lock:
+            current = self._data.get(key)
+            updated = fn(current)
+            self._data[key] = updated
+            return updated
+
     async def close(self) -> None:
         pass
 
@@ -124,74 +132,3 @@ class LocalMap:
 
     def __repr__(self) -> str:
         return f"LocalMap({len(self._data)} keys)"
-
-
-# ── patch_storage_class ────────────────────────────────────────────────────────
-
-
-def patch_storage_class(cls: type, backend: Any) -> None:
-    """
-    Wire *backend* into a storage class.
-
-    For :class:`~skaal.storage.Map` and :class:`~skaal.storage.Collection`
-    subclasses this simply sets ``cls._backend = backend`` — the real methods
-    live on the class and delegate to ``_backend`` automatically.
-
-    For **plain classes** (``class Counts: pass``) that don't inherit from
-    Map/Collection, this injects thin async wrappers as static methods for
-    backward compatibility.
-    """
-    from skaal.storage import Collection, Map
-
-    cls._backend = backend  # type: ignore[attr-defined]
-
-    # Map/Collection subclasses already have real classmethods — done.
-    if isinstance(cls, type) and issubclass(cls, (Map, Collection)):
-        return
-
-    # ── Plain-class backward compat: inject thin wrappers ─────────────────
-
-    async def _get(key: str) -> Any | None:
-        return await backend.get(key)
-
-    async def _set(key: str, value: Any) -> None:
-        await backend.set(key, value)
-
-    async def _delete(key: str) -> None:
-        await backend.delete(key)
-
-    async def _list() -> list[tuple[str, Any]]:
-        return await backend.list()
-
-    async def _scan(prefix: str = "") -> list[tuple[str, Any]]:
-        return await backend.scan(prefix)
-
-    async def _close() -> None:
-        await backend.close()
-
-    def _sync_get(key: str) -> Any | None:
-        return _sync_run(_get(key))
-
-    def _sync_set(key: str, value: Any) -> None:
-        _sync_run(_set(key, value))
-
-    def _sync_delete(key: str) -> None:
-        _sync_run(_delete(key))
-
-    def _sync_list() -> list[tuple[str, Any]]:
-        return _sync_run(_list())
-
-    def _sync_scan(prefix: str = "") -> list[tuple[str, Any]]:
-        return _sync_run(_scan(prefix))
-
-    cls.get = staticmethod(_get)  # type: ignore[attr-defined]
-    cls.set = staticmethod(_set)  # type: ignore[attr-defined]
-    cls.delete = staticmethod(_delete)  # type: ignore[attr-defined]
-    cls.list = staticmethod(_list)  # type: ignore[attr-defined]
-    cls.scan = staticmethod(_scan)  # type: ignore[attr-defined]
-    cls.close = staticmethod(_close)  # type: ignore[attr-defined]
-    cls.sync_get = staticmethod(_sync_get)  # type: ignore[attr-defined]
-    cls.sync_set = staticmethod(_sync_set)  # type: ignore[attr-defined]
-    cls.sync_delete = staticmethod(_sync_delete)  # type: ignore[attr-defined]
-    cls.sync_list = staticmethod(_sync_list)  # type: ignore[attr-defined]
-    cls.sync_scan = staticmethod(_sync_scan)  # type: ignore[attr-defined]

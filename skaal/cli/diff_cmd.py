@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
 import typer
@@ -17,9 +18,7 @@ _PLAN_DEFAULT = "plan.skaal.lock"
 
 def _print_plan_summary(plan: "PlanFile") -> None:
     """Pretty-print a plan file without a second plan to diff against."""
-    typer.echo(
-        f"Plan: {plan.app_name}  (version {plan.version}, target={plan.deploy_target})"
-    )
+    typer.echo(f"Plan: {plan.app_name}  (version {plan.version}, target={plan.deploy_target})")
     typer.echo("")
 
     if plan.storage:
@@ -36,9 +35,7 @@ def _print_plan_summary(plan: "PlanFile") -> None:
         typer.echo("Compute:")
         for name, cspec in sorted(plan.compute.items()):
             prev = (
-                f"  [was: {cspec.previous_instance_type}]"
-                if cspec.previous_instance_type
-                else ""
+                f"  [was: {cspec.previous_instance_type}]" if cspec.previous_instance_type else ""
             )
             typer.echo(f"  ~ {name:<40} instance={cspec.instance_type}{prev}")
     else:
@@ -65,9 +62,7 @@ def _print_diff(plan_diff: "PlanDiff") -> None:
                 elif entry.change == "removed":
                     typer.echo(f"  - {entry.name:<40} {key}={entry.before}")
                 else:  # modified
-                    typer.echo(
-                        f"  ~ {entry.name:<40} {key}: {entry.before} → {entry.after}"
-                    )
+                    typer.echo(f"  ~ {entry.name:<40} {key}: {entry.before} → {entry.after}")
         typer.echo("")
 
 
@@ -96,7 +91,7 @@ def diff(
         if module_app is None:
             from skaal.plan import PlanFile
 
-            _print_plan_summary(PlanFile.read(plan))
+            _print_plan_summary(PlanFile.read(Path(plan)))
             return
 
         plan_diff = api.diff(old_plan=plan, app=module_app)

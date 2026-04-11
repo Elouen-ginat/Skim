@@ -15,8 +15,6 @@ from __future__ import annotations
 
 import warnings
 
-import pytest
-
 from skaal import App
 from skaal.catalog.loader import load_catalog
 from skaal.decorators import scale
@@ -31,7 +29,6 @@ from skaal.types import (
     Scale,
     ScaleStrategy,
 )
-
 
 # ── collocate_with ────────────────────────────────────────────────────────────
 

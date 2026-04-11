@@ -4,14 +4,11 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-import pytest
-
 from skaal.components import APIGateway, AuthConfig, Proxy, Route
 from skaal.deploy.aws import _add_apigw_resources, _apigw_path
 from skaal.plan import ComponentSpec, PlanFile
 from skaal.solver.components import encode_component
 from skaal.types import RateLimitPolicy
-
 
 # ── Path conversion ───────────────────────────────────────────────────────────
 
@@ -78,8 +75,11 @@ def test_mount_routes_when_no_component():
     resources: dict = {}
     _add_apigw_resources(app, plan, resources, {})
 
-    route_keys = {r["properties"]["routeKey"] for r in resources.values()
-                  if r.get("type") == "aws:apigatewayv2:Route"}
+    route_keys = {
+        r["properties"]["routeKey"]
+        for r in resources.values()
+        if r.get("type") == "aws:apigatewayv2:Route"
+    }
     assert "ANY /auth/{proxy+}" in route_keys
     assert "ANY /v1/{proxy+}" in route_keys
     assert "$default" not in route_keys
@@ -103,8 +103,11 @@ def test_proxy_explicit_routes():
     resources: dict = {}
     _add_apigw_resources(app, plan, resources, {})
 
-    route_keys = {r["properties"]["routeKey"] for r in resources.values()
-                  if r.get("type") == "aws:apigatewayv2:Route"}
+    route_keys = {
+        r["properties"]["routeKey"]
+        for r in resources.values()
+        if r.get("type") == "aws:apigatewayv2:Route"
+    }
     assert "GET /api/{proxy+}" in route_keys
     assert "POST /api/{proxy+}" in route_keys
     assert "GET /health" in route_keys
@@ -139,8 +142,7 @@ def test_api_gateway_jwt_authorizer():
     assert "my-api" in auth_res["properties"]["jwtConfiguration"]["audiences"]
 
     # Routes should carry authorizerId
-    route_resources = [r for r in resources.values()
-                       if r.get("type") == "aws:apigatewayv2:Route"]
+    route_resources = [r for r in resources.values() if r.get("type") == "aws:apigatewayv2:Route"]
     assert all("authorizerId" in r["properties"] for r in route_resources)
     assert all(r["properties"]["authorizationType"] == "JWT" for r in route_resources)
 

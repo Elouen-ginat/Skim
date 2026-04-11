@@ -26,7 +26,7 @@ def _enum_value(v: Any) -> str:
 
 # ── Constraint checker registry ───────────────────────────────────────────────
 #
-# Each entry maps a constraint key (matching __skim_storage__ dict keys) to a
+# Each entry maps a constraint key (matching __skaal_storage__ dict keys) to a
 # callable ``(value, spec) -> bool`` that returns ``True`` when *spec*
 # satisfies *value*.  Adding a new constraint type is a single dict entry.
 
@@ -190,7 +190,7 @@ def select_backend(
 
     Args:
         variable_name: e.g. ``"counter.Counts"``
-        constraints:   ``__skim_storage__`` dict — read_latency, write_latency,
+        constraints:   ``__skaal_storage__`` dict — read_latency, write_latency,
                        durability, access_pattern, etc.
         backends:      ``catalog["storage"]`` dict — backend name → spec dict.
         target:        Deploy target, e.g. ``"generic"``, ``"aws"``, ``"k8s"``.
@@ -235,7 +235,11 @@ def select_backend(
 
     model = opt.model()
     selected = next(
-        (n for n in backend_names if model[sel_vars[n]] is not None and str(model[sel_vars[n]]) == "True"),
+        (
+            n
+            for n in backend_names
+            if model[sel_vars[n]] is not None and str(model[sel_vars[n]]) == "True"
+        ),
         None,
     )
 

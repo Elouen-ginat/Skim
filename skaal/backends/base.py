@@ -50,6 +50,16 @@ class StorageBackend(Protocol):
         """
         ...
 
+    async def atomic_update(self, key: str, fn: Any) -> Any:
+        """
+        Atomically read the raw value for key, apply fn, write the result back,
+        and return the new raw value.
+
+        Implementations must guarantee that no other write to key can occur
+        between the read and the write (e.g. via a lock or a transaction).
+        """
+        ...
+
     async def close(self) -> None:
         """Release any resources held by this backend."""
         ...

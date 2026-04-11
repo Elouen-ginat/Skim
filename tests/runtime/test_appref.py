@@ -6,7 +6,6 @@ import pytest
 
 from skaal.components import AppRef
 
-
 # ── _resolve_base_url ──────────────────────────────────────────────────────────
 
 
@@ -45,12 +44,12 @@ def test_resolve_base_url_raises_no_config():
         ref._resolve_base_url()
 
 
-# ── __skim_component__ metadata ────────────────────────────────────────────────
+# ── __skaal_component__ metadata ────────────────────────────────────────────────
 
 
 def test_appref_component_metadata():
     ref = AppRef("payments", base_url="http://pay:8000", timeout_ms=5_000)
-    meta = ref.__skim_component__
+    meta = ref.__skaal_component__
     assert meta["kind"] == "app-ref"
     assert meta["name"] == "payments"
     assert meta["timeout_ms"] == 5_000
@@ -58,7 +57,7 @@ def test_appref_component_metadata():
 
 def test_appref_component_kind():
     ref = AppRef("svc", base_url="http://svc:8000")
-    assert ref._skim_component_kind == "app-ref"
+    assert ref._skaal_component_kind == "app-ref"
 
 
 # ── call() via httpx mock ──────────────────────────────────────────────────────

@@ -38,9 +38,7 @@ def _print_plan_table(plan_file: "PlanFile") -> None:
     if plan_file.compute:
         typer.echo("\nCompute assignments:")
         for cspec in plan_file.compute.values():
-            typer.echo(
-                f"  {cspec.function_name}: {cspec.instance_type}  ({cspec.reason})"
-            )
+            typer.echo(f"  {cspec.function_name}: {cspec.instance_type}  ({cspec.reason})")
 
 
 @app.callback(invoke_without_command=True)
@@ -107,9 +105,7 @@ def plan(
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(1) from exc
 
-    typer.echo(
-        f"Solving constraints for {skaal_app.name!r} → target={resolved_target!r} ..."
-    )
+    typer.echo(f"Solving constraints for {skaal_app.name!r} → target={resolved_target!r} ...")
 
     try:
         plan_file = api.plan(

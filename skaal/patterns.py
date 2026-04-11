@@ -5,8 +5,8 @@ Higher-level primitives that compose existing Skaal storage/channel/agent
 declarations into well-known distributed system patterns.
 
 Patterns are registered with a module via ``module.pattern(p)`` and attach
-``__skim_pattern__`` metadata consumed by the solver (mirroring the
-``__skim_storage__`` convention).
+``__skaal_pattern__`` metadata consumed by the solver (mirroring the
+``__skaal_storage__`` convention).
 """
 
 from __future__ import annotations
@@ -29,7 +29,7 @@ class EventLog(Generic[T]):
     """
     Append-only, ordered, replayable typed event log (Event Sourcing).
 
-    Internally sets ``__skim_storage__`` with
+    Internally sets ``__skaal_storage__`` with
     ``access_pattern=AccessPattern.EVENT_LOG`` so the solver treats it as a
     normal storage declaration and maps it to Kafka / Kinesis / EventStore.
 
@@ -77,10 +77,10 @@ class EventLog(Generic[T]):
 
             self._backend = LocalMap()
 
-        # Metadata consumed by solver — mirrors __skim_storage__
+        # Metadata consumed by solver — mirrors __skaal_storage__
         from skaal.types import AccessPattern
 
-        self.__skim_pattern__ = {
+        self.__skaal_pattern__ = {
             "pattern_type": "event-log",
             "storage": {
                 "access_pattern": AccessPattern.EVENT_LOG,
@@ -178,7 +178,7 @@ class Projection(Generic[TSource, TView]):
         self.consistency = Consistency(consistency) if isinstance(consistency, str) else consistency
         self.checkpoint_every = checkpoint_every
 
-        self.__skim_pattern__ = {
+        self.__skaal_pattern__ = {
             "pattern_type": "projection",
             "source": source,
             "target": target,
@@ -247,7 +247,7 @@ class Saga:
         self.coordination = coordination
         self.timeout_ms = timeout_ms
 
-        self.__skim_pattern__ = {
+        self.__skaal_pattern__ = {
             "pattern_type": "saga",
             "name": name,
             "steps": [
@@ -305,7 +305,7 @@ class Outbox(Generic[T]):
         self.storage = storage
         self.delivery = delivery
 
-        self.__skim_pattern__ = {
+        self.__skaal_pattern__ = {
             "pattern_type": "outbox",
             "channel": channel,
             "storage": storage,

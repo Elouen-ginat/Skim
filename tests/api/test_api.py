@@ -75,9 +75,7 @@ def test_load_app_missing_module() -> None:
         api.load_app("definitely_not_a_real_module:app")
 
 
-def test_load_app_missing_attribute(
-    tmp_project: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_load_app_missing_attribute(tmp_project: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Reference to a missing attribute raises AttributeError."""
     (tmp_project / "dummy_mod.py").write_text("value = 1\n")
     monkeypatch.syspath_prepend(str(tmp_project))
@@ -116,7 +114,9 @@ def test_plan_custom_output_path(simple_app: App, tmp_project: Path) -> None:
     assert out.exists()
 
 
-def test_plan_missing_catalog(simple_app: App, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_plan_missing_catalog(
+    simple_app: App, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """A missing catalog surfaces as FileNotFoundError."""
     monkeypatch.chdir(tmp_path)
     with pytest.raises(FileNotFoundError):
@@ -178,15 +178,11 @@ def test_build_delegates_to_target(
         name = "local"
         default_region = ""
 
-        def generate_artifacts(
-            self, *, app, plan, output_dir, source_module, app_var, region, dev
-        ):
+        def generate_artifacts(self, *, app, plan, output_dir, source_module, app_var, region, dev):
             assert plan.app_name == plan_file.app_name
             return expected_paths
 
-    monkeypatch.setattr(
-        "skaal.deploy.registry.get_target", lambda name: _FakeTarget()
-    )
+    monkeypatch.setattr("skaal.deploy.registry.get_target", lambda name: _FakeTarget())
 
     generated = api.build(app=simple_app, output_dir=tmp_project / "artifacts")
     assert generated == expected_paths
@@ -339,9 +335,7 @@ def test_build_runtime_returns_local_runtime(simple_app: App) -> None:
     assert runtime.port == 9999
 
 
-def test_run_invokes_serve(
-    simple_app: App, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_run_invokes_serve(simple_app: App, monkeypatch: pytest.MonkeyPatch) -> None:
     """run() constructs a runtime and awaits its serve() method."""
     called: dict[str, bool] = {"serve": False}
 

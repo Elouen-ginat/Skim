@@ -110,9 +110,7 @@ def cleanup(
         )
 
     if not confirm:
-        confirmed = typer.confirm(
-            f"Remove migration state for {variable!r}?", default=False
-        )
+        confirmed = typer.confirm(f"Remove migration state for {variable!r}?", default=False)
         if not confirmed:
             typer.echo("Aborted.")
             raise typer.Exit(0)

@@ -63,7 +63,7 @@ def _policy_to_dict(policy: Any) -> dict[str, Any] | None:
     """Serialise a resilience policy dataclass to a plain dict (JSON-safe)."""
     if policy is None:
         return None
-    if dataclasses.is_dataclass(policy):
+    if dataclasses.is_dataclass(policy) and not isinstance(policy, type):
         return dataclasses.asdict(policy)
     # Fallback: assume a dict-ish payload
     return dict(policy) if hasattr(policy, "keys") else None
@@ -71,7 +71,7 @@ def _policy_to_dict(policy: Any) -> dict[str, Any] | None:
 
 def _storage_constraints_from_pattern(pattern_meta: dict[str, Any]) -> dict[str, Any]:
     """
-    Build a ``__skim_storage__``-shaped dict from an ``EventLog`` pattern's
+    Build a ``__skaal_storage__``-shaped dict from an ``EventLog`` pattern's
     ``pattern_meta["storage"]`` sub-dict, so it can be fed to ``select_backend``.
     """
     src = pattern_meta.get("storage", {})
@@ -98,7 +98,7 @@ def _collect_function_names(app: "App") -> set[str]:
     """
     names: set[str] = set()
     for qname, obj in app._collect_all().items():
-        if callable(obj) and hasattr(obj, "__skim_compute__"):
+        if callable(obj) and hasattr(obj, "__skaal_compute__"):
             names.add(qname)
             # Also register the bare leaf name (saga.function → "reserve_inventory")
             names.add(qname.rsplit(".", 1)[-1])
@@ -165,10 +165,10 @@ def solve(app: "App", catalog: dict[str, Any], target: str = "generic") -> "Plan
 
     # ── Solve storage ──────────────────────────────────────────────────────
     for qname, obj in all_resources.items():
-        if not (isinstance(obj, type) and hasattr(obj, "__skim_storage__")):
+        if not (isinstance(obj, type) and hasattr(obj, "__skaal_storage__")):
             continue
 
-        constraints = obj.__skim_storage__
+        constraints = obj.__skaal_storage__
 
         backend_name, reason = select_backend(
             qname,
@@ -226,10 +226,10 @@ def solve(app: "App", catalog: dict[str, Any], target: str = "generic") -> "Plan
     from skaal.solver.compute import UnsatisfiableComputeConstraints, encode_compute
 
     for qname, obj in all_resources.items():
-        if not (callable(obj) and hasattr(obj, "__skim_compute__")):
+        if not (callable(obj) and hasattr(obj, "__skaal_compute__")):
             continue
 
-        compute_constraint = obj.__skim_compute__
+        compute_constraint = obj.__skaal_compute__
         try:
             instance_type, reason = encode_compute(
                 qname, compute_constraint, compute_backends, target=target
@@ -271,7 +271,7 @@ def solve(app: "App", catalog: dict[str, Any], target: str = "generic") -> "Plan
                     )
 
         # Scale strategy — set by @scale decorator
-        scale_obj = getattr(obj, "__skim_scale__", None)
+        scale_obj = getattr(obj, "__skaal_scale__", None)
         scale_strategy: str | None = None
         instances: int | str = "auto"
         if scale_obj is not None:
@@ -289,9 +289,7 @@ def solve(app: "App", catalog: dict[str, Any], target: str = "generic") -> "Plan
             collocate_with=colocate_qname,
             scale_strategy=scale_strategy,
             retry=_policy_to_dict(getattr(compute_constraint, "retry", None)),
-            circuit_breaker=_policy_to_dict(
-                getattr(compute_constraint, "circuit_breaker", None)
-            ),
+            circuit_breaker=_policy_to_dict(getattr(compute_constraint, "circuit_breaker", None)),
             rate_limit=_policy_to_dict(getattr(compute_constraint, "rate_limit", None)),
             bulkhead=_policy_to_dict(getattr(compute_constraint, "bulkhead", None)),
         )
@@ -317,7 +315,7 @@ def solve(app: "App", catalog: dict[str, Any], target: str = "generic") -> "Plan
     registered_functions = _collect_function_names(app)
 
     for qname, obj in all_resources.items():
-        pattern_meta = getattr(obj, "__skim_pattern__", None)
+        pattern_meta = getattr(obj, "__skaal_pattern__", None)
         if not isinstance(pattern_meta, dict):
             continue
         ptype = pattern_meta.get("pattern_type")
@@ -361,7 +359,9 @@ def solve(app: "App", catalog: dict[str, Any], target: str = "generic") -> "Plan
             handler = pattern_meta.get("handler")
 
             source_qname = _resolve_resource_qname(source, all_resources) if source else None
-            target_qname = _resolve_resource_qname(target_obj, all_resources) if target_obj else None
+            target_qname = (
+                _resolve_resource_qname(target_obj, all_resources) if target_obj else None
+            )
 
             # Validate the handler points to a registered function
             if handler and handler not in registered_functions:
@@ -395,7 +395,9 @@ def solve(app: "App", catalog: dict[str, Any], target: str = "generic") -> "Plan
                     "target": target_qname,
                     "handler": handler,
                     "consistency": (
-                        consistency.value if hasattr(consistency, "value") else consistency
+                        consistency.value
+                        if consistency is not None and hasattr(consistency, "value")
+                        else consistency
                     ),
                     "checkpoint_every": pattern_meta.get("checkpoint_every"),
                 },
@@ -439,19 +441,23 @@ def solve(app: "App", catalog: dict[str, Any], target: str = "generic") -> "Plan
         elif ptype == "outbox":
             channel_obj = pattern_meta.get("channel")
             storage_obj = pattern_meta.get("storage")
-            channel_qname = _resolve_resource_qname(channel_obj, all_resources) if channel_obj else None
-            storage_qname = _resolve_resource_qname(storage_obj, all_resources) if storage_obj else None
+            channel_qname = (
+                _resolve_resource_qname(channel_obj, all_resources) if channel_obj else None
+            )
+            storage_qname = (
+                _resolve_resource_qname(storage_obj, all_resources) if storage_obj else None
+            )
 
             # The outbox table must live on the same backend as the primary
             # storage so the write is transactional.  Borrow its backend.
-            backend_name: str | None = None
+            outbox_backend: str | None = None
             if storage_qname and storage_qname in storage_specs:
-                backend_name = storage_specs[storage_qname].backend
+                outbox_backend = storage_specs[storage_qname].backend
 
             pattern_specs[qname] = PatternSpec(
                 pattern_name=qname,
                 pattern_type="outbox",
-                backend=backend_name,
+                backend=outbox_backend,
                 reason=(
                     f"outbox: writes to {storage_qname!r}, forwards to {channel_qname!r}, "
                     f"delivery={pattern_meta.get('delivery')!r}"

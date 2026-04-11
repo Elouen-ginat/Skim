@@ -3,7 +3,7 @@ name = "skaal-mesh"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Skim runtime mesh — agent routing, state sync, and migration execution (PyO3)"
+description = "Skaal runtime mesh — agent routing, state sync, and migration execution (PyO3)"
 
 [lib]
 name = "skaal_mesh"

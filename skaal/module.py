@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Any, Callable, TypeVar
+# TYPE_CHECKING import to avoid circular deps at runtime
+from typing import TYPE_CHECKING, Any, Callable, TypeVar, overload
 
 from skaal.types import (
     AccessPattern,
@@ -18,13 +19,11 @@ from skaal.types import (
     Throughput,
 )
 
-# TYPE_CHECKING import to avoid circular deps at runtime
-from typing import TYPE_CHECKING
-
 if TYPE_CHECKING:
     from skaal.schedule import Cron, Every
 
 F = TypeVar("F", bound=Callable[..., Any])
+C = TypeVar("C", bound=type)
 
 
 class ModuleExport:
@@ -105,9 +104,45 @@ class Module:
 
     # ── Registration decorators ────────────────────────────────────────────
 
+    @overload
     def storage(
         self,
-        cls_to_decorate: type | None = None,
+        cls_to_decorate: C,
+        *,
+        read_latency: Latency | str | None = ...,
+        write_latency: Latency | str | None = ...,
+        durability: Durability | str = ...,
+        size_hint: str | None = ...,
+        access_pattern: AccessPattern | str = ...,
+        write_throughput: Throughput | str | None = ...,
+        residency: str | None = ...,
+        retention: str | None = ...,
+        auto_optimize: bool = ...,
+        decommission_policy: DecommissionPolicy | None = ...,
+        collocate_with: str | None = ...,
+    ) -> C: ...
+
+    @overload
+    def storage(
+        self,
+        cls_to_decorate: None = ...,
+        *,
+        read_latency: Latency | str | None = ...,
+        write_latency: Latency | str | None = ...,
+        durability: Durability | str = ...,
+        size_hint: str | None = ...,
+        access_pattern: AccessPattern | str = ...,
+        write_throughput: Throughput | str | None = ...,
+        residency: str | None = ...,
+        retention: str | None = ...,
+        auto_optimize: bool = ...,
+        decommission_policy: DecommissionPolicy | None = ...,
+        collocate_with: str | None = ...,
+    ) -> Callable[[C], C]: ...
+
+    def storage(
+        self,
+        cls_to_decorate: C | None = None,
         *,
         read_latency: Latency | str | None = None,
         write_latency: Latency | str | None = None,
@@ -120,7 +155,7 @@ class Module:
         auto_optimize: bool = False,
         decommission_policy: DecommissionPolicy | None = None,
         collocate_with: str | None = None,
-    ) -> Callable[[type], type] | type:
+    ) -> C | Callable[[C], C]:
         """Register a storage class with infrastructure constraints.
 
         Can be used as:
@@ -147,21 +182,24 @@ class Module:
             collocate_with=collocate_with,
         )
 
-        def decorator(cls: type) -> type:
+        def decorator(cls: C) -> C:
             annotated = outer(cls)
             self._storage[cls.__name__] = annotated
             return annotated
 
-        # If called with parentheses but no class (e.g., @app.storage() or @app.storage(...))
         if cls_to_decorate is None:
             return decorator
-
-        # If called without parentheses (e.g., @app.storage)
         return decorator(cls_to_decorate)
 
+    @overload
+    def agent(self, cls_to_decorate: C, *, persistent: bool = ...) -> C: ...
+
+    @overload
+    def agent(self, cls_to_decorate: None = ..., *, persistent: bool = ...) -> Callable[[C], C]: ...
+
     def agent(
-        self, cls_to_decorate: type | None = None, *, persistent: bool = True
-    ) -> Callable[[type], type] | type:
+        self, cls_to_decorate: C | None = None, *, persistent: bool = True
+    ) -> C | Callable[[C], C]:
         """Register an agent class.
 
         Can be used as:
@@ -176,17 +214,40 @@ class Module:
 
         outer = _agent_dec(persistent=persistent)
 
-        def decorator(cls: type) -> type:
+        def decorator(cls: C) -> C:
             annotated = outer(cls)
             self._agents[cls.__name__] = annotated
             return annotated
 
-        # If called with parentheses but no class
         if cls_to_decorate is None:
             return decorator
-
-        # If called without parentheses
         return decorator(cls_to_decorate)
+
+    @overload
+    def function(
+        self,
+        fn_to_decorate: F,
+        *,
+        compute: Compute | None = ...,
+        scale: Scale | None = ...,
+        retry: RetryPolicy | None = ...,
+        circuit_breaker: CircuitBreaker | None = ...,
+        rate_limit: RateLimitPolicy | None = ...,
+        bulkhead: Bulkhead | None = ...,
+    ) -> F: ...
+
+    @overload
+    def function(
+        self,
+        fn_to_decorate: None = ...,
+        *,
+        compute: Compute | None = ...,
+        scale: Scale | None = ...,
+        retry: RetryPolicy | None = ...,
+        circuit_breaker: CircuitBreaker | None = ...,
+        rate_limit: RateLimitPolicy | None = ...,
+        bulkhead: Bulkhead | None = ...,
+    ) -> Callable[[F], F]: ...
 
     def function(
         self,
@@ -198,7 +259,7 @@ class Module:
         circuit_breaker: CircuitBreaker | None = None,
         rate_limit: RateLimitPolicy | None = None,
         bulkhead: Bulkhead | None = None,
-    ) -> Callable[[F], F] | F:
+    ) -> F | Callable[[F], F]:
         """Register a compute function with optional constraints and resilience policies.
 
         Can be used as:
@@ -211,7 +272,6 @@ class Module:
         """
 
         def decorator(fn: F) -> F:
-            # Merge resilience params into Compute if provided separately
             _compute = compute or Compute()
             if retry is not None:
                 _compute.retry = retry
@@ -221,17 +281,14 @@ class Module:
                 _compute.rate_limit = rate_limit
             if bulkhead is not None:
                 _compute.bulkhead = bulkhead
-            fn.__skim_compute__ = _compute  # type: ignore[attr-defined]
+            setattr(fn, "__skaal_compute__", _compute)
             if scale is not None:
-                fn.__skim_scale__ = scale  # type: ignore[attr-defined]
+                setattr(fn, "__skaal_scale__", scale)
             self._functions[fn.__name__] = fn
             return fn
 
-        # If called with parentheses but no function
         if fn_to_decorate is None:
             return decorator
-
-        # If called without parentheses
         return decorator(fn_to_decorate)
 
     def channel(
@@ -240,7 +297,7 @@ class Module:
         buffer: int = 1000,
         throughput: Throughput | str | None = None,
         durability: Durability = Durability.PERSISTENT,
-    ) -> Callable[[type], type]:
+    ) -> Callable[[C], C]:
         """
         Register a Channel subclass as a named, constraint-bearing resource.
 
@@ -255,12 +312,16 @@ class Module:
         if isinstance(durability, str):
             durability = Durability(durability)
 
-        def decorator(cls: type) -> type:
-            cls.__skim_channel__ = {  # type: ignore[attr-defined]
-                "buffer": buffer,
-                "throughput": throughput,
-                "durability": durability,
-            }
+        def decorator(cls: C) -> C:
+            setattr(
+                cls,
+                "__skaal_channel__",
+                {
+                    "buffer": buffer,
+                    "throughput": throughput,
+                    "durability": durability,
+                },
+            )
             self._channels[cls.__name__] = cls
             return cls
 
@@ -271,6 +332,26 @@ class Module:
         self._components[component.name] = component
         return component
 
+    @overload
+    def schedule(
+        self,
+        fn_to_decorate: F,
+        *,
+        trigger: "Every | Cron",
+        emit_to: Any | None = ...,
+        timezone: str = ...,
+    ) -> F: ...
+
+    @overload
+    def schedule(
+        self,
+        fn_to_decorate: None = ...,
+        *,
+        trigger: "Every | Cron",
+        emit_to: Any | None = ...,
+        timezone: str = ...,
+    ) -> Callable[[F], F]: ...
+
     def schedule(
         self,
         fn_to_decorate: F | None = None,
@@ -278,7 +359,7 @@ class Module:
         trigger: "Every | Cron",
         emit_to: Any | None = None,
         timezone: str = "UTC",
-    ) -> "Callable[[F], F] | F":
+    ) -> F | Callable[[F], F]:
         """Register a background function triggered on a time-based schedule.
 
         The appropriate cloud scheduler is provisioned automatically:
@@ -303,14 +384,16 @@ class Module:
         from skaal.components import ScheduleTrigger
 
         def decorator(fn: F) -> F:
-            fn.__skim_schedule__ = {  # type: ignore[attr-defined]
-                "trigger": trigger,
-                "emit_to": emit_to,
-                "timezone": timezone,
-            }
+            setattr(
+                fn,
+                "__skaal_schedule__",
+                {
+                    "trigger": trigger,
+                    "emit_to": emit_to,
+                    "timezone": timezone,
+                },
+            )
             self._schedules[fn.__name__] = fn
-            # Auto-create and attach a ScheduleTrigger component so the solver
-            # and deploy engine can provision the right cloud resource.
             st = ScheduleTrigger(
                 f"{fn.__name__}-schedule",
                 trigger=trigger,

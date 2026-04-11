@@ -154,9 +154,7 @@ def _add_apigw_resources(
             gw_path = _apigw_path(route["path"])
             methods: list[str] = route.get("methods") or ["GET", "POST"]
             # Collapse to ANY when all common verbs are covered
-            if {"GET", "POST", "PUT", "DELETE", "PATCH"}.issubset(
-                {m.upper() for m in methods}
-            ):
+            if {"GET", "POST", "PUT", "DELETE", "PATCH"}.issubset({m.upper() for m in methods}):
                 methods = ["ANY"]
             for method in methods:
                 rk = f"{method.upper()} {gw_path}"
@@ -358,9 +356,7 @@ def _build_pulumi_stack(app: Any, plan: "PlanFile") -> dict[str, Any]:
             "properties": {
                 "rule": f"${{{rule_key}.name}}",
                 "arn": "${lambda-fn.arn}",
-                "input": json.dumps(
-                    {"_skaal_trigger": comp_name, "target_function": target_fn}
-                ),
+                "input": json.dumps({"_skaal_trigger": comp_name, "target_function": target_fn}),
             },
         }
         resources[permission_key] = {

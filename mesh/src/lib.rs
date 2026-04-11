@@ -1,4 +1,4 @@
-//! skaal-mesh — Skim runtime mesh exposed to Python via PyO3.
+//! skaal-mesh — Skaal runtime mesh exposed to Python via PyO3.
 //!
 //! Handles: state synchronization (CRDTs), agent routing (virtual actors),
 //! distributed channels, failure detection, and migration execution.
@@ -7,22 +7,22 @@
 
 use pyo3::prelude::*;
 
-/// The runtime mesh for a Skim application.
+/// The runtime mesh for a Skaal application.
 ///
-/// Initialized from a plan.skim.lock file. Connects to provisioned backends
+/// Initialized from a plan.skaal.lock file. Connects to provisioned backends
 /// (Redis, Postgres, Kafka, …) and starts the gossip/sync subsystem.
 #[pyclass]
-pub struct SkimMesh {
+pub struct SkaalMesh {
     app_name: String,
 }
 
 #[pymethods]
-impl SkimMesh {
-    /// Create a new SkimMesh from a serialized plan JSON string.
+impl SkaalMesh {
+    /// Create a new SkaalMesh from a serialized plan JSON string.
     #[new]
     pub fn new(app_name: String, _plan_json: String) -> PyResult<Self> {
         // TODO(phase4): parse plan_json, connect to backends, start sync tasks
-        Ok(SkimMesh { app_name })
+        Ok(SkaalMesh { app_name })
     }
 
     /// Route a message to an agent instance, activating it if necessary.
@@ -60,6 +60,6 @@ impl SkimMesh {
 /// Python module entry point.
 #[pymodule]
 fn skaal_mesh(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_class::<SkimMesh>()?;
+    m.add_class::<SkaalMesh>()?;
     Ok(())
 }

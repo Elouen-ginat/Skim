@@ -31,9 +31,7 @@ def run(
     persist: bool = typer.Option(
         False, "--persist", help="Use SQLite for persistent local storage."
     ),
-    db: str = typer.Option(
-        "skaal_local.db", "--db", help="SQLite database path (with --persist)."
-    ),
+    db: str = typer.Option("skaal_local.db", "--db", help="SQLite database path (with --persist)."),
 ) -> None:
     """
     Run a Skaal app locally.

@@ -138,6 +138,35 @@ class SqliteBackend:
             await self._db.rollback()
             raise
 
+    async def atomic_update(self, key: str, fn: Any) -> Any:
+        """Atomically read, apply fn, write back, and return the result.
+
+        Uses BEGIN IMMEDIATE to prevent concurrent writers — safe across
+        multiple gunicorn worker processes sharing the same SQLite file.
+        """
+        await self._ensure_connected()
+        await self._db.execute("BEGIN IMMEDIATE")
+        try:
+            async with self._db.execute(
+                "SELECT value FROM kv WHERE ns = ? AND key = ?",
+                (self.namespace, key),
+            ) as cursor:
+                row = await cursor.fetchone()
+            current = json.loads(row[0]) if row else None
+            updated = fn(current)
+            await self._db.execute(
+                """
+                INSERT INTO kv (ns, key, value) VALUES (?, ?, ?)
+                ON CONFLICT (ns, key) DO UPDATE SET value = excluded.value
+                """,
+                (self.namespace, key, json.dumps(updated)),
+            )
+            await self._db.commit()
+            return updated
+        except Exception:
+            await self._db.rollback()
+            raise
+
     async def close(self) -> None:
         if self._db is not None:
             await self._db.close()

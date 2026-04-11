@@ -33,26 +33,26 @@ if TYPE_CHECKING:
 
 _COMPONENT_DEFAULTS: dict[str, dict[str, str]] = {
     "proxy": {
-        TargetFamily.AWS.value:     "api-gateway",
-        TargetFamily.GCP.value:     "cloud-endpoints",
-        TargetFamily.LOCAL.value:   "traefik",
+        TargetFamily.AWS.value: "api-gateway",
+        TargetFamily.GCP.value: "cloud-endpoints",
+        TargetFamily.LOCAL.value: "traefik",
         TargetFamily.GENERIC.value: "traefik",
         # Container-orchestration overrides within GENERIC family
         "k8s": "traefik",
         "ecs": "alb",
     },
     "api-gateway": {
-        TargetFamily.AWS.value:     "api-gateway",
-        TargetFamily.GCP.value:     "cloud-endpoints",
-        TargetFamily.LOCAL.value:   "kong",
+        TargetFamily.AWS.value: "api-gateway",
+        TargetFamily.GCP.value: "cloud-endpoints",
+        TargetFamily.LOCAL.value: "kong",
         TargetFamily.GENERIC.value: "kong",
         "k8s": "kong",
         "ecs": "api-gateway",
     },
     "schedule-trigger": {
-        TargetFamily.AWS.value:     "eventbridge",
-        TargetFamily.GCP.value:     "cloud-scheduler",
-        TargetFamily.LOCAL.value:   "apscheduler",
+        TargetFamily.AWS.value: "eventbridge",
+        TargetFamily.GCP.value: "cloud-scheduler",
+        TargetFamily.LOCAL.value: "apscheduler",
         TargetFamily.GENERIC.value: "apscheduler",
         "k8s": "apscheduler",
         "ecs": "eventbridge",
@@ -61,8 +61,8 @@ _COMPONENT_DEFAULTS: dict[str, dict[str, str]] = {
 
 #: Fallback implementation when neither the target nor its family has an entry.
 _COMPONENT_FALLBACKS: dict[str, str] = {
-    "proxy":            "traefik",
-    "api-gateway":      "kong",
+    "proxy": "traefik",
+    "api-gateway": "kong",
     "schedule-trigger": "apscheduler",
 }
 
@@ -106,7 +106,7 @@ def _resolve_provisioned_impl(
     # 4. Catalog lookup for unknown / custom kinds
     comp_catalog = catalog.get("components", {})
     if name in comp_catalog:
-        impl = comp_catalog[name].get("implementation", kind)
+        impl = comp_catalog[name].get("implementation") or kind
         return impl, f"implementation {impl!r} from catalog for {kind}"
 
     # 5. Bare kind name — the deploy engine is expected to recognise it
@@ -142,8 +142,8 @@ def encode_component(
     from skaal.components import ExternalComponent
     from skaal.plan import ComponentSpec
 
-    kind = component._skim_component_kind
-    comp_meta = component.__skim_component__
+    kind = component._skaal_component_kind
+    comp_meta = component.__skaal_component__
     extra_config = {k: v for k, v in comp_meta.items() if k not in ("kind", "name")}
 
     if isinstance(component, ExternalComponent):

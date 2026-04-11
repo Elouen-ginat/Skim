@@ -10,7 +10,7 @@ class RedisBackend:
     """
     Redis storage backend using redis.asyncio.
 
-    Keys are stored as: skim:{namespace}:{key}
+    Keys are stored as: skaal:{namespace}:{key}
     Values are JSON-serialized.
 
     scan(prefix) uses SCAN with MATCH pattern.
@@ -97,6 +97,26 @@ class RedisBackend:
         await self._ensure_connected()
         new_value = await self._client.incrby(self._key(key), delta)
         return int(new_value)
+
+    async def atomic_update(self, key: str, fn: Any) -> Any:
+        """Atomically read, apply fn, and write back using a Redis pipeline with WATCH."""
+        import redis.asyncio as aioredis
+
+        await self._ensure_connected()
+        full_key = self._key(key)
+        async with self._client.pipeline(transaction=True) as pipe:
+            while True:
+                try:
+                    await pipe.watch(full_key)
+                    raw = await pipe.get(full_key)
+                    current = json.loads(raw) if raw is not None else None
+                    new_value = fn(current)
+                    pipe.multi()
+                    pipe.set(full_key, json.dumps(new_value))
+                    await pipe.execute()
+                    return new_value
+                except aioredis.WatchError:
+                    continue
 
     async def close(self) -> None:
         if self._client is not None:

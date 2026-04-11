@@ -52,9 +52,9 @@ class TestAgentClass:
             persistent_score: Persistent[float] = 0.0
             transient_state: dict = {}
 
-        # Only persistent_score should be in __skim_persistent_fields__
-        assert "persistent_score" in MyAgent.__skim_persistent_fields__
-        assert "transient_state" not in MyAgent.__skim_persistent_fields__
+        # Only persistent_score should be in __skaal_persistent_fields__
+        assert "persistent_score" in MyAgent.__skaal_persistent_fields__
+        assert "transient_state" not in MyAgent.__skaal_persistent_fields__
 
     def test_persistent_fields_without_wrapper_ignored(self) -> None:
         """Fields without Persistent[T] wrapper should not be marked persistent."""
@@ -65,9 +65,9 @@ class TestAgentClass:
             name: Persistent[str] = "default"  # Explicitly persistent
 
         # Only name should be persistent
-        assert "name" in MyAgent.__skim_persistent_fields__
-        assert "score" not in MyAgent.__skim_persistent_fields__
-        assert "_internal" not in MyAgent.__skim_persistent_fields__
+        assert "name" in MyAgent.__skaal_persistent_fields__
+        assert "score" not in MyAgent.__skaal_persistent_fields__
+        assert "_internal" not in MyAgent.__skaal_persistent_fields__
 
     def test_persistent_type_annotation_works(self) -> None:
         """Persistent[T] should work as a type annotation."""
@@ -76,9 +76,9 @@ class TestAgentClass:
             balance: Persistent[float] = 100.0
             name: Persistent[str] = "anonymous"
 
-        assert len(MyAgent.__skim_persistent_fields__) == 2
-        assert "balance" in MyAgent.__skim_persistent_fields__
-        assert "name" in MyAgent.__skim_persistent_fields__
+        assert len(MyAgent.__skaal_persistent_fields__) == 2
+        assert "balance" in MyAgent.__skaal_persistent_fields__
+        assert "name" in MyAgent.__skaal_persistent_fields__
 
     def test_no_persistent_fields_by_default(self) -> None:
         """Agent without explicit Persistent marks should have no persistent fields."""
@@ -87,16 +87,16 @@ class TestAgentClass:
             value: int = 0
             state: dict = {}
 
-        assert len(SimpleAgent.__skim_persistent_fields__) == 0
+        assert len(SimpleAgent.__skaal_persistent_fields__) == 0
 
-    def test_agent_skim_agent_attribute(self) -> None:
-        """Agent subclasses should have __skim_agent__ attribute."""
+    def test_agent_skaal_agent_attribute(self) -> None:
+        """Agent subclasses should have __skaal_agent__ attribute."""
 
         class MyAgent(Agent):
             pass
 
-        assert hasattr(MyAgent, "__skim_agent__")
-        assert isinstance(MyAgent.__skim_agent__, dict)
+        assert hasattr(MyAgent, "__skaal_agent__")
+        assert isinstance(MyAgent.__skaal_agent__, dict)
 
     def test_agent_can_subclass_multiple_times(self) -> None:
         """Multiple Agent subclasses should all work correctly."""
@@ -112,10 +112,10 @@ class TestAgentClass:
         assert "Agent2" in AgentMeta._registry
 
         # Each should have correct persistent fields
-        assert "field1" in Agent1.__skim_persistent_fields__
-        assert "field2" in Agent2.__skim_persistent_fields__
-        assert "field2" not in Agent1.__skim_persistent_fields__
-        assert "field1" not in Agent2.__skim_persistent_fields__
+        assert "field1" in Agent1.__skaal_persistent_fields__
+        assert "field2" in Agent2.__skaal_persistent_fields__
+        assert "field2" not in Agent1.__skaal_persistent_fields__
+        assert "field1" not in Agent2.__skaal_persistent_fields__
 
 
 class TestPersistentTypeAnnotation:
@@ -137,7 +137,7 @@ class TestPersistentTypeAnnotation:
         class TestAgent(Agent):
             score: Persistent[float] = 0.0
 
-        assert "score" in TestAgent.__skim_persistent_fields__
+        assert "score" in TestAgent.__skaal_persistent_fields__
 
     def test_persistent_mixed_fields(self) -> None:
         """Agent with mix of persistent and transient fields."""
@@ -154,7 +154,7 @@ class TestPersistentTypeAnnotation:
             # Private
             _internal: str = ""
 
-        persistent = MixedAgent.__skim_persistent_fields__
+        persistent = MixedAgent.__skaal_persistent_fields__
         assert "persistent_count" in persistent
         assert "persistent_name" in persistent
         assert "cache" not in persistent

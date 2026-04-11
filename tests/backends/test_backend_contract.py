@@ -31,12 +31,20 @@ def redis_backend() -> RedisBackend | None:
     """Redis backend (returns None if not available, tests check and skip)."""
     try:
         import redis.asyncio  # noqa: F401
-    except ImportError:
+
+        backend = RedisBackend(url="redis://localhost:6379", namespace="test")
+
+        # Test connection to Redis server
+        import asyncio
+
+        loop = asyncio.get_event_loop()
+        loop.run_until_complete(backend.connect())
+    except Exception:
         return None
 
     # Return the backend object; connection attempt happens in tests
     # Tests check `if redis_backend is None: pytest.skip()` before connecting
-    return RedisBackend(url="redis://localhost:6379", namespace="test")
+    return backend
 
 
 class TestStorageBackendContract:

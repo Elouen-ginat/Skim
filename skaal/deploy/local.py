@@ -34,7 +34,7 @@ def _traefik_labels(routes: list[dict[str, Any]], app_name: str) -> str:
             f'      - "traefik.http.services.{app_name}.loadbalancer.server.port=8000"\n'
         )
 
-    label_lines: list[str] = ['    labels:', f'      - "traefik.enable=true"']
+    label_lines: list[str] = ["    labels:", '      - "traefik.enable=true"']
     for i, route in enumerate(routes):
         path = route["path"].rstrip("*").rstrip("/") or "/"
         router = f"{app_name}-r{i}"
@@ -47,7 +47,12 @@ def _traefik_labels(routes: list[dict[str, Any]], app_name: str) -> str:
     return "\n".join(label_lines) + "\n"
 
 
-def _kong_config(routes: list[dict[str, Any]], auth: dict[str, Any] | None, rate_limit: dict[str, Any] | None, cors_origins: list[str] | None) -> str:
+def _kong_config(
+    routes: list[dict[str, Any]],
+    auth: dict[str, Any] | None,
+    rate_limit: dict[str, Any] | None,
+    cors_origins: list[str] | None,
+) -> str:
     """Generate a Kong DB-less declarative configuration (kong.yml)."""
     lines: list[str] = [
         '_format_version: "3.0"',
@@ -63,9 +68,9 @@ def _kong_config(routes: list[dict[str, Any]], auth: dict[str, Any] | None, rate
         path = route["path"].rstrip("*").rstrip("/") or "/"
         methods = route.get("methods") or ["GET", "POST"]
         lines.append(f"      - name: route-{i}")
-        lines.append(f"        paths:")
+        lines.append("        paths:")
         lines.append(f"          - {path}")
-        lines.append(f"        methods:")
+        lines.append("        methods:")
         for m in methods:
             lines.append(f"          - {m.upper()}")
 
@@ -112,7 +117,9 @@ def _kong_config(routes: list[dict[str, Any]], auth: dict[str, Any] | None, rate
 # ── Docker Compose YAML builder ───────────────────────────────────────────────
 
 
-def _build_docker_compose(plan: "PlanFile", port: int, source_pkg: str, app: Any = None) -> str:
+def _build_docker_compose(
+    plan: "PlanFile", port: int, source_pkg: str, app: Any = None, dev: bool = False
+) -> str:
     """Build a ``docker-compose.yml`` string with the app service and any
     required storage backend services.
 
@@ -212,7 +219,7 @@ def _build_docker_compose(plan: "PlanFile", port: int, source_pkg: str, app: Any
     depends_on_lines = [f"      - {dep}" for dep in service_dependencies]
     depends_on_str = "\n".join(depends_on_lines) if depends_on_lines else "      []"
 
-    return render(
+    composed = render(
         "local/docker-compose.yml",
         port=str(port),
         source_pkg=source_pkg,
@@ -221,6 +228,20 @@ def _build_docker_compose(plan: "PlanFile", port: int, source_pkg: str, app: Any
         app_labels=app_labels,
         additional_services=additional_services,
     )
+
+    if dev:
+        # In --dev mode, append a volume mount for the local skaal source so
+        # live edits are picked up without rebuilding the image.
+        # PYTHONPATH=/app (set in Dockerfile) makes /app/skaal take precedence
+        # over the PyPI-installed package in site-packages.
+        composed = composed.replace(
+            f"      - ../{source_pkg}:/app/{source_pkg}",
+            f"      - ../{source_pkg}:/app/{source_pkg}\n"
+            f"      # Mount local skaal source for live library reload (--dev only)\n"
+            f"      - ../skaal:/app/skaal",
+        )
+
+    return composed
 
 
 # ── Public entry point ─────────────────────────────────────────────────────────
@@ -378,7 +399,7 @@ def generate_artifacts(
     # ── docker-compose.yml ────────────────────────────────────────────────────
     compose_path = output_dir / "docker-compose.yml"
     compose_path.write_text(
-        _build_docker_compose(plan, deploy_config.port, source_pkg=top_pkg, app=app),
+        _build_docker_compose(plan, deploy_config.port, source_pkg=top_pkg, app=app, dev=dev),
         encoding="utf-8",
     )
     generated.append(compose_path)

@@ -38,8 +38,8 @@ class Agent(metaclass=AgentMeta):
                 self.score += points
     """
 
-    __skim_agent__: ClassVar[dict[str, Any]] = {}
-    __skim_persistent_fields__: ClassVar[frozenset[str]] = frozenset()
+    __skaal_agent__: ClassVar[dict[str, Any]] = {}
+    __skaal_persistent_fields__: ClassVar[frozenset[str]] = frozenset()
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
         super().__init_subclass__(**kwargs)
@@ -53,7 +53,7 @@ class Agent(metaclass=AgentMeta):
             # If type hints can't be evaluated, fall back to empty
             type_hints = {}
 
-        cls.__skim_persistent_fields__ = frozenset(
+        cls.__skaal_persistent_fields__ = frozenset(
             name
             for name, annotation in type_hints.items()
             if
@@ -81,7 +81,7 @@ def agent(*, persistent: bool = True) -> Any:
         if not issubclass(cls, Agent):
             # Dynamically make it inherit from Agent
             cls = AgentMeta(cls.__name__, (Agent,), dict(cls.__dict__))
-        cls.__skim_agent__ = {"persistent": persistent}  # type: ignore[attr-defined]
+        cls.__skaal_agent__ = {"persistent": persistent}  # type: ignore[attr-defined]
         return cls
 
     return decorator

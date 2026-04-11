@@ -8,7 +8,9 @@ import traceback
 from pathlib import Path
 from typing import Any
 
-from skaal.backends.local_backend import LocalMap, patch_storage_class
+from skaal.backends.local_backend import LocalMap
+
+_MAX_BODY_SIZE = 10 * 1024 * 1024  # 10 MiB — reject oversized request bodies
 
 
 def _wire_channel(channel_obj: Any) -> None:
@@ -57,16 +59,22 @@ class LocalRuntime:
     # ── Setup ──────────────────────────────────────────────────────────────────
 
     def _patch_storage(self) -> None:
-        """Patch all registered storage classes with appropriate backends."""
+        """Wire all registered storage classes with appropriate backends."""
+        from skaal.storage import Collection, Map
+
         for qname, obj in self.app._collect_all().items():
-            if isinstance(obj, type) and hasattr(obj, "__skim_storage__"):
+            if (
+                isinstance(obj, type)
+                and hasattr(obj, "__skaal_storage__")
+                and issubclass(obj, (Map, Collection))
+            ):
                 backend = (
                     self._backend_overrides.get(qname)
                     or self._backend_overrides.get(obj.__name__)
                     or LocalMap()
                 )
                 self._backends[qname] = backend
-                patch_storage_class(obj, backend)
+                obj.wire(backend)
 
     def _patch_channels(self) -> None:
         """Wire Channel instances registered with the app to LocalChannel."""
@@ -93,7 +101,7 @@ class LocalRuntime:
         return {
             qname: backend_factory(qname, obj)
             for qname, obj in app._collect_all().items()
-            if isinstance(obj, type) and hasattr(obj, "__skim_storage__")
+            if isinstance(obj, type) and hasattr(obj, "__skaal_storage__")
         }
 
     @classmethod
@@ -204,7 +212,9 @@ class LocalRuntime:
         from skaal.backends.dynamodb_backend import DynamoBackend
 
         def _make_backend(qname: str, obj: Any) -> DynamoBackend:
-            return DynamoBackend(table_name=f"{table_name}_{qname.replace('.', '_').lower()}", region=region)
+            return DynamoBackend(
+                table_name=f"{table_name}_{qname.replace('.', '_').lower()}", region=region
+            )
 
         backends = cls._build_backends(app, _make_backend)
         return cls(app, host=host, port=port, backend_overrides=backends)
@@ -235,14 +245,14 @@ class LocalRuntime:
         """Flat map of qualified_name → callable for all HTTP-invocable functions.
 
         Includes:
-        - ``@app.function()`` decorated callables (have ``__skim_compute__``)
+        - ``@app.function()`` decorated callables (have ``__skaal_compute__``)
         - ``@app.schedule()`` decorated callables (invocable by Cloud Scheduler /
           EventBridge; excluded from the public ``GET /`` index)
         """
         funcs: dict[str, Any] = {
             qname: obj
             for qname, obj in self.app._collect_all().items()
-            if callable(obj) and hasattr(obj, "__skim_compute__")
+            if callable(obj) and hasattr(obj, "__skaal_compute__")
         }
         # Also expose top-level functions by short name for convenience.
         for name, fn in self.app._functions.items():
@@ -263,7 +273,7 @@ class LocalRuntime:
 
         if method == "GET" and path in ("/", ""):
             # Only expose @app.function() endpoints in the public index.
-            public = [n for n in sorted(funcs) if not hasattr(funcs[n], "__skim_schedule__")]
+            public = [n for n in sorted(funcs) if not hasattr(funcs[n], "__skaal_schedule__")]
             return {
                 "app": self.app.name,
                 "endpoints": [{"path": f"/{n}", "function": n} for n in public],
@@ -295,6 +305,7 @@ class LocalRuntime:
                 sig = inspect.signature(fn)
                 if "ctx" in sig.parameters:
                     from datetime import timezone
+
                     from skaal.schedule import ScheduleContext
 
                     kwargs["ctx"] = ScheduleContext(
@@ -310,6 +321,65 @@ class LocalRuntime:
                 return {"error": str(exc), "traceback": traceback.format_exc()}, 500
 
         return {"error": f"Method {method} not allowed"}, 405
+
+    async def _handle_connection(self, reader: Any, writer: Any) -> None:
+        """Handle a single raw TCP connection with HTTP/1.0-style request parsing.
+
+        Enforces ``_MAX_BODY_SIZE`` and writes a plain-text HTTP response.
+        Intended for testing and low-level inspection; production traffic goes
+        through the uvicorn path in :meth:`_serve_skaal`.
+        """
+        try:
+            # Read the request line
+            request_line_bytes = await reader.readline()
+            if not request_line_bytes:
+                return
+            request_line = request_line_bytes.decode("utf-8", errors="replace").strip()
+            parts = request_line.split(" ", 2)
+            if len(parts) < 2:
+                return
+            method, path = parts[0], parts[1]
+
+            # Read headers until blank line
+            headers: dict[str, str] = {}
+            while True:
+                line_bytes = await reader.readline()
+                line = line_bytes.decode("utf-8", errors="replace").strip()
+                if not line:
+                    break
+                if ":" in line:
+                    name, _, value = line.partition(":")
+                    headers[name.strip().lower()] = value.strip()
+
+            # Enforce body size limit
+            content_length = int(headers.get("content-length", "0"))
+            if content_length > _MAX_BODY_SIZE:
+                response = (
+                    "HTTP/1.1 413 Payload Too Large\r\n"
+                    "Content-Type: application/json\r\n"
+                    "Connection: close\r\n"
+                    "\r\n"
+                    '{"error": "Request body too large"}'
+                ).encode()
+                writer.write(response)
+                await writer.drain()
+                return
+
+            body = await reader.read(content_length) if content_length > 0 else b""
+
+            result, status = await self._dispatch(method, path, body)
+            result_bytes = json.dumps(result).encode()
+            response = (
+                f"HTTP/1.1 {status} OK\r\n"
+                "Content-Type: application/json\r\n"
+                f"Content-Length: {len(result_bytes)}\r\n"
+                "Connection: close\r\n"
+                "\r\n"
+            ).encode() + result_bytes
+            writer.write(response)
+            await writer.drain()
+        except Exception:  # noqa: BLE001
+            pass
 
     async def serve(self) -> None:
         """
@@ -368,7 +438,7 @@ class LocalRuntime:
 
         # ── Print startup banner ───────────────────────────────────────────────
         funcs = self._function_cache
-        public_fns = [n for n in sorted(funcs) if not hasattr(funcs[n], "__skim_schedule__")]
+        public_fns = [n for n in sorted(funcs) if not hasattr(funcs[n], "__skaal_schedule__")]
         scheduled = self._collect_schedules()
 
         print(f"\n  Skaal local runtime — {self.app.name}")
@@ -378,7 +448,7 @@ class LocalRuntime:
         if scheduled:
             print()
             for name, fn in sorted(scheduled.items()):
-                meta = fn.__skim_schedule__
+                meta = fn.__skaal_schedule__
                 trigger = meta["trigger"]
                 print(f"    schedule /{name}  [{trigger!r}]")
         print()
@@ -405,12 +475,12 @@ class LocalRuntime:
                 from apscheduler.triggers.cron import CronTrigger
                 from apscheduler.triggers.interval import IntervalTrigger
 
-                from skaal.schedule import Cron, Every, ScheduleContext
+                from skaal.schedule import Every, ScheduleContext
 
                 scheduler = AsyncIOScheduler()
 
                 for name, fn in scheduled.items():
-                    meta = fn.__skim_schedule__
+                    meta = fn.__skaal_schedule__
                     trigger = meta["trigger"]
                     emit_to = meta.get("emit_to")
                     tz = meta.get("timezone", "UTC")
@@ -440,9 +510,7 @@ class LocalRuntime:
                                     )
                                 else:
                                     result = (
-                                        await _fn()
-                                        if inspect.iscoroutinefunction(_fn)
-                                        else _fn()
+                                        await _fn() if inspect.iscoroutinefunction(_fn) else _fn()
                                     )
                                 if _emit_to is not None and result is not None:
                                     await _emit_to.send(result)

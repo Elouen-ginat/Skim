@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import AsyncIterator
 from typing import Any, Generic, TypeVar
 
@@ -58,7 +57,7 @@ class Channel(Generic[T]):
             "Use LocalRuntime or DistributedRuntime to wire a backend."
         )
         # Unreachable — keeps mypy happy about the return type.
-        yield  # type: ignore[misc]  # pragma: no cover
+        yield  # pragma: no cover
 
     def __repr__(self) -> str:
         status = "wired" if self._wired else "unwired"
@@ -83,8 +82,8 @@ def wire_local(channel: Channel[Any], *, topic: str = "default") -> None:
         async for msg in local.subscribe(_topic):
             yield msg
 
-    channel.send = _send  # type: ignore[assignment]
-    channel.receive = _receive  # type: ignore[assignment]
+    channel.send = _send  # type: ignore[method-assign]
+    channel.receive = _receive  # type: ignore[method-assign]
     channel._backend_name = "local"
     channel._wired = True
 
@@ -119,8 +118,8 @@ def wire_redis(
             msg.pop("_id", None)
             yield msg
 
-    channel.send = _send  # type: ignore[assignment]
-    channel.receive = _receive  # type: ignore[assignment]
+    channel.send = _send  # type: ignore[method-assign]
+    channel.receive = _receive  # type: ignore[method-assign]
     channel._backend_name = "redis-streams"
     channel._wired = True
     channel._redis_backend = backend  # type: ignore[attr-defined]

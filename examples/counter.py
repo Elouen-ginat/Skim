@@ -1,5 +1,5 @@
 """
-Counter — a simple Skim app demonstrating storage and functions.
+Counter — a simple Skaal app demonstrating storage and functions.
 
 Run locally:
 

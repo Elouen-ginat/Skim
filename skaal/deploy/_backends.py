@@ -51,6 +51,11 @@ class BackendHandler(BaseModel):
     Full var: ``{env_prefix}_{CLASS_NAME_UPPER}``.
     ``None`` for backends that need no connection string (e.g. in-memory)."""
 
+    path_default: str | None = None
+    """Hardcoded first positional argument for file-based backends (e.g. SQLite).
+    Used when ``env_prefix`` is ``None`` but the constructor needs a path.
+    Example: ``"skaal_local.db"`` → ``SqliteBackend("skaal_local.db", namespace=…)``."""
+
     uses_namespace: bool = False
     """Constructor takes ``namespace=class_name`` as a keyword arg."""
 
@@ -168,23 +173,27 @@ def get_handler(spec: "StorageSpec", *, local: bool = False) -> BackendHandler:
 
     Args:
         spec:  A :class:`~skaal.plan.StorageSpec` from the plan file.
-        local: If True and the backend has no wire data (cloud backend in a
-               local build), resolve via ``_LOCAL_FALLBACK`` and use
-               fallback wire data from the plan's sibling specs.
+        local: If True, cloud backends are replaced with their local equivalents
+               via ``_LOCAL_FALLBACK`` before returning, even when ``wire_params``
+               is present.  This prevents cloud-specific services (e.g. a postgres
+               container) from appearing in a local docker-compose generated from
+               a GCP or AWS plan.
 
     Raises:
         KeyError: If the spec has no wire metadata and no fallback exists.
     """
-    if spec.wire_params:
-        return BackendHandler.model_validate(spec.wire_params)
-
     if local:
+        # Always apply the local fallback for cloud backends so that a plan
+        # solved for GCP/AWS doesn't leak cloud-specific wire params (and their
+        # local_service sidecars) into the local docker-compose.
         fallback_key = _LOCAL_FALLBACK.get(spec.backend)
         if fallback_key:
-            # Construct a minimal fallback handler for common local backends.
             _fallback = _FALLBACK_WIRE.get(fallback_key)
             if _fallback:
                 return _fallback
+
+    if spec.wire_params:
+        return BackendHandler.model_validate(spec.wire_params)
 
     raise KeyError(
         f"Backend {spec.backend!r} has no [wire] section in the catalog. "
@@ -217,6 +226,10 @@ _FALLBACK_WIRE: dict[str, BackendHandler] = {
 def _make_constructor(handler: BackendHandler, class_name: str, env_var: str) -> str:
     """Build the constructor call string for an entry-point template."""
     if handler.env_prefix is None:
+        if handler.path_default and handler.uses_namespace:
+            return f'{handler.class_name}("{handler.path_default}", namespace="{class_name}")'
+        if handler.path_default:
+            return f'{handler.class_name}("{handler.path_default}")'
         return f"{handler.class_name}()"
     if handler.uses_namespace:
         return f'{handler.class_name}(os.environ["{env_var}"], namespace="{class_name}")'
