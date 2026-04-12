@@ -322,7 +322,11 @@ class Module:
                     "durability": durability,
                 },
             )
-            self._channels[cls.__name__] = cls
+            # Store an instance (not the class) so the runtime can wire it with
+            # wire_local / wire_redis.  The class is still returned so type
+            # annotations remain valid and the solver can resolve it by name.
+            instance = cls(buffer=buffer)
+            self._channels[cls.__name__] = instance
             return cls
 
         return decorator

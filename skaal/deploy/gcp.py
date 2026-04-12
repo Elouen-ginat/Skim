@@ -448,16 +448,20 @@ def generate_artifacts(
     Returns:
         List of generated :class:`~pathlib.Path` objects.
     """
+    import shutil
+
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     generated: list[Path] = []
     backend_imports, backend_overrides = build_wiring(plan)
     wsgi_attribute: str | None = getattr(app, "_wsgi_attribute", None)
+    is_wsgi = bool(wsgi_attribute)
+    project_root = output_dir.parent
 
     # ── main.py ───────────────────────────────────────────────────────────────
     main_path = output_dir / "main.py"
-    if wsgi_attribute:
+    if is_wsgi and wsgi_attribute is not None:
         main_path.write_text(
             render(
                 "gcp/main_wsgi.py",
@@ -481,21 +485,57 @@ def generate_artifacts(
         )
     generated.append(main_path)
 
+    # ── mesh bundle ───────────────────────────────────────────────────────────
+    # Copy Rust mesh source so `uv sync` can compile it inside the Cloud Run
+    # container without needing the project root available at build time.
+    mesh_src_dir = project_root / "mesh"
+    has_mesh = mesh_src_dir.is_dir() and (mesh_src_dir / "Cargo.toml").exists()
+    if has_mesh:
+        mesh_bundle_dir = output_dir / "mesh"
+        shutil.copytree(mesh_src_dir, mesh_bundle_dir, dirs_exist_ok=True)
+        generated.append(mesh_bundle_dir)
+
+    # ── source package ────────────────────────────────────────────────────────
+    top_pkg = source_module.split(".")[0]
+    src_pkg_dir = project_root / top_pkg
+    dst_pkg_dir = output_dir / top_pkg
+    if src_pkg_dir.is_dir():
+        shutil.copytree(src_pkg_dir, dst_pkg_dir, dirs_exist_ok=True)
+        generated.append(dst_pkg_dir)
+
     # ── Dockerfile ────────────────────────────────────────────────────────────
+    # ASGI: `uv run python main.py`  (uvicorn started inside main.py)
+    # WSGI: `uv run gunicorn ...`    (sync workers, no uvicorn worker class needed)
+    if is_wsgi:
+        cmd_args = "gunicorn --bind 0.0.0.0:8080 --workers 4 --timeout 120 main:application"
+    else:
+        cmd_args = "python main.py"
     dockerfile_path = output_dir / "Dockerfile"
-    dockerfile_path.write_text(
-        render("gcp/Dockerfile_wsgi") if wsgi_attribute else render("gcp/Dockerfile")
-    )
+    dockerfile_path.write_text(render("gcp/Dockerfile", cmd_args=cmd_args), encoding="utf-8")
     generated.append(dockerfile_path)
 
     # ── pyproject.toml ────────────────────────────────────────────────────────
-    infra_deps: list[str] = ["skaal[gcp]", "gunicorn>=22.0" if wsgi_attribute else "uvicorn>=0.29"]
+    # ASGI needs uvicorn[standard] + starlette; WSGI uses gunicorn's sync worker.
+    infra_deps: list[str] = ["skaal[gcp]"]
+    if is_wsgi:
+        infra_deps.append("gunicorn>=22.0")
+    else:
+        infra_deps += ["uvicorn[standard]>=0.29", "starlette>=0.36"]
+    if has_mesh:
+        infra_deps.append("skaal-mesh")
+    seen_deps: set[str] = set()
     for spec in plan.storage.values():
-        infra_deps.extend(get_handler(spec).extra_deps)
+        for dep in get_handler(spec).extra_deps:
+            if dep not in seen_deps:
+                seen_deps.add(dep)
+                infra_deps.append(dep)
     user_pkgs = collect_user_packages(source_module)
     deps = list(dict.fromkeys(infra_deps + user_pkgs))
+    uv_sources: dict[str, str] = {"skaal-mesh": "./mesh"} if has_mesh else {}
     pyproject_path = output_dir / "pyproject.toml"
-    pyproject_path.write_text(to_pyproject_toml(app.name, deps))
+    pyproject_path.write_text(
+        to_pyproject_toml(app.name, deps, uv_sources=uv_sources or None), encoding="utf-8"
+    )
     generated.append(pyproject_path)
 
     # ── Pulumi.yaml ───────────────────────────────────────────────────────────

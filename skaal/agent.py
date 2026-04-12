@@ -63,16 +63,6 @@ class Agent(metaclass=AgentMeta):
             )
         )
 
-    @classmethod
-    def all_ids(cls) -> list[str]:
-        """Return all active agent IDs of this type. Stub — requires runtime mesh."""
-        raise NotImplementedError("Agent.all_ids() requires the Skaal runtime mesh.")
-
-    @classmethod
-    def query(cls, predicate: Any) -> list["Agent"]:
-        """Query agents by predicate. Stub — requires runtime mesh."""
-        raise NotImplementedError("Agent.query() requires the Skaal runtime mesh.")
-
 
 def agent(*, persistent: bool = True) -> Any:
     """Class decorator that registers a class as a Skaal agent."""

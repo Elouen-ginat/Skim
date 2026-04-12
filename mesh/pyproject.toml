@@ -1,0 +1,15 @@
+[build-system]
+requires = ["maturin>=1.4,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "skaal-mesh"
+version = "0.1.0"
+requires-python = ">=3.11"
+description = "Skaal runtime mesh — agent routing, state sync, and migration execution"
+
+[tool.maturin]
+# Build into the project's own venv, not a new one.
+# The module name must match lib.name in Cargo.toml.
+module-name = "skaal_mesh"
+bindings = "pyo3"

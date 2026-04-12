@@ -15,8 +15,7 @@ class Channel(Generic[T]):
     When marked ``@shared``, the channel becomes a distributed message bus backed
     by Redis Streams or Kafka. When local, it is an in-process ``asyncio.Queue``.
 
-    The runtime (:class:`~skaal.runtime.local.LocalRuntime` or
-    :class:`~skaal.runtime.distributed.DistributedRuntime`) patches the
+    The runtime (:class:`~skaal.runtime.local.LocalRuntime`) patches the
     channel's ``send`` / ``receive`` methods with a concrete backend.
     Before patching, both raise :class:`NotImplementedError`.
 
@@ -43,8 +42,7 @@ class Channel(Generic[T]):
         Raises :class:`NotImplementedError` until the runtime wires a backend.
         """
         raise NotImplementedError(
-            "Channel.send() is not wired yet. "
-            "Use LocalRuntime or DistributedRuntime to wire a backend."
+            "Channel.send() is not wired yet. " "Use LocalRuntime to wire a backend."
         )
 
     async def receive(self) -> AsyncIterator[T]:
@@ -53,8 +51,7 @@ class Channel(Generic[T]):
         Raises :class:`NotImplementedError` until the runtime wires a backend.
         """
         raise NotImplementedError(
-            "Channel.receive() is not wired yet. "
-            "Use LocalRuntime or DistributedRuntime to wire a backend."
+            "Channel.receive() is not wired yet. " "Use LocalRuntime to wire a backend."
         )
         # Unreachable — keeps mypy happy about the return type.
         yield  # pragma: no cover

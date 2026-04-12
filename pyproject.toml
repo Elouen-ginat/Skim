@@ -67,6 +67,8 @@ dev = [
     "maturin>=1.4",
     "build>=1.0",
     "pre-commit>=3.6",
+    # Rust mesh extension — compiled from source via maturin on `uv sync`
+    "skaal-mesh",
 ]
 examples = [
     "dash",
@@ -76,6 +78,9 @@ examples = [
 
 [project.scripts]
 skaal = "skaal.cli.main:app"
+
+[tool.uv.sources]
+skaal-mesh = { path = "mesh", editable = true }
 
 [tool.hatch.build.targets.wheel]
 packages = ["skaal"]

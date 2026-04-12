@@ -1,8 +1,4 @@
-"""Distributed state management for Skaal runtimes.
-
-Provides a thin abstraction over key/value state stores that can be used
-both locally (in-memory) and in distributed deployments (Redis, DynamoDB, …).
-"""
+"""In-memory state store for the local runtime."""
 
 from __future__ import annotations
 
@@ -10,32 +6,12 @@ import asyncio
 from typing import Any
 
 
-class StateStore:
+class InMemoryStateStore:
+    """Thread-safe in-memory key/value store backed by a dict and asyncio.Lock.
+
+    Used by :class:`~skaal.runtime.local.LocalRuntime` during local development
+    and testing.  All methods are async so they can be awaited uniformly.
     """
-    Abstract key/value state store.
-
-    Concrete implementations live in ``skaal.backends.*``.  The in-memory
-    implementation below is used for local development and testing.
-    """
-
-    async def get(self, key: str) -> Any:
-        raise NotImplementedError
-
-    async def set(self, key: str, value: Any) -> None:
-        raise NotImplementedError
-
-    async def delete(self, key: str) -> None:
-        raise NotImplementedError
-
-    async def exists(self, key: str) -> bool:
-        raise NotImplementedError
-
-    async def keys(self, prefix: str = "") -> list[str]:
-        raise NotImplementedError
-
-
-class InMemoryStateStore(StateStore):
-    """Thread-safe in-memory state store backed by a dict and asyncio.Lock."""
 
     def __init__(self) -> None:
         self._data: dict[str, Any] = {}
