@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import Any, List
+from typing import Any, Callable, List
+
+from skaal.errors import SkaalConflict, SkaalUnavailable
 
 
 class DynamoBackend:
@@ -146,6 +148,87 @@ class DynamoBackend:
             return int(new_val)
 
         return await self._run(_increment)
+
+    async def atomic_update(
+        self,
+        key: str,
+        fn: Callable[[Any], Any],
+        *,
+        max_retries: int = 8,
+    ) -> Any:
+        """Atomically read-modify-write using an optimistic ``version`` attribute.
+
+        Each row carries a monotonic ``ver`` number; writes use
+        ``ConditionExpression`` to only succeed when the version hasn't
+        changed since the read.  After *max_retries* contended attempts a
+        :class:`skaal.errors.SkaalConflict` is raised.
+        """
+        try:
+            import botocore.exceptions  # type: ignore[import-untyped]
+        except ImportError as exc:  # pragma: no cover — boto3 always ships botocore
+            raise SkaalUnavailable("botocore is required for DynamoBackend") from exc
+
+        client = self._get_client()
+
+        def _once() -> tuple[bool, Any]:
+            resp = client.get_item(
+                TableName=self.table_name,
+                Key={"pk": {"S": key}},
+                ConsistentRead=True,
+            )
+            item = resp.get("Item")
+            if item is None:
+                current: Any = None
+                current_ver = 0
+            else:
+                current = json.loads(item["value"]["S"])
+                current_ver = int(item.get("ver", {}).get("N", "0"))
+
+            updated = fn(current)
+            next_ver = current_ver + 1
+
+            try:
+                if item is None:
+                    client.put_item(
+                        TableName=self.table_name,
+                        Item={
+                            "pk": {"S": key},
+                            "value": {"S": json.dumps(updated)},
+                            "ver": {"N": str(next_ver)},
+                        },
+                        ConditionExpression="attribute_not_exists(pk)",
+                    )
+                else:
+                    client.put_item(
+                        TableName=self.table_name,
+                        Item={
+                            "pk": {"S": key},
+                            "value": {"S": json.dumps(updated)},
+                            "ver": {"N": str(next_ver)},
+                        },
+                        ConditionExpression="ver = :cur",
+                        ExpressionAttributeValues={":cur": {"N": str(current_ver)}},
+                    )
+            except botocore.exceptions.ClientError as client_exc:
+                code = client_exc.response.get("Error", {}).get("Code", "")
+                if code == "ConditionalCheckFailedException":
+                    return False, None
+                raise
+            return True, updated
+
+        async def _loop() -> Any:
+            for _ in range(max_retries):
+                try:
+                    ok, updated = await self._run(_once)
+                except botocore.exceptions.EndpointConnectionError as net_exc:
+                    raise SkaalUnavailable(f"DynamoDB unreachable: {net_exc}") from net_exc
+                if ok:
+                    return updated
+            raise SkaalConflict(
+                f"atomic_update on {key!r} lost {max_retries} consecutive races"
+            )
+
+        return await _loop()
 
     async def close(self) -> None:
         # boto3 clients don't need explicit closing

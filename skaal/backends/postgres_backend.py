@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import Any, List
+from typing import Any, Callable, List
+
+from skaal.errors import SkaalConflict, SkaalUnavailable
 
 
 class PostgresBackend:
@@ -166,6 +168,48 @@ class PostgresBackend:
             raw = row["value"]
             return int(json.loads(raw)) if isinstance(raw, str) else int(raw)
         return delta
+
+    async def atomic_update(self, key: str, fn: Callable[[Any], Any]) -> Any:
+        """Atomically read, apply *fn*, and write the result back.
+
+        Uses a serializable transaction + ``SELECT ... FOR UPDATE`` so no
+        concurrent session can observe or overwrite the row between the read
+        and the write.  Serialization failures surface as
+        :class:`skaal.errors.SkaalConflict`; callers may retry.
+        """
+        import asyncpg
+
+        await self._ensure_connected()
+        try:
+            async with self._pool.acquire() as conn:
+                async with conn.transaction(isolation="serializable"):
+                    row = await conn.fetchrow(
+                        "SELECT value FROM skaal_kv WHERE ns = $1 AND key = $2 FOR UPDATE",
+                        self.namespace,
+                        key,
+                    )
+                    raw = row["value"] if row is not None else None
+                    if isinstance(raw, str):
+                        current = json.loads(raw)
+                    else:
+                        current = raw
+                    updated = fn(current)
+                    await conn.execute(
+                        """
+                        INSERT INTO skaal_kv (ns, key, value)
+                        VALUES ($1, $2, $3::jsonb)
+                        ON CONFLICT (ns, key) DO UPDATE SET value = excluded.value
+                        """,
+                        self.namespace,
+                        key,
+                        json.dumps(updated),
+                    )
+                    return updated
+        except asyncpg.exceptions.SerializationError as exc:
+            raise SkaalConflict(f"atomic_update on {key!r} lost a race") from exc
+        except (asyncpg.exceptions.ConnectionDoesNotExistError,
+                asyncpg.exceptions.InterfaceError) as exc:
+            raise SkaalUnavailable(f"Postgres unavailable: {exc}") from exc
 
     async def close(self) -> None:
         if self._pool is not None:

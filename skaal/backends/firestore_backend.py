@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import Any, List
+from typing import Any, Callable, List
+
+from skaal.errors import SkaalConflict, SkaalUnavailable
 
 
 class FirestoreBackend:
@@ -124,6 +126,44 @@ class FirestoreBackend:
             return _update_in_txn(db.transaction())
 
         return await self._run(_increment)
+
+    async def atomic_update(self, key: str, fn: Callable[[Any], Any]) -> Any:
+        """Atomically read, apply *fn*, and write back inside a Firestore transaction.
+
+        Firestore retries the transaction internally on contention; after the
+        configured attempts are exhausted the SDK raises
+        ``google.api_core.exceptions.Aborted``, which we surface as
+        :class:`skaal.errors.SkaalConflict`.
+        """
+
+        def _apply() -> Any:
+            try:
+                from google.api_core import exceptions as g_exc  # type: ignore[import-untyped]
+                from google.cloud import firestore
+            except ImportError as exc:  # pragma: no cover
+                raise SkaalUnavailable(
+                    "google-cloud-firestore is required for atomic_update"
+                ) from exc
+
+            db = self._get_client()
+            doc_ref = self._col().document(key)
+
+            @firestore.transactional  # type: ignore[misc]
+            def _update_in_txn(txn: Any) -> Any:
+                doc = doc_ref.get(transaction=txn)
+                current = json.loads(doc.get("value")) if doc.exists else None
+                updated = fn(current)
+                txn.set(doc_ref, {"pk": key, "value": json.dumps(updated)})
+                return updated
+
+            try:
+                return _update_in_txn(db.transaction())
+            except g_exc.Aborted as exc:
+                raise SkaalConflict(f"atomic_update on {key!r} lost a race") from exc
+            except g_exc.ServiceUnavailable as exc:
+                raise SkaalUnavailable(f"Firestore unavailable: {exc}") from exc
+
+        return await self._run(_apply)
 
     async def close(self) -> None:
         # google-cloud-firestore clients don't require explicit closing

@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
-from typing import Any, List
+from typing import Any, Callable, List
+
+from skaal.errors import SkaalConflict, SkaalUnavailable
 
 
 class RedisBackend:
@@ -98,25 +100,45 @@ class RedisBackend:
         new_value = await self._client.incrby(self._key(key), delta)
         return int(new_value)
 
-    async def atomic_update(self, key: str, fn: Any) -> Any:
-        """Atomically read, apply fn, and write back using a Redis pipeline with WATCH."""
+    async def atomic_update(
+        self,
+        key: str,
+        fn: Callable[[Any], Any],
+        *,
+        max_retries: int = 64,
+    ) -> Any:
+        """Atomically read, apply *fn*, and write back using a Redis pipeline with WATCH.
+
+        Retries up to *max_retries* times on ``WatchError`` before surfacing
+        a :class:`skaal.errors.SkaalConflict`.  Transient connection errors
+        become :class:`skaal.errors.SkaalUnavailable`.
+        """
         import redis.asyncio as aioredis
+        from redis.exceptions import (
+            ConnectionError as RedisConnectionError,  # type: ignore[import-untyped]
+        )
 
         await self._ensure_connected()
         full_key = self._key(key)
-        async with self._client.pipeline(transaction=True) as pipe:
-            while True:
-                try:
-                    await pipe.watch(full_key)
-                    raw = await pipe.get(full_key)
-                    current = json.loads(raw) if raw is not None else None
-                    new_value = fn(current)
-                    pipe.multi()
-                    pipe.set(full_key, json.dumps(new_value))
-                    await pipe.execute()
-                    return new_value
-                except aioredis.WatchError:
-                    continue
+        try:
+            async with self._client.pipeline(transaction=True) as pipe:
+                for _ in range(max_retries):
+                    try:
+                        await pipe.watch(full_key)
+                        raw = await pipe.get(full_key)
+                        current = json.loads(raw) if raw is not None else None
+                        new_value = fn(current)
+                        pipe.multi()
+                        pipe.set(full_key, json.dumps(new_value))
+                        await pipe.execute()
+                        return new_value
+                    except aioredis.WatchError:
+                        continue
+                raise SkaalConflict(
+                    f"atomic_update on {key!r} lost {max_retries} consecutive races"
+                )
+        except RedisConnectionError as exc:
+            raise SkaalUnavailable(f"Redis unavailable: {exc}") from exc
 
     async def close(self) -> None:
         if self._client is not None:

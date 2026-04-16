@@ -1,4 +1,13 @@
-"""Catalog loader — reads TOML catalog files and returns parsed Catalog objects."""
+"""Catalog loader — reads TOML catalog files and returns parsed Catalog objects.
+
+Catalog sources, in order of precedence:
+
+1. Explicit path (``--catalog ./my-catalog.toml``)
+2. Short name registered via :func:`skaal.plugins.register_catalog` or the
+   ``skaal.catalogs`` entry-point group (``--catalog aws`` → whatever an
+   addon registers for ``aws``)
+3. Built-in filesystem search (``catalogs/<target>.toml``)
+"""
 
 from __future__ import annotations
 
@@ -7,6 +16,8 @@ from pathlib import Path
 from typing import Any
 
 from skaal.catalog.models import Catalog
+from skaal.errors import SkaalPluginError
+from skaal.plugins import get_catalog_path
 
 # Default search order when no explicit path is given.
 # Cloud catalogs take priority; local.toml is the zero-setup fallback.
@@ -19,50 +30,73 @@ _DEFAULT_PATHS: list[str] = [
 ]
 
 
-def load_catalog(path: Path | str | None = None, target: str | None = None) -> dict[str, Any]:
-    """
-    Load a catalog TOML and return the raw dict.
+def _resolve_path(path: Path | str | None, target: str | None) -> Path:
+    """Turn a CLI ``--catalog`` argument into a concrete filesystem path.
 
-    Searches ``CWD/catalogs/<target>.toml`` (or catalogs/aws.toml if target is
-    not given) when *path* is not given.  Raises ``FileNotFoundError`` if nothing
-    is found.
-
-    Args:
-        path: Explicit path to catalog file. If given, target is ignored.
-        target: Deploy target name to search for (e.g., 'aws', 'gcp', 'aws-lambda').
-                Base target extracted from full target name (e.g., 'aws' from 'aws-lambda').
+    Accepts either an actual path or a short name registered via the
+    ``skaal.catalogs`` entry-point group.  Raises ``FileNotFoundError`` when
+    neither form resolves.
     """
     if path is not None:
-        resolved = Path(path)
-        if not resolved.exists():
-            raise FileNotFoundError(
-                f"Catalog not found at {resolved}. "
-                "Pass --catalog <path> or ensure catalogs/aws.toml exists."
-            )
-        with open(resolved, "rb") as f:
-            return tomllib.load(f)
+        candidate = Path(path)
+        if candidate.exists():
+            return candidate
+        # Not a filesystem path — try resolving it as a registered short name.
+        try:
+            named = get_catalog_path(str(path))
+        except SkaalPluginError:
+            named = None
+        if named is not None and named.exists():
+            return named
+        raise FileNotFoundError(
+            f"Catalog not found at {candidate} and no catalog registered under "
+            f"the name {str(path)!r}. Pass --catalog <path> or ensure "
+            "catalogs/aws.toml exists."
+        )
 
-    # Build search order: prioritize target-specific catalog, then cloud catalogs, then local
+    # No explicit --catalog: search the filesystem.
     search_order = _DEFAULT_PATHS.copy()
     if target and target not in ("generic",):
-        # Extract base target from full target name (e.g., 'aws' from 'aws-lambda')
         base_target = target.split("-")[0]
         target_catalog = f"catalogs/{base_target}.toml"
         if target_catalog in search_order:
             search_order.remove(target_catalog)
         search_order.insert(0, target_catalog)
 
-    for candidate in search_order:
-        p = Path.cwd() / candidate
+    for candidate_str in search_order:
+        p = Path.cwd() / candidate_str
         if p.exists():
-            with open(p, "rb") as f:
-                return tomllib.load(f)
+            return p
+
+    # Last resort: ask the plugin registry for the target name.
+    if target:
+        try:
+            plugin_path = get_catalog_path(target.split("-")[0])
+        except SkaalPluginError:
+            plugin_path = None
+        if plugin_path is not None and plugin_path.exists():
+            return plugin_path
 
     raise FileNotFoundError(
         "No catalog found. Tried: "
         + ", ".join(search_order)
-        + ". Pass --catalog <path> or create catalogs/aws.toml."
+        + ". Pass --catalog <path-or-name> or create catalogs/aws.toml."
     )
+
+
+def load_catalog(path: Path | str | None = None, target: str | None = None) -> dict[str, Any]:
+    """Load a catalog TOML and return the raw dict.
+
+    Args:
+        path: Explicit path to a catalog file, or a short name registered via
+              :func:`skaal.plugins.register_catalog` / ``skaal.catalogs``
+              entry points (e.g. ``"aws"`` from an ``skaal-aws`` addon).
+        target: Deploy target name (e.g., 'aws', 'gcp', 'aws-lambda') used to
+                bias filesystem search when *path* is not given.
+    """
+    resolved = _resolve_path(path, target)
+    with open(resolved, "rb") as f:
+        return tomllib.load(f)
 
 
 def load_typed_catalog(path: Path | str | None = None, target: str | None = None) -> Catalog:
@@ -73,7 +107,7 @@ def load_typed_catalog(path: Path | str | None = None, target: str | None = None
     Missing required fields or incorrect types will raise a clear ValueError.
 
     Args:
-        path:   Explicit path to catalog file. If given, target is ignored.
+        path:   Explicit path (or registered short name — see :func:`load_catalog`).
         target: Deploy target name (e.g., 'aws', 'gcp') for catalog selection.
 
     Raises:

@@ -13,12 +13,12 @@ class Channel(Generic[T]):
     A typed, buffered channel for inter-component communication.
 
     When marked ``@shared``, the channel becomes a distributed message bus backed
-    by Redis Streams or Kafka. When local, it is an in-process ``asyncio.Queue``.
+    by Redis Streams, Kafka, or any other wire-function registered under
+    ``[project.entry-points."skaal.channels"]``.  When local, it is an
+    in-process ``asyncio.Queue``.
 
-    The runtime (:class:`~skaal.runtime.local.LocalRuntime` or
-    :class:`~skaal.runtime.distributed.DistributedRuntime`) patches the
-    channel's ``send`` / ``receive`` methods with a concrete backend.
-    Before patching, both raise :class:`NotImplementedError`.
+    The runtime patches the channel's ``send`` / ``receive`` methods with a
+    concrete backend.  Before patching, both raise :class:`NotImplementedError`.
 
     Usage::
 
@@ -43,8 +43,7 @@ class Channel(Generic[T]):
         Raises :class:`NotImplementedError` until the runtime wires a backend.
         """
         raise NotImplementedError(
-            "Channel.send() is not wired yet. "
-            "Use LocalRuntime or DistributedRuntime to wire a backend."
+            "Channel.send() is not wired yet. Call a wire function (e.g. wire_local, wire_redis)."
         )
 
     async def receive(self) -> AsyncIterator[T]:
@@ -53,8 +52,7 @@ class Channel(Generic[T]):
         Raises :class:`NotImplementedError` until the runtime wires a backend.
         """
         raise NotImplementedError(
-            "Channel.receive() is not wired yet. "
-            "Use LocalRuntime or DistributedRuntime to wire a backend."
+            "Channel.receive() is not wired yet. Call a wire function (e.g. wire_local, wire_redis)."
         )
         # Unreachable — keeps mypy happy about the return type.
         yield  # pragma: no cover
@@ -64,12 +62,23 @@ class Channel(Generic[T]):
         return f"Channel(buffer={self.buffer}, backend={self._backend_name!r}, {status})"
 
 
-def wire_local(channel: Channel[Any], *, topic: str = "default") -> None:
-    """Wire a :class:`Channel` to an in-process ``asyncio.Queue`` backend.
+def wire(channel: Channel[Any], backend: str, **kwargs: Any) -> None:
+    """Wire *channel* using the channel-backend registered under *backend*.
 
-    After calling this, ``channel.send()`` and ``channel.receive()`` work
-    using :class:`~skaal.runtime.channels.LocalChannel` under the hood.
+    Looks up a ``wire_<backend>`` function via :mod:`skaal.plugins` — built-in
+    backends (``local``, ``redis``) are registered in Skaal's own pyproject;
+    third-party backends (``kafka``, ``sqs``, …) register themselves via the
+    ``skaal.channels`` entry-point group and become available to this call
+    without any core edits.
     """
+    from skaal.plugins import get_channel
+
+    wire_fn = get_channel(backend)
+    wire_fn(channel, **kwargs)
+
+
+def wire_local(channel: Channel[Any], *, topic: str = "default") -> None:
+    """Wire a :class:`Channel` to an in-process ``asyncio.Queue`` backend."""
     from skaal.runtime.channels import LocalChannel
 
     local = LocalChannel()
@@ -97,11 +106,7 @@ def wire_redis(
     group: str = "default",
     consumer: str = "worker-0",
 ) -> None:
-    """Wire a :class:`Channel` to a Redis Streams backend.
-
-    After calling this, ``channel.send()`` and ``channel.receive()`` work
-    using :class:`~skaal.backends.redis_channel.RedisStreamChannel`.
-    """
+    """Wire a :class:`Channel` to a Redis Streams backend."""
     from skaal.backends.redis_channel import RedisStreamChannel
 
     backend = RedisStreamChannel(url=url, namespace=namespace)
