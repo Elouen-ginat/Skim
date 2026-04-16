@@ -284,6 +284,14 @@ def _build_pulumi_stack(app: Any, plan: "PlanFile", region: str) -> dict[str, An
                 }
             )
 
+    # ── External components → env-var passthrough ─────────────────────────────
+    from skaal.deploy._external import DefaultExternalProvisioner
+
+    existing = {e["name"] for e in container_envs}
+    for name, source in DefaultExternalProvisioner().env_vars(plan).items():
+        if name not in existing:
+            container_envs.append({"name": name, "value": source})
+
     # ── VPC connector (required by Cloud SQL and Memorystore) ─────────────────
     service_annotations: dict[str, str] = {}
     if needs_vpc:

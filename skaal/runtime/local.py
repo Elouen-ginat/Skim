@@ -55,6 +55,24 @@ class LocalRuntime:
         self._patch_channels()
         # Cache the function map so it's not rebuilt on every HTTP request
         self._function_cache = self._collect_functions()
+        # Pre-build resilience wrappers so breaker/bulkhead state is per-function
+        # and persists across invocations.
+        from skaal.runtime.middleware import wrap_handler
+
+        self._invokers: dict[str, Any] = {
+            name: wrap_handler(fn, fallback_lookup=self._function_cache.get)
+            for name, fn in self._function_cache.items()
+        }
+        # Pattern engines are started lazily by ``serve()`` so an asyncio loop
+        # is already running when they spin up background tasks.
+        self._engines: list[Any] = []
+        self.sagas: dict[str, Any] = {}
+        # Storage-class references indexed by name so engines can look them up.
+        self._stores: dict[str, Any] = {
+            qname: obj
+            for qname, obj in self.app._collect_all().items()
+            if isinstance(obj, type) and hasattr(obj, "__skaal_storage__")
+        }
 
     # ── Setup ──────────────────────────────────────────────────────────────────
 
@@ -312,8 +330,14 @@ class LocalRuntime:
                         fired_at=__import__("datetime").datetime.now(timezone.utc)
                     )
 
+            invoker = self._invokers.get(fn_name)
             try:
-                result = await fn(**kwargs) if inspect.iscoroutinefunction(fn) else fn(**kwargs)
+                if invoker is not None:
+                    result = await invoker(**kwargs)
+                else:
+                    result = (
+                        await fn(**kwargs) if inspect.iscoroutinefunction(fn) else fn(**kwargs)
+                    )
                 return result, 200
             except TypeError as exc:
                 return {"error": f"Bad arguments for {fn_name!r}: {exc}"}, 422
@@ -390,6 +414,7 @@ class LocalRuntime:
         - WSGI app registered via ``app.mount_wsgi()`` → :meth:`_serve_wsgi`
         - Otherwise → :meth:`_serve_skaal` (Skaal functions as POST endpoints)
         """
+        await self._start_engines()
         try:
             asgi_app = getattr(self.app, "_asgi_app", None)
             wsgi_app = getattr(self.app, "_wsgi_app", None)
@@ -402,6 +427,22 @@ class LocalRuntime:
         finally:
             await self.shutdown()
 
+    async def _start_engines(self) -> None:
+        """Spin up all pattern engines (EventLog / Projection / Saga / Outbox)."""
+        from skaal.runtime.engines import start_engines_for
+
+        self._engines = await start_engines_for(self.app, self)
+
+    @property
+    def functions(self) -> dict[str, Any]:
+        """Expose the handler registry to pattern engines (read-only view)."""
+        return self._function_cache
+
+    @property
+    def stores(self) -> dict[str, Any]:
+        """Expose storage classes by name to pattern engines."""
+        return self._stores
+
     async def shutdown(self) -> None:
         """
         Shut down the runtime by closing all backend connections.
@@ -410,6 +451,11 @@ class LocalRuntime:
         to clean up resources.
         """
         import contextlib
+
+        for engine in self._engines:
+            with contextlib.suppress(Exception):
+                await engine.stop()
+        self._engines = []
 
         for backend in self._backends.values():
             with contextlib.suppress(Exception):

@@ -16,6 +16,7 @@ from skaal.types import (
     ScaleStrategy,
     Throughput,
 )
+from skaal.types.compute import Bulkhead, CircuitBreaker, RateLimitPolicy, RetryPolicy
 
 F = TypeVar("F", bound=Callable[..., Any])
 C = TypeVar("C", bound=type)
@@ -97,8 +98,16 @@ def compute(
     memory: str | None = None,
     schedule: str = "realtime",
     collocate_with: str | None = None,
+    retry: RetryPolicy | None = None,
+    circuit_breaker: CircuitBreaker | None = None,
+    rate_limit: RateLimitPolicy | None = None,
+    bulkhead: Bulkhead | None = None,
 ) -> Callable[[F], F]:
-    """Declare infrastructure constraints for a compute function."""
+    """Declare infrastructure constraints for a compute function.
+
+    Resilience policies (*retry*, *circuit_breaker*, *rate_limit*, *bulkhead*)
+    are honoured by the runtime — see :mod:`skaal.runtime.middleware`.
+    """
 
     def decorator(fn: F) -> F:
         setattr(
@@ -113,6 +122,10 @@ def compute(
                 memory=memory,
                 schedule=schedule,
                 collocate_with=collocate_with,
+                retry=retry,
+                circuit_breaker=circuit_breaker,
+                rate_limit=rate_limit,
+                bulkhead=bulkhead,
             ),
         )
         return fn

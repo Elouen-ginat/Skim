@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any
 
 from skaal.deploy._backends import build_wiring_aws
 from skaal.deploy._deps import collect_user_packages
+from skaal.deploy._external import DefaultExternalProvisioner
 from skaal.deploy._render import render, to_pulumi_yaml, to_pyproject_toml
 from skaal.deploy.config import DynamoDBDeployConfig, LambdaDeployConfig
 from skaal.deploy.push import write_meta
@@ -242,6 +243,10 @@ def _build_pulumi_stack(app: Any, plan: "PlanFile") -> dict[str, Any]:
         }
         env_vars[f"SKAAL_TABLE_{class_name.upper()}"] = f"${{{resource_key}.name}}"
         table_outputs[class_name.lower()] = f"${{{resource_key}.name}}"
+
+    # ── External components → env-var passthrough ──────────────────────────────
+    for name, source in DefaultExternalProvisioner().env_vars(plan).items():
+        env_vars.setdefault(name, source)
 
     # ── IAM role ──────────────────────────────────────────────────────────────
     resources["lambda-role"] = {

@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 from skaal.deploy._backends import _COMPOSE_SERVICES, build_wiring, get_handler
 from skaal.deploy._deps import collect_user_packages
+from skaal.deploy._external import DefaultExternalProvisioner
 from skaal.deploy._render import render, to_pyproject_toml
 from skaal.deploy.config import LocalStackDeployConfig
 from skaal.deploy.push import write_meta
@@ -148,6 +149,11 @@ def _build_docker_compose(
                 services_needed[handler.local_service] = compose_spec
             if handler.local_service not in service_dependencies:
                 service_dependencies.append(handler.local_service)
+
+    # ── External components: forward host env vars into the container ──────────
+    ext_fragment = DefaultExternalProvisioner().compose_fragment(plan)
+    if ext_fragment:
+        env_vars.append(ext_fragment.rstrip("\n"))
 
     # ── Proxy / API-gateway services ──────────────────────────────────────────
     app_labels = ""

@@ -91,6 +91,12 @@ class EventLog(Generic[T]):
             },
         }
 
+        # In-process fan-out: every append fires this asyncio.Event so
+        # subscribers can wake immediately instead of polling.  Production
+        # backends (Kafka, Redis Streams) have native notify paths and ignore
+        # this field.
+        self._notify: asyncio.Event = asyncio.Event()
+
     # ── Runtime API ──────────────────────────────────────────────────────────
 
     async def append(self, event: T) -> int:
@@ -98,6 +104,9 @@ class EventLog(Generic[T]):
         # Use atomic increment to prevent race conditions with concurrent appends
         offset = await self._backend.increment_counter("meta:next_offset", delta=1) - 1
         await self._backend.set(f"event:{offset:020d}", event)
+        # Wake any in-process subscribers waiting on this log.
+        self._notify.set()
+        self._notify.clear()
         return offset
 
     async def replay(self, from_offset: int = 0) -> AsyncIterator[tuple[int, T]]:
@@ -134,7 +143,12 @@ class EventLog(Generic[T]):
                 offset = current_offset + 1
                 yield current_offset, value
             if not sorted_entries:
-                await asyncio.sleep(poll_interval)
+                # Wake on the next append; fall back to polling after poll_interval
+                # so replay still works against backends without the notify path.
+                try:
+                    await asyncio.wait_for(self._notify.wait(), timeout=poll_interval)
+                except asyncio.TimeoutError:
+                    pass
 
     def __repr__(self) -> str:
         return (
