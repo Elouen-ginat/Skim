@@ -7,6 +7,10 @@ ENV PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
+# Create the data directory used by SQLite and any other file-backed backends.
+# aiosqlite will fail with OperationalError if this directory is absent.
+RUN mkdir -p /app/data
+
 # Install `uv` to sync dependencies from pyproject.toml
 RUN pip install --no-cache-dir uv
 

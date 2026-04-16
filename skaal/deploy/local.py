@@ -363,7 +363,7 @@ def generate_artifacts(
     # ── pyproject.toml ────────────────────────────────────────────────────────
     # ASGI mode needs uvicorn[standard] for the UvicornWorker class.
     # WSGI mode (Flask/Dash) uses gunicorn's built-in sync worker — no uvicorn needed.
-    infra_deps = ["skaal", "gunicorn>=22.0"]
+    infra_deps = ["skaal", "gunicorn>=22.0", "apscheduler>=3.10"]
     if not is_wsgi:
         infra_deps += ["uvicorn[standard]>=0.29", "starlette>=0.36"]
     if has_mesh:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import Any, List
 
@@ -16,14 +17,18 @@ class RedisBackend:
     scan(prefix) uses SCAN with MATCH pattern.
     list() uses SCAN * then MGET.
 
-    Connection is lazy: the client is created on first use if connect()
-    has not been called explicitly.
+    Connection is lazy and **per event-loop**: each asyncio event loop that
+    uses this backend gets its own redis.asyncio client and connection pool.
+    This avoids "Future attached to a different loop" errors when the same
+    backend instance is shared between the scheduler daemon thread (which has
+    its own loop) and the sync-bridge background loop used by Dash callbacks.
     """
 
     def __init__(self, url: str = "redis://localhost:6379", namespace: str = "default") -> None:
         self.url = url
         self.namespace = namespace
-        self._client: Any = None
+        # Keyed by id(event_loop) so every loop gets its own connection pool.
+        self._clients: dict[int, Any] = {}
 
     def _key(self, key: str) -> str:
         return f"skaal:{self.namespace}:{key}"
@@ -35,39 +40,43 @@ class RedisBackend:
         return full_key
 
     async def connect(self) -> None:
-        """Create the async Redis client. Call before first use."""
+        """Create a Redis client for the current event loop. Called lazily on first use."""
+        await self._ensure_connected()
+
+    async def _ensure_connected(self) -> Any:
+        """Return the client for the running event loop, creating it if needed."""
         import redis.asyncio as aioredis  # type: ignore[import-untyped]
 
-        self._client = aioredis.from_url(self.url, decode_responses=True)
-
-    async def _ensure_connected(self) -> None:
-        if self._client is None:
-            await self.connect()
+        loop = asyncio.get_running_loop()
+        loop_id = id(loop)
+        if loop_id not in self._clients:
+            self._clients[loop_id] = aioredis.from_url(self.url, decode_responses=True)
+        return self._clients[loop_id]
 
     async def get(self, key: str) -> Any | None:
-        await self._ensure_connected()
-        raw = await self._client.get(self._key(key))
+        client = await self._ensure_connected()
+        raw = await client.get(self._key(key))
         if raw is None:
             return None
         return json.loads(raw)
 
     async def set(self, key: str, value: Any) -> None:
-        await self._ensure_connected()
-        await self._client.set(self._key(key), json.dumps(value))
+        client = await self._ensure_connected()
+        await client.set(self._key(key), json.dumps(value))
 
     async def delete(self, key: str) -> None:
-        await self._ensure_connected()
-        await self._client.delete(self._key(key))
+        client = await self._ensure_connected()
+        await client.delete(self._key(key))
 
     async def list(self) -> list[tuple[str, Any]]:
-        await self._ensure_connected()
+        client = await self._ensure_connected()
         pattern = f"skaal:{self.namespace}:*"
         keys: list[str] = []
-        async for k in self._client.scan_iter(match=pattern):
+        async for k in client.scan_iter(match=pattern):
             keys.append(k)
         if not keys:
             return []
-        values = await self._client.mget(*keys)
+        values = await client.mget(*keys)
         result = []
         for k, v in zip(keys, values):
             if v is not None:
@@ -76,16 +85,14 @@ class RedisBackend:
 
     async def scan(self, prefix: str = "") -> List[tuple[str, Any]]:
         """Scan keys with prefix, using MGET for efficient bulk retrieval."""
-        await self._ensure_connected()
+        client = await self._ensure_connected()
         pattern = f"skaal:{self.namespace}:{prefix}*"
-        # Collect all matching keys first
         keys: list[str] = []
-        async for k in self._client.scan_iter(match=pattern):
+        async for k in client.scan_iter(match=pattern):
             keys.append(k)
         if not keys:
             return []
-        # Use MGET to fetch all values in one round trip
-        values = await self._client.mget(*keys)
+        values = await client.mget(*keys)
         result = []
         for k, v in zip(keys, values):
             if v is not None:
@@ -94,17 +101,17 @@ class RedisBackend:
 
     async def increment_counter(self, key: str, delta: int = 1) -> int:
         """Atomically increment a counter using Redis INCR."""
-        await self._ensure_connected()
-        new_value = await self._client.incrby(self._key(key), delta)
+        client = await self._ensure_connected()
+        new_value = await client.incrby(self._key(key), delta)
         return int(new_value)
 
     async def atomic_update(self, key: str, fn: Any) -> Any:
         """Atomically read, apply fn, and write back using a Redis pipeline with WATCH."""
         import redis.asyncio as aioredis
 
-        await self._ensure_connected()
+        client = await self._ensure_connected()
         full_key = self._key(key)
-        async with self._client.pipeline(transaction=True) as pipe:
+        async with client.pipeline(transaction=True) as pipe:
             while True:
                 try:
                     await pipe.watch(full_key)
@@ -119,9 +126,9 @@ class RedisBackend:
                     continue
 
     async def close(self) -> None:
-        if self._client is not None:
-            await self._client.aclose()
-            self._client = None
+        for client in self._clients.values():
+            await client.aclose()
+        self._clients.clear()
 
     def __repr__(self) -> str:
         return f"RedisBackend(url={self.url!r}, namespace={self.namespace!r})"

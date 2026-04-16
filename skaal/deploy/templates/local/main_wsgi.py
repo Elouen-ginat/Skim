@@ -10,13 +10,17 @@ _user_module = importlib.import_module("$source_module")
 $backend_imports
 from skaal.runtime.local import LocalRuntime
 
-# Wire Skaal storage before gunicorn forks workers.
-LocalRuntime(
+# Wire Skaal storage before gunicorn forks workers, then start the
+# background scheduler so @app.schedule() functions run in Docker too.
+_runtime = LocalRuntime(
     _user_module.$app_var,
     backend_overrides={
 $backend_overrides
     },
 )
+# Starts APScheduler in a daemon thread; each firing is printed to stdout
+# so it appears in `docker logs`.  No-ops if apscheduler is not installed.
+_runtime.start_background_scheduler()
 
 # WSGI callable — mounted via app.mount_wsgi("$wsgi_attribute")
 # gunicorn is invoked in the Dockerfile CMD and imports this module as:
