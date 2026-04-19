@@ -4,9 +4,10 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
+from skaal.app import App
 from skaal.components import APIGateway, AuthConfig, Proxy, Route
-from skaal.deploy.gcp import _add_gcp_api_gateway, _gcp_openapi_path
-from skaal.plan import PlanFile
+from skaal.deploy.gcp import _add_gcp_api_gateway, _build_pulumi_stack, _gcp_openapi_path
+from skaal.plan import PlanFile, StorageSpec
 from skaal.solver.components import encode_component
 
 # ── Path conversion ───────────────────────────────────────────────────────────
@@ -167,3 +168,87 @@ def test_api_gateway_config_depends_on_cloud_run():
     _add_gcp_api_gateway(app, plan, resources, outputs)
 
     assert "${cloud-run-service}" in resources["api-gateway-config"]["options"]["dependsOn"]
+
+
+def test_cloud_run_private_service_omits_public_invoker() -> None:
+    app = App(name="demo")
+    plan = PlanFile(
+        app_name="demo",
+        deploy_target="gcp",
+        deploy_config={"allow_public_invoker": False},
+    )
+
+    stack = _build_pulumi_stack(app, plan, region="us-central1")
+
+    assert "invoker" not in stack["resources"]
+
+
+def test_cloud_run_uses_configured_vpc_connector_values() -> None:
+    app = App(name="demo")
+    plan = PlanFile(
+        app_name="demo",
+        deploy_target="gcp",
+        deploy_config={
+            "vpc_connector_network": "shared-vpc",
+            "vpc_connector_cidr": "10.42.0.0/28",
+        },
+        storage={
+            "demo.User": StorageSpec(
+                variable_name="demo.User",
+                backend="cloud-sql-postgres",
+                kind="relational",
+                deploy_params={},
+                wire_params={
+                    "class_name": "PostgresBackend",
+                    "module": "postgres_backend",
+                    "env_prefix": "SKAAL_DB_DSN",
+                    "uses_namespace": True,
+                    "requires_vpc": True,
+                },
+            ),
+        },
+    )
+
+    stack = _build_pulumi_stack(app, plan, region="us-central1")
+    props = stack["resources"]["vpc-connector"]["properties"]
+
+    assert props["network"] == "shared-vpc"
+    assert props["ipCidrRange"] == "10.42.0.0/28"
+
+
+def test_cloud_run_can_reuse_existing_vpc_connector() -> None:
+    app = App(name="demo")
+    plan = PlanFile(
+        app_name="demo",
+        deploy_target="gcp",
+        deploy_config={
+            "vpc_connector_name": "projects/demo/locations/us-central1/connectors/shared",
+            "vpc_connector_egress": "all-traffic",
+        },
+        storage={
+            "demo.User": StorageSpec(
+                variable_name="demo.User",
+                backend="cloud-sql-postgres",
+                kind="relational",
+                deploy_params={},
+                wire_params={
+                    "class_name": "PostgresBackend",
+                    "module": "postgres_backend",
+                    "env_prefix": "SKAAL_DB_DSN",
+                    "uses_namespace": True,
+                    "requires_vpc": True,
+                },
+            ),
+        },
+    )
+
+    stack = _build_pulumi_stack(app, plan, region="us-central1")
+
+    assert "vpc-connector" not in stack["resources"]
+    annotations = stack["resources"]["cloud-run-service"]["properties"]["template"]["metadata"][
+        "annotations"
+    ]
+    assert annotations["run.googleapis.com/vpc-access-connector"] == (
+        "projects/demo/locations/us-central1/connectors/shared"
+    )
+    assert annotations["run.googleapis.com/vpc-access-egress"] == "all-traffic"

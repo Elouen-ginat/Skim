@@ -36,11 +36,13 @@ from __future__ import annotations
 import asyncio
 import importlib
 import json
+import subprocess
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Iterable, Literal, Union
 
+from skaal.errors import SkaalHookError
 from skaal.plan import PLAN_FILE_NAME, ComputeSpec, PlanFile, StorageSpec
 from skaal.settings import SkaalSettings
 
@@ -430,6 +432,8 @@ def deploy(
     region: str | None = None,
     gcp_project: str | None = None,
     yes: bool = True,
+    local_detach: bool = False,
+    local_follow_logs: bool = False,
 ) -> dict[str, str]:
     """Package and deploy previously-built artifacts via Pulumi.
 
@@ -481,7 +485,12 @@ def deploy(
 
     config_overrides = _build_config_overrides(cfg, resolved_dir)
 
-    _run_hooks(cfg.pre_deploy, cwd=resolved_dir.parent)
+    _run_hooks(
+        cfg.pre_deploy,
+        cwd=resolved_dir.parent,
+        phase="pre-deploy",
+        recovery_hint="Fix the hook command and rerun `skaal deploy`; no infrastructure changes were applied.",
+    )
 
     outputs = package_and_push(
         artifacts_dir=resolved_dir,
@@ -490,12 +499,21 @@ def deploy(
         gcp_project=resolved_gcp_project,
         yes=yes,
         config_overrides=config_overrides or None,
+        runtime_options={
+            "detach": local_detach,
+            "follow_logs": local_follow_logs,
+        },
     )
 
     _run_hooks(
         cfg.post_deploy,
         cwd=resolved_dir.parent,
         extra_env={f"SKAAL_OUTPUT_{k.upper()}": v for k, v in outputs.items()},
+        phase="post-deploy",
+        recovery_hint=(
+            "The infrastructure deploy already completed. Fix the hook command and rerun `skaal deploy`, "
+            "or run the post-deploy step manually using the exported SKAAL_OUTPUT_* values."
+        ),
     )
 
     return outputs
@@ -506,15 +524,16 @@ def _run_hooks(
     *,
     cwd: Path,
     extra_env: dict[str, str] | None = None,
+    phase: str = "deploy",
+    recovery_hint: str | None = None,
 ) -> None:
     """Run each argv in *commands* sequentially with :mod:`subprocess`.
 
-    Raises :class:`subprocess.CalledProcessError` on the first failure so a
+    Raises :class:`~skaal.errors.SkaalHookError` on the first failure so a
     failing pre-deploy hook aborts the deploy before it touches Pulumi, and a
-    failing post-deploy hook surfaces as a non-zero exit from ``skaal deploy``.
+    failing post-deploy hook surfaces with an explicit recovery boundary.
     """
     import os
-    import subprocess
 
     if not commands:
         return
@@ -526,7 +545,52 @@ def _run_hooks(
     for argv in commands:
         if not argv:
             continue
-        subprocess.run(argv, cwd=cwd, env=env, check=True)
+        try:
+            result = subprocess.run(
+                argv,
+                cwd=cwd,
+                env=env,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+        except FileNotFoundError as exc:
+            raise SkaalHookError(
+                f"{phase.capitalize()} hook failed.\n"
+                f"  Command: {subprocess.list2cmdline([str(part) for part in argv])}\n"
+                f"  Working directory: {cwd}\n"
+                "  Output:\n"
+                f"    Executable {argv[0]!r} was not found on PATH.\n"
+                f"  Recovery: {recovery_hint or f'Install {argv[0]!r} and make sure it is available on PATH.'}"
+            ) from exc
+
+        if result.stdout:
+            sys.stdout.write(result.stdout)
+            if not result.stdout.endswith("\n"):
+                sys.stdout.write("\n")
+            sys.stdout.flush()
+        if result.stderr:
+            sys.stderr.write(result.stderr)
+            if not result.stderr.endswith("\n"):
+                sys.stderr.write("\n")
+            sys.stderr.flush()
+
+        if result.returncode != 0:
+            output_parts = [
+                part.strip() for part in (result.stdout, result.stderr) if part and part.strip()
+            ]
+            output = "\n".join(output_parts) or "Hook exited without producing output."
+            lines = [
+                f"{phase.capitalize()} hook failed.",
+                f"  Command: {subprocess.list2cmdline([str(part) for part in argv])}",
+                f"  Working directory: {cwd}",
+                f"  Exit code: {result.returncode}",
+                "  Output:",
+                *[f"    {line}" for line in output.splitlines()],
+            ]
+            if recovery_hint:
+                lines.append(f"  Recovery: {recovery_hint}")
+            raise SkaalHookError("\n".join(lines))
 
 
 def _build_config_overrides(

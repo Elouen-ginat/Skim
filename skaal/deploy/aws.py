@@ -247,30 +247,51 @@ def _build_pulumi_stack(app: Any, plan: "PlanFile", region: str = "us-east-1") -
     db_outputs: dict[str, str] = {}
     has_dynamodb = any(spec.backend == "dynamodb" for spec in plan.storage.values())
     needs_vpc = any(get_handler(spec).requires_vpc for spec in plan.storage.values())
+    vpc_id_ref: str | None = None
+    subnet_ids_ref: str | list[str] | None = None
 
     if needs_vpc:
-        variables["defaultVpcId"] = {
-            "fn::invoke": {
-                "function": "aws:ec2:getVpc",
-                "arguments": {"default": True},
-                "return": "id",
+        if deploy.vpc_id:
+            vpc_id_ref = deploy.vpc_id
+        else:
+            variables["selectedVpcId"] = {
+                "fn::invoke": {
+                    "function": "aws:ec2:getVpc",
+                    "arguments": {"default": True},
+                    "return": "id",
+                }
             }
-        }
-        variables["defaultSubnetIds"] = {
-            "fn::invoke": {
-                "function": "aws:ec2:getSubnets",
-                "arguments": {
-                    "filters": [{"name": "vpc-id", "values": ["${defaultVpcId}"]}],
-                },
-                "return": "ids",
+            vpc_id_ref = "${selectedVpcId}"
+
+        if deploy.subnet_ids:
+            subnet_ids_ref = list(deploy.subnet_ids)
+        else:
+            subnet_filter = deploy.vpc_id or "${selectedVpcId}"
+            variables["selectedSubnetIds"] = {
+                "fn::invoke": {
+                    "function": "aws:ec2:getSubnets",
+                    "arguments": {
+                        "filters": [{"name": "vpc-id", "values": [subnet_filter]}],
+                    },
+                    "return": "ids",
+                }
             }
+            subnet_ids_ref = "${selectedSubnetIds}"
+
+        resources["rds-subnet-group"] = {
+            "type": "aws:rds:SubnetGroup",
+            "properties": {
+                "name": f"${{pulumi.stack}}-{app.name}-db-subnets",
+                "subnetIds": subnet_ids_ref,
+                "tags": {"skaal-app": app.name},
+            },
         }
         resources["lambda-sg"] = {
             "type": "aws:ec2:SecurityGroup",
             "properties": {
                 "name": f"${{pulumi.stack}}-{app.name}-lambda",
                 "description": "Lambda security group for Skaal app access to VPC resources",
-                "vpcId": "${defaultVpcId}",
+                "vpcId": vpc_id_ref,
                 "egress": [
                     {
                         "protocol": "-1",
@@ -347,7 +368,7 @@ def _build_pulumi_stack(app: Any, plan: "PlanFile", region: str = "us-east-1") -
                 "properties": {
                     "name": f"${{pulumi.stack}}-{resource_slug}-db",
                     "description": f"Postgres access for {class_name}",
-                    "vpcId": "${defaultVpcId}",
+                    "vpcId": vpc_id_ref,
                     "ingress": [
                         {
                             "protocol": "tcp",
@@ -384,10 +405,11 @@ def _build_pulumi_stack(app: Any, plan: "PlanFile", region: str = "us-east-1") -
                     "password": f"${{{password_key}.result}}",
                     "port": rds.port,
                     "manageMasterUserPassword": False,
-                    "publiclyAccessible": False,
-                    "skipFinalSnapshot": True,
+                    "publiclyAccessible": rds.publicly_accessible,
+                    "skipFinalSnapshot": rds.skip_final_snapshot,
                     "storageEncrypted": True,
                     "applyImmediately": True,
+                    "dbSubnetGroupName": "${rds-subnet-group.name}",
                     "vpcSecurityGroupIds": [f"${{{db_sg_key}.id}}"],
                     "tags": {"skaal-app": app.name, "skaal-storage": qname},
                 },
@@ -486,9 +508,9 @@ def _build_pulumi_stack(app: Any, plan: "PlanFile", region: str = "us-east-1") -
     }
     if needs_vpc:
         lambda_props["vpcConfig"] = {
-            "subnetIds": "${defaultSubnetIds}",
+            "subnetIds": subnet_ids_ref,
             "securityGroupIds": ["${lambda-sg.id}"],
-            "vpcId": "${defaultVpcId}",
+            "vpcId": vpc_id_ref,
         }
     if deploy.reserved_concurrency >= 0:
         lambda_props["reservedConcurrentExecutions"] = "${lambdaReservedConcurrency}"

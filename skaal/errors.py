@@ -52,6 +52,14 @@ class SkaalConfigError(SkaalError):
     """A catalog, settings file, or environment variable is invalid."""
 
 
+class SkaalDeployError(SkaalError):
+    """Deployment packaging, orchestration, or rollout failed."""
+
+
+class SkaalHookError(SkaalDeployError):
+    """A pre-deploy or post-deploy hook failed."""
+
+
 class SkaalPluginError(SkaalError):
     """A plugin registered via entry_points could not be loaded."""
 
@@ -60,7 +68,9 @@ __all__ = [
     "SkaalBackendError",
     "SkaalConfigError",
     "SkaalConflict",
+    "SkaalDeployError",
     "SkaalError",
+    "SkaalHookError",
     "SkaalNotFound",
     "SkaalPluginError",
     "SkaalSerialization",

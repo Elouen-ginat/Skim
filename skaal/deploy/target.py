@@ -91,6 +91,7 @@ class DeployTarget(Protocol):
         source_module: str,
         app_name: str,
         config_overrides: dict[str, str] | None = None,
+        runtime_options: dict[str, Any] | None = None,
     ) -> dict[str, str]:
         """Package and deploy the artifacts; return Pulumi stack outputs.
 
@@ -107,6 +108,9 @@ class DeployTarget(Protocol):
             config_overrides: Extra ``pulumi config set`` key/value pairs
                               applied after the core project/region config,
                               e.g. ``{"cloudRunMemory": "1Gi"}``.
+            runtime_options:  Optional deploy-time behavior flags consumed by
+                              specific targets, e.g. ``{"detach": True}``
+                              for the local Docker Compose target.
 
         Returns:
             Dict of Pulumi stack outputs, e.g. ``{"apiUrl": "https://..."}``.

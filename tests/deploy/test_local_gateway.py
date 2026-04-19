@@ -96,6 +96,19 @@ def test_kong_config_jwt_auth():
     assert "https://auth.example.com" in cfg
 
 
+def test_kong_config_uses_custom_upstream_service_name():
+    routes = [{"path": "/", "target": "fn", "methods": ["GET"]}]
+    cfg = _kong_config(
+        routes,
+        auth=None,
+        rate_limit=None,
+        cors_origins=None,
+        app_service_name="backend",
+    )
+
+    assert "url: http://backend:8000" in cfg
+
+
 # ── Docker Compose without gateway ───────────────────────────────────────────
 
 
@@ -162,3 +175,19 @@ def test_compose_mount_routes_to_traefik():
     compose = _build_docker_compose(plan, port=8000, source_pkg="myapp", app=app)
 
     assert "PathPrefix(`/pay`)" in compose
+
+
+def test_compose_respects_custom_app_service_names():
+    plan = _empty_plan()
+    app = _make_app(name="demo")
+    compose = _build_docker_compose(
+        plan,
+        port=8000,
+        source_pkg="myapp",
+        app=app,
+        app_service_name="backend",
+        app_container_name="demo-local",
+    )
+
+    assert "\n  backend:\n" in compose
+    assert "container_name: demo-local" in compose
