@@ -90,6 +90,28 @@ def _storage_constraints_from_pattern(pattern_meta: dict[str, Any]) -> dict[str,
     }
 
 
+def _collect_all_components(app: "App") -> dict[str, Any]:
+    """
+    Recursively collect all components from *app* and every mounted submodule.
+
+    Components are not included in ``_collect_all()`` (which only yields
+    storage/agents/functions/channels/patterns/schedules).  This helper fills
+    that gap so the solver can plan components declared inside modules that are
+    mounted into the app via ``app.use()``.
+    """
+    result: dict[str, Any] = {}
+
+    def _recurse(module: Any) -> None:
+        for name, comp in getattr(module, "_components", {}).items():
+            if name not in result:  # top-level wins on name collision
+                result[name] = comp
+        for sub in getattr(module, "_submodules", {}).values():
+            _recurse(sub)
+
+    _recurse(app)
+    return result
+
+
 def _collect_function_names(app: "App") -> set[str]:
     """
     Return the set of all function identifiers a Saga step can legally
@@ -298,7 +320,7 @@ def solve(app: "App", catalog: dict[str, Any], target: str = "generic") -> "Plan
     from skaal.components import ComponentBase
     from skaal.solver.components import encode_component
 
-    for comp_name, comp_obj in app._components.items():
+    for comp_name, comp_obj in _collect_all_components(app).items():
         if isinstance(comp_obj, ComponentBase):
             try:
                 spec = encode_component(comp_name, comp_obj, catalog, target=target)

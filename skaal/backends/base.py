@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Any, List, Protocol, runtime_checkable
+import builtins
+from collections.abc import Callable
+from typing import Any, Protocol, runtime_checkable
 
 
 @runtime_checkable
@@ -26,11 +28,11 @@ class StorageBackend(Protocol):
         """Remove key (no-op if not present)."""
         ...
 
-    async def list(self) -> list[tuple[str, Any]]:
+    async def list(self) -> builtins.list[tuple[str, Any]]:
         """Return all (key, value) pairs."""
         ...
 
-    async def scan(self, prefix: str = "") -> List[tuple[str, Any]]:
+    async def scan(self, prefix: str = "") -> builtins.list[tuple[str, Any]]:
         """Return all (key, value) pairs where key starts with prefix."""
         ...
 
@@ -50,7 +52,7 @@ class StorageBackend(Protocol):
         """
         ...
 
-    async def atomic_update(self, key: str, fn: Any) -> Any:
+    async def atomic_update(self, key: str, fn: Callable[[Any], Any]) -> Any:
         """
         Atomically read the raw value for key, apply fn, write the result back,
         and return the new raw value.

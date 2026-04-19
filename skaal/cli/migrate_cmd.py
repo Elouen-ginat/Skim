@@ -5,7 +5,7 @@ from __future__ import annotations
 import typer
 
 from skaal.cli._utils import get_app_name
-from skaal.migrate.engine import STAGE_NAMES
+from skaal.migrate.engine import MigrationStage
 
 app = typer.Typer(help="Manage backend migrations.")
 
@@ -34,7 +34,7 @@ def start(
 
     typer.echo(
         f"Migration started: {variable}  {from_backend} → {to_backend}\n"
-        f"Stage: 1 ({STAGE_NAMES[1]})"
+        f"Stage: {MigrationStage.SHADOW_WRITE} ({MigrationStage.SHADOW_WRITE.name.lower()})"
     )
 
 
@@ -56,8 +56,7 @@ def advance(
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(1) from exc
 
-    stage_name = STAGE_NAMES.get(state.stage, "unknown")
-    typer.echo(f"Advanced {variable} to stage {state.stage} ({stage_name})")
+    typer.echo(f"Advanced {variable} to stage {state.stage} ({state.stage.name.lower()})")
 
 
 @app.command("status")
@@ -74,10 +73,9 @@ def status(
         typer.echo(f"No migration in progress for {variable!r}.")
         raise typer.Exit(0)
 
-    stage_name = STAGE_NAMES.get(state.stage, "unknown")
     typer.echo(f"Variable:      {state.variable_name}")
     typer.echo(f"Migration:     {state.source_backend} → {state.target_backend}")
-    typer.echo(f"Stage:         {state.stage} ({stage_name})")
+    typer.echo(f"Stage:         {state.stage} ({state.stage.name.lower()})")
     typer.echo(f"Started:       {state.started_at}")
     typer.echo(f"Last advanced: {state.advanced_at}")
     typer.echo(f"Discrepancies: {state.discrepancy_count}")
@@ -102,8 +100,7 @@ def rollback(
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(1) from exc
 
-    stage_name = STAGE_NAMES.get(state.stage, "unknown")
-    typer.echo(f"Rolled back {variable} to stage {state.stage} ({stage_name})")
+    typer.echo(f"Rolled back {variable} to stage {state.stage} ({state.stage.name.lower()})")
 
 
 @app.command("list")
@@ -120,7 +117,7 @@ def list_migrations() -> None:
     typer.echo(header)
     typer.echo("-" * len(header))
     for state in all_states:
-        stage_label = f"{state.stage} ({STAGE_NAMES.get(state.stage, '?')})"
+        stage_label = f"{state.stage} ({state.stage.name.lower()})"
         typer.echo(
             f"{state.variable_name:<30} {state.source_backend:<20} "
             f"{state.target_backend:<20} {stage_label:<20} {state.discrepancy_count}"

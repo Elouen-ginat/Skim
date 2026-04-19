@@ -164,7 +164,7 @@ class DynamoBackend:
         :class:`skaal.errors.SkaalConflict` is raised.
         """
         try:
-            import botocore.exceptions  # type: ignore[import-untyped]
+            import botocore.exceptions
         except ImportError as exc:  # pragma: no cover — boto3 always ships botocore
             raise SkaalUnavailable("botocore is required for DynamoBackend") from exc
 
@@ -224,9 +224,7 @@ class DynamoBackend:
                     raise SkaalUnavailable(f"DynamoDB unreachable: {net_exc}") from net_exc
                 if ok:
                     return updated
-            raise SkaalConflict(
-                f"atomic_update on {key!r} lost {max_retries} consecutive races"
-            )
+            raise SkaalConflict(f"atomic_update on {key!r} lost {max_retries} consecutive races")
 
         return await _loop()
 

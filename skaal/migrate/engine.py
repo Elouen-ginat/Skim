@@ -6,21 +6,24 @@ import dataclasses
 import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from enum import IntEnum
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from skaal.backends.base import StorageBackend
 
-STAGE_NAMES = {
-    0: "idle",
-    1: "shadow_write",
-    2: "shadow_read",
-    3: "dual_read",
-    4: "new_primary",
-    5: "cleanup",
-    6: "done",
-}
+
+class MigrationStage(IntEnum):
+    """The seven stages of a backend migration."""
+
+    IDLE = 0
+    SHADOW_WRITE = 1  # Writes go to both; reads from source only.
+    SHADOW_READ = 2  # Reads from source (authoritative) + target (discrepancy log).
+    DUAL_READ = 3  # Reads from target first; fall back to source if missing.
+    NEW_PRIMARY = 4  # Reads and writes to target only; source receives nothing.
+    CLEANUP = 5  # Drain source; target is sole owner.
+    DONE = 6  # Migration complete.
 
 
 @dataclass
@@ -28,12 +31,17 @@ class MigrationState:
     variable_name: str  # e.g. "counter.Counts"
     source_backend: str  # backend name from plan (e.g. "elasticache-redis")
     target_backend: str
-    stage: int  # 0–6
+    stage: MigrationStage
     started_at: str  # ISO timestamp
     advanced_at: str  # ISO timestamp of last stage change
     discrepancy_count: int = 0
     keys_migrated: int = 0
     app_name: str = ""
+
+    def __post_init__(self) -> None:
+        # Coerce int loaded from JSON back to the enum.
+        if not isinstance(self.stage, MigrationStage):
+            self.stage = MigrationStage(self.stage)
 
 
 class MigrationEngine:
@@ -64,13 +72,13 @@ class MigrationEngine:
         self._state_path.write_text(json.dumps(dataclasses.asdict(state), indent=2))
 
     def start(self, source: str, target: str) -> MigrationState:
-        """Begin a new migration from source to target backend. Sets stage=1."""
+        """Begin a new migration from source to target backend. Sets stage=SHADOW_WRITE."""
         now = datetime.now(timezone.utc).isoformat()
         state = MigrationState(
             variable_name=self.variable_name,
             source_backend=source,
             target_backend=target,
-            stage=1,
+            stage=MigrationStage.SHADOW_WRITE,
             started_at=now,
             advanced_at=now,
             app_name=self.app_name,
@@ -78,33 +86,45 @@ class MigrationEngine:
         self.save_state(state)
         return state
 
-    def advance(self, state: MigrationState, discrepancy_count: int = 0) -> MigrationState:
+    def advance(
+        self,
+        state: MigrationState,
+        discrepancy_count: int = 0,
+        keys_migrated: int = 0,
+    ) -> MigrationState:
         """
         Advance to the next stage.
-        Raises ValueError if already at stage 6 (done).
+        Raises ValueError if already at DONE.
+
+        Args:
+            discrepancy_count: Number of read discrepancies detected this stage
+                               (relevant at SHADOW_READ).
+            keys_migrated:     Number of keys bulk-copied this stage (returned
+                               by :func:`copy_all` at stage transition).
         """
-        if state.stage >= 6:
-            raise ValueError(f"{self.variable_name} migration is already complete (stage 6).")
-        state.stage += 1
+        if state.stage == MigrationStage.DONE:
+            raise ValueError(f"{self.variable_name} migration is already complete (DONE).")
+        state.stage = MigrationStage(state.stage + 1)
         state.advanced_at = datetime.now(timezone.utc).isoformat()
         state.discrepancy_count += discrepancy_count
+        state.keys_migrated += keys_migrated
         self.save_state(state)
         return state
 
     def rollback(self, state: MigrationState) -> MigrationState:
-        """Roll back one stage. Cannot roll back from stage 0 or 6."""
-        if state.stage <= 0:
+        """Roll back one stage. Cannot roll back from IDLE or DONE."""
+        if state.stage == MigrationStage.IDLE:
             raise ValueError("Already at initial stage.")
-        if state.stage == 6:
+        if state.stage == MigrationStage.DONE:
             raise ValueError("Cannot roll back a completed migration.")
-        state.stage -= 1
+        state.stage = MigrationStage(state.stage - 1)
         state.advanced_at = datetime.now(timezone.utc).isoformat()
         self.save_state(state)
         return state
 
     def complete(self, state: MigrationState) -> None:
-        """Mark migration as done (stage 6). Moves state file to .skaal/migrations/history/."""
-        state.stage = 6
+        """Mark migration as done (DONE). Moves state file to .skaal/migrations/history/."""
+        state.stage = MigrationStage.DONE
         state.advanced_at = datetime.now(timezone.utc).isoformat()
         self.save_state(state)
 

@@ -572,6 +572,13 @@ class Collection(Generic[T]):
         return _sync_run(cls.all())
 
     @classmethod
+    def sync_update(cls, key: str, item: T) -> None:
+        """Synchronous wrapper for :meth:`update`."""
+        from skaal.backends.local_backend import _sync_run
+
+        _sync_run(cls.update(key, item))
+
+    @classmethod
     def sync_find(cls, prefix: str = "") -> _List[T]:
         """Synchronous wrapper for :meth:`find`."""
         from skaal.backends.local_backend import _sync_run

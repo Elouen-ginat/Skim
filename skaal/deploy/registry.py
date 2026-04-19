@@ -58,6 +58,7 @@ class AWSLambdaTarget:
             output_dir=output_dir,
             source_module=source_module,
             app_var=app_var,
+            region=region or self.default_region,
         )
 
     def package_and_push(

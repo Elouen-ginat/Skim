@@ -5,11 +5,13 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
 PLAN_FILE_NAME = "plan.skaal.lock"
+
+PatternType = Literal["event-log", "projection", "saga", "outbox"]
 
 
 class StorageSpec(BaseModel):
@@ -67,7 +69,7 @@ class PatternSpec(BaseModel):
     """Serialisable spec for a distributed system pattern (EventLog, Saga, …)."""
 
     pattern_name: str
-    pattern_type: str  # "event-log" | "projection" | "saga" | "outbox"
+    pattern_type: PatternType
     # For event-log / outbox: the selected backing storage backend (e.g. "msk-kafka")
     backend: str | None = None
     # Human-readable reason explaining the solver's choices

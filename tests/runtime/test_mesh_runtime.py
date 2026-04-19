@@ -25,61 +25,33 @@ pytestmark = pytest.mark.skipif(not HAS_MESH, reason="skaal_mesh extension not i
 
 class TestSkaalMeshExtension:
     def test_create_and_health(self) -> None:
-        m = skaal_mesh.SkaalMesh("test-app", "{}")
+        m = skaal_mesh.SkaalMesh("test-app", "")
         h = json.loads(m.health_snapshot())
         assert h["app"] == "test-app"
         assert h["status"] == "ok"
-        assert h["nodes"] == 1
+        assert set(h) >= {"agents", "state", "migrations", "channels"}
 
-    def test_register_node_and_list(self) -> None:
-        m = skaal_mesh.SkaalMesh("test-app", "{}")
-        m.register_node("node-1", "http://localhost:9001", ["fn_a"])
-        nodes = sorted(m.list_nodes())
-        assert nodes == ["node-0", "node-1"]
+    def test_register_and_list_agents(self) -> None:
+        m = skaal_mesh.SkaalMesh("test-app", "")
+        m.register_agent("Counter", "c-1", 0, None)
+        m.register_agent("Worker", "w-1", 0, None)
+        agents = json.loads(m.list_agents(None, None))
+        assert {a["agent_id"] for a in agents} == {"c-1", "w-1"}
 
-    def test_route_invoke_local(self) -> None:
-        plan = json.dumps({"compute": {"add": {}}})
-        m = skaal_mesh.SkaalMesh("test-app", plan)
-        node_id, result = m.route_invoke("add", "{}")
-        assert node_id == "node-0"
-        assert result is None
+        workers = json.loads(m.list_agents("Worker", None))
+        assert [a["agent_id"] for a in workers] == ["w-1"]
 
-    def test_route_invoke_remote(self) -> None:
-        m = skaal_mesh.SkaalMesh("test-app", "{}")
-        m.register_node("node-1", "http://remote:8000", ["remote_fn"])
-        node_id, _ = m.route_invoke("remote_fn", "{}")
-        assert node_id == "node-1"
+    def test_route_agent_call_marks_running(self) -> None:
+        m = skaal_mesh.SkaalMesh("test-app", "")
+        m.register_agent("User", "u-1", 0, None)
+        routed = json.loads(m.route_agent_call("User", "u-1", "greet", "{}"))
+        assert routed["status"] == "routed"
+        assert routed["agent_id"] == "u-1"
 
-    def test_route_invoke_unknown_raises(self) -> None:
-        m = skaal_mesh.SkaalMesh("test-app", "{}")
-        with pytest.raises(KeyError, match="no mesh node serves function"):
-            m.route_invoke("does_not_exist", "{}")
-
-    def test_agent_placement_round_robin(self) -> None:
-        m = skaal_mesh.SkaalMesh("test-app", "{}")
-        m.register_node("node-1", "http://n1:8000")
-
-        n1 = m.route_agent_call("User", "u1", "greet", "{}")
-        n2 = m.route_agent_call("User", "u2", "greet", "{}")
-        # Two nodes → two agents should go to different nodes.
-        assert {n1, n2} == {"node-0", "node-1"}
-
-        # Same agent id re-routes to the same node (sticky).
-        assert m.route_agent_call("User", "u1", "greet", "{}") == n1
-
-    def test_channel_publish_consume(self) -> None:
-        m = skaal_mesh.SkaalMesh("test-app", "{}")
-        m.channel_publish("events", '{"type":"click"}')
-        m.channel_publish("events", '{"type":"scroll"}')
-        msgs = m.channel_consume("events")
-        assert len(msgs) == 2
-        # Second consume returns empty — messages were drained.
-        assert m.channel_consume("events") == []
-
-    def test_custom_node_id(self) -> None:
-        m = skaal_mesh.SkaalMesh("app", "{}", "worker-7")
-        h = json.loads(m.health_snapshot())
-        assert h["node_id"] == "worker-7"
+    def test_channel_publish_no_subscribers(self) -> None:
+        m = skaal_mesh.SkaalMesh("test-app", "")
+        # No subscribers yet — publish returns 0 receivers without error.
+        assert m.publish("events", '{"type":"click"}') == 0
 
 
 # ── MeshRuntime integration tests ───────────────────────────────────────────
@@ -125,15 +97,12 @@ class TestMeshRuntime:
 
         rt = MeshRuntime(app)
 
-        rt.register_node("node-1", "http://n1:8000", ["noop"])
+        # channel_publish returns receiver count (0 with no subscribers).
+        assert rt.channel_publish("t", {"x": 1}) == 0
+
+        # health returns the new mesh JSON shape.
         h = rt.health()
-        assert h["nodes"] == 2
-
-        rt.channel_publish("t", {"x": 1})
-        msgs = rt.channel_consume("t")
-        assert msgs == [{"x": 1}]
-
-        node = rt.route_agent("Agent", "a1", "method", {})
-        assert node in ("node-0", "node-1")
+        assert h["app"] == "bridge-test"
+        assert "agents" in h
 
         await rt.shutdown()

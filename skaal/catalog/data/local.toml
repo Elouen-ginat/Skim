@@ -1,0 +1,66 @@
+# Skaal Infrastructure Catalog — Local Development
+# Used by the Z3 solver when target="local" or when no cloud catalog is found.
+# All backends map to local equivalents for zero-setup development.
+
+[storage.local-map.wire]
+class_name     = "SqliteBackend"
+module         = "sqlite_backend"
+uses_namespace = true
+path_default   = "skaal_local.db"
+extra_deps     = ["aiosqlite"]
+# No env_prefix — path is hardcoded; all workers share the same file.
+
+[storage.local-map]
+display_name = "In-Memory LocalMap"
+read_latency  = { min = 0.001, max = 0.1, unit = "ms" }
+write_latency = { min = 0.001, max = 0.1, unit = "ms" }
+durability    = ["ephemeral"]
+max_size_gb   = 0   # unlimited (bounded by process memory)
+access_patterns = ["random-read", "random-write", "pub-sub", "event-log",
+                   "append-only", "bulk-read", "transactional", "sequential",
+                   "write-heavy", "worm"]
+cost_per_gb_month = 0.0
+notes = "Pure in-process Python dict. Used by LocalRuntime automatically."
+
+[storage.sqlite.wire]
+class_name      = "SqliteBackend"
+module          = "sqlite_backend"
+env_prefix      = "SKAAL_SQLITE_PATH"
+local_env_value = "/app/data/skaal.db"
+
+[storage.sqlite]
+display_name = "SQLite (local file)"
+read_latency  = { min = 0.1, max = 10.0, unit = "ms" }
+write_latency = { min = 0.5, max = 20.0, unit = "ms" }
+durability    = ["persistent"]
+max_size_gb   = 500
+access_patterns = ["random-read", "random-write", "transactional", "sequential"]
+cost_per_gb_month = 0.0
+notes = "Persistent local storage via aiosqlite. Use `skaal run --persist`."
+
+[storage.local-redis.wire]
+class_name      = "RedisBackend"
+module          = "redis_backend"
+env_prefix      = "SKAAL_REDIS_URL"
+uses_namespace  = true
+local_service   = "redis"
+local_env_value = "redis://redis:6379"
+extra_deps      = ["redis>=5.0"]
+
+[storage.local-redis]
+display_name = "Redis (localhost)"
+read_latency  = { min = 0.1, max = 2.0, unit = "ms" }
+write_latency = { min = 0.1, max = 5.0, unit = "ms" }
+durability    = ["ephemeral", "persistent"]
+max_size_gb   = 0
+access_patterns = ["random-read", "random-write", "pub-sub", "event-log"]
+cost_per_gb_month = 0.0
+notes = "Local Redis instance. Use `skaal run --redis redis://localhost:6379`."
+
+[compute.local-process]
+display_name = "Local Python process"
+vcpus   = 1
+memory_gb = 2.0
+compute_types = ["cpu"]
+cost_per_hour = 0.0
+notes = "Single-process asyncio execution. No real compute isolation."

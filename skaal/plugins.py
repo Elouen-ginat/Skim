@@ -55,7 +55,7 @@ def _load_group(group: str) -> dict[str, Any]:
     try:
         eps = entry_points(group=group)
     except TypeError:  # pragma: no cover — very old importlib.metadata
-        eps = entry_points().get(group, [])  # type: ignore[assignment]
+        eps = entry_points().get(group, [])  # type: ignore[arg-type]
     for ep in eps:
         try:
             discovered[ep.name] = ep.load()
@@ -161,9 +161,7 @@ def get_catalog_path(name: str) -> Path:
             value = value()
         return Path(value)
     available = sorted(set(_catalogs) | set(discovered))
-    raise SkaalPluginError(
-        f"Unknown catalog name {name!r}. Registered: {available or '(none)'}."
-    )
+    raise SkaalPluginError(f"Unknown catalog name {name!r}. Registered: {available or '(none)'}.")
 
 
 def iter_catalogs() -> dict[str, Path]:

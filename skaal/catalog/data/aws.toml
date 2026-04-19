@@ -1,0 +1,170 @@
+# Skaal Infrastructure Catalog — Amazon Web Services
+# Loaded by the Z3 solver during `skaal plan`.
+# Values are ranges; the solver selects within them based on constraints.
+
+[storage.elasticache-redis]
+display_name = "Amazon ElastiCache (Redis)"
+read_latency  = { min = 0.1, max = 2.0, unit = "ms" }
+write_latency = { min = 0.1, max = 5.0, unit = "ms" }
+durability    = ["ephemeral", "persistent"]   # persistent = AOF or RDB
+max_size_gb   = 500
+access_patterns = ["random-read", "random-write", "pub-sub"]
+cost_per_gb_month = 3.50   # USD, approximate cache.r6g.large
+requires_vpc  = true
+regions = ["all"]
+notes = "Preferred for read_latency < 5ms + persistent; requires VPC"
+
+[storage.rds-postgres]
+display_name = "Amazon RDS (PostgreSQL 16)"
+read_latency  = { min = 1.0, max = 50.0, unit = "ms" }
+write_latency = { min = 2.0, max = 100.0, unit = "ms" }
+durability    = ["persistent", "durable"]
+max_size_gb   = 16_000
+access_patterns = ["random-read", "sequential", "transactional"]
+cost_per_gb_month = 0.12
+requires_vpc  = true
+regions = ["all"]
+notes = "Default for strong-consistency relational workloads; always runs inside a VPC"
+
+[storage.s3]
+display_name = "Amazon S3"
+read_latency  = { min = 50, max = 500, unit = "ms" }
+write_latency = { min = 100, max = 2000, unit = "ms" }
+durability    = ["durable"]   # 11 nines
+max_size_gb   = 0             # unlimited (0 = no limit)
+access_patterns = ["append-only", "bulk-read", "worm", "event-log"]
+cost_per_gb_month = 0.023
+regions = ["all"]
+notes = "Cold/archival storage; preferred for size_hint > 100GB + durable"
+
+[storage.elasticache-memcached]
+display_name = "Amazon ElastiCache (Memcached)"
+read_latency  = { min = 0.1, max = 1.0, unit = "ms" }
+write_latency = { min = 0.1, max = 2.0, unit = "ms" }
+durability    = ["ephemeral"]
+max_size_gb   = 300
+access_patterns = ["random-read", "random-write"]
+cost_per_gb_month = 2.80
+requires_vpc  = true
+regions = ["all"]
+notes = "Ephemeral-only; no persistence; requires VPC"
+
+[storage.dynamodb]
+display_name = "Amazon DynamoDB"
+read_latency  = { min = 1.0, max = 10.0, unit = "ms" }
+write_latency = { min = 1.0, max = 10.0, unit = "ms" }
+durability    = ["persistent", "durable"]
+max_size_gb   = 0
+access_patterns = ["random-read", "random-write"]
+cost_per_gb_month = 0.25
+serverless    = true
+regions = ["all"]
+notes = "Key-value at scale with single-digit ms latency; serverless-native, no VPC"
+
+[storage.dynamodb.deploy]
+billing_mode   = "PAY_PER_REQUEST"
+hash_key       = "pk"
+hash_key_type  = "S"
+
+[storage.dynamodb.wire]
+class_name  = "DynamoBackend"
+module      = "dynamodb_backend"
+env_prefix  = "SKAAL_TABLE"
+
+[storage.msk-kafka]
+display_name = "Amazon MSK (Kafka)"
+read_latency  = { min = 2.0, max = 20.0, unit = "ms" }
+write_latency = { min = 2.0, max = 20.0, unit = "ms" }
+durability    = ["durable"]
+max_size_gb   = 10_000
+access_patterns = ["append-only", "pub-sub", "event-log"]
+cost_per_gb_month = 0.10
+regions = ["all"]
+notes = "Event streaming; preferred for write_throughput > 100 events/s"
+
+# ── Compute ────────────────────────────────────────────────────────────────
+
+[compute.c5-large]
+display_name = "c5.large"
+vcpus  = 2
+memory_gb = 4
+compute_types = ["cpu"]
+cost_per_hour = 0.085
+notes = "Baseline compute; good for latency < 200ms + throughput < 1000 req/s"
+
+[compute.c5-xlarge]
+display_name = "c5.xlarge"
+vcpus  = 4
+memory_gb = 8
+compute_types = ["cpu"]
+cost_per_hour = 0.17
+notes = "Step up from c5.large for higher throughput"
+
+[compute.c5-2xlarge]
+display_name = "c5.2xlarge"
+vcpus  = 8
+memory_gb = 16
+compute_types = ["cpu"]
+cost_per_hour = 0.34
+
+[compute.r6g-xlarge]
+display_name = "r6g.xlarge"
+vcpus  = 4
+memory_gb = 32
+compute_types = ["cpu"]
+cost_per_hour = 0.20
+notes = "Memory-optimised; preferred for memory > 16GB"
+
+[compute.p3-2xlarge]
+display_name = "p3.2xlarge"
+vcpus  = 8
+memory_gb = 61
+gpu_count = 1
+gpu_model = "V100"
+compute_types = ["gpu"]
+cost_per_hour = 3.06
+notes = "Single GPU; preferred for compute_type=gpu + memory < 64GB"
+
+[compute.p3-8xlarge]
+display_name = "p3.8xlarge"
+vcpus  = 32
+memory_gb = 244
+gpu_count = 4
+gpu_model = "V100"
+compute_types = ["gpu"]
+cost_per_hour = 12.24
+
+[compute.lambda]
+display_name = "AWS Lambda"
+vcpus  = 0   # varies
+memory_gb = 0.128  # min; up to 10
+compute_types = ["cpu"]
+cold_start_ms = 200   # typical, varies
+max_duration_min = 15
+cost_per_invocation = 0.0000002
+notes = "Preferred for bursty, low-frequency, stateless workloads"
+
+[compute.lambda.deploy]
+runtime               = "python3.11"
+timeout               = 30
+memory_mb             = 256
+# -1 = unreserved (Lambda scales to account limit).
+# Set a positive value to cap concurrent executions.
+reserved_concurrency  = -1
+
+# ── Network ────────────────────────────────────────────────────────────────
+
+[network.same-az]
+display_name = "Same AZ"
+latency_ms = { min = 0.1, max = 1.0 }
+bandwidth_gbps = 10
+
+[network.same-region]
+display_name = "Same Region"
+latency_ms = { min = 1.0, max = 5.0 }
+bandwidth_gbps = 5
+
+[network.cross-region]
+display_name = "Cross Region"
+latency_ms = { min = 20, max = 200 }
+bandwidth_gbps = 1

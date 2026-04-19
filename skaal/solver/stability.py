@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
     from skaal.plan import PlanFile
@@ -27,8 +27,8 @@ class StabilityVerdict(str, Enum):
 @dataclass
 class ResourceDiff:
     name: str
-    kind: str  # "storage" | "compute"
-    change: str  # "added" | "removed" | "backend_changed" | "instance_changed"
+    kind: Literal["storage", "compute"]
+    change: Literal["added", "removed", "backend_changed", "instance_changed"]
     old_value: str | None = None
     new_value: str | None = None
     requires_migration: bool = False

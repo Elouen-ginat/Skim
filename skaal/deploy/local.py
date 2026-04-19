@@ -119,7 +119,12 @@ def _kong_config(
 
 
 def _build_docker_compose(
-    plan: "PlanFile", port: int, source_pkg: str, app: Any = None, dev: bool = False
+    plan: "PlanFile",
+    port: int,
+    source_pkg: str,
+    app: Any = None,
+    dev: bool = False,
+    is_wsgi: bool = False,
 ) -> str:
     """Build a ``docker-compose.yml`` string with the app service and any
     required storage backend services.
@@ -225,6 +230,9 @@ def _build_docker_compose(
     depends_on_lines = [f"      - {dep}" for dep in service_dependencies]
     depends_on_str = "\n".join(depends_on_lines) if depends_on_lines else "      []"
 
+    # ASGI needs the uvicorn worker class; WSGI uses gunicorn's default sync worker.
+    gunicorn_worker = "" if is_wsgi else " -k uvicorn.workers.UvicornWorker"
+
     composed = render(
         "local/docker-compose.yml",
         port=str(port),
@@ -233,6 +241,7 @@ def _build_docker_compose(
         service_dependencies=depends_on_str,
         app_labels=app_labels,
         additional_services=additional_services,
+        gunicorn_worker=gunicorn_worker,
     )
 
     if dev:
@@ -333,15 +342,38 @@ def generate_artifacts(
     if dev and skaal_src_dir.is_dir() and skaal_root_pyproject.exists():
         skaal_bundle_dir.mkdir(exist_ok=True)
         shutil.copytree(skaal_src_dir, skaal_bundle_dir / "skaal", dirs_exist_ok=True)
-        shutil.copy2(skaal_root_pyproject, skaal_bundle_dir / "pyproject.toml")
+        # Write a patched pyproject.toml: rewrite [tool.uv.sources] paths that are
+        # relative to the project root so they stay valid from inside _skaal/.
+        # e.g. skaal-mesh = { path = "mesh" } → { path = "../mesh" }
+        raw = skaal_root_pyproject.read_text(encoding="utf-8")
+        raw = raw.replace('path = "mesh"', 'path = "../mesh"')
+        (skaal_bundle_dir / "pyproject.toml").write_text(raw, encoding="utf-8")
         for extra in ("LICENSE", "README.md"):
             src = project_root / extra
             if src.exists():
                 shutil.copy2(src, skaal_bundle_dir / extra)
         generated.append(skaal_bundle_dir)
 
+    # ── mesh bundle ───────────────────────────────────────────────────────────
+    # Copy the Rust mesh source into the artifact so `uv sync` can compile it
+    # inside Docker without needing the project root mounted.
+    mesh_bundle_dir = output_dir / "mesh"
+    mesh_src_dir = project_root / "mesh"
+    has_mesh = mesh_src_dir.is_dir() and (mesh_src_dir / "Cargo.toml").exists()
+    if has_mesh:
+        shutil.copytree(mesh_src_dir, mesh_bundle_dir, dirs_exist_ok=True)
+        generated.append(mesh_bundle_dir)
+
+    is_wsgi = bool(wsgi_attribute)
+
     # ── pyproject.toml ────────────────────────────────────────────────────────
-    infra_deps = ["skaal", "gunicorn>=22.0"]
+    # ASGI mode needs uvicorn[standard] for the UvicornWorker class.
+    # WSGI mode (Flask/Dash) uses gunicorn's built-in sync worker — no uvicorn needed.
+    infra_deps = ["skaal", "gunicorn>=22.0", "apscheduler>=3.10"]
+    if not is_wsgi:
+        infra_deps += ["uvicorn[standard]>=0.29", "starlette>=0.36"]
+    if has_mesh:
+        infra_deps.append("skaal-mesh")
     seen_deps: set[str] = set()
     for spec in plan.storage.values():
         for dep in get_handler(spec, local=True).extra_deps:
@@ -350,16 +382,23 @@ def generate_artifacts(
                 infra_deps.append(dep)
     user_pkgs = collect_user_packages(source_module)
     deps = list(dict.fromkeys(infra_deps + user_pkgs))
-    uv_sources = {"skaal": "./_skaal"} if dev and skaal_src_dir.is_dir() else None
+    uv_sources: dict[str, str] = {}
+    if dev and skaal_src_dir.is_dir():
+        uv_sources["skaal"] = "./_skaal"
+    if has_mesh:
+        uv_sources["skaal-mesh"] = "./mesh"
     pyproject_path = output_dir / "pyproject.toml"
     pyproject_path.write_text(
-        to_pyproject_toml(app.name, deps, uv_sources=uv_sources), encoding="utf-8"
+        to_pyproject_toml(app.name, deps, uv_sources=uv_sources or None), encoding="utf-8"
     )
     generated.append(pyproject_path)
 
     # ── Dockerfile ────────────────────────────────────────────────────────────
+    gunicorn_worker = "" if is_wsgi else ', "-k", "uvicorn.workers.UvicornWorker"'
     dockerfile_path = output_dir / "Dockerfile"
-    dockerfile_path.write_text(render("local/Dockerfile"), encoding="utf-8")
+    dockerfile_path.write_text(
+        render("local/Dockerfile", gunicorn_worker=gunicorn_worker), encoding="utf-8"
+    )
     generated.append(dockerfile_path)
 
     # ── source package ────────────────────────────────────────────────────────
@@ -405,7 +444,9 @@ def generate_artifacts(
     # ── docker-compose.yml ────────────────────────────────────────────────────
     compose_path = output_dir / "docker-compose.yml"
     compose_path.write_text(
-        _build_docker_compose(plan, deploy_config.port, source_pkg=top_pkg, app=app, dev=dev),
+        _build_docker_compose(
+            plan, deploy_config.port, source_pkg=top_pkg, app=app, dev=dev, is_wsgi=is_wsgi
+        ),
         encoding="utf-8",
     )
     generated.append(compose_path)

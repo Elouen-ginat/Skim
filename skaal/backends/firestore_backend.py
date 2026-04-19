@@ -138,7 +138,7 @@ class FirestoreBackend:
 
         def _apply() -> Any:
             try:
-                from google.api_core import exceptions as g_exc  # type: ignore[import-untyped]
+                from google.api_core import exceptions as g_exc
                 from google.cloud import firestore
             except ImportError as exc:  # pragma: no cover
                 raise SkaalUnavailable(
@@ -148,7 +148,7 @@ class FirestoreBackend:
             db = self._get_client()
             doc_ref = self._col().document(key)
 
-            @firestore.transactional  # type: ignore[misc]
+            @firestore.transactional
             def _update_in_txn(txn: Any) -> Any:
                 doc = doc_ref.get(transaction=txn)
                 current = json.loads(doc.get("value")) if doc.exists else None

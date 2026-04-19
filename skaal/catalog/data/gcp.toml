@@ -1,0 +1,176 @@
+# Skaal Infrastructure Catalog — Google Cloud Platform
+# Loaded by the Z3 solver during `skaal plan`.
+
+[storage.memorystore-redis]
+display_name = "Cloud Memorystore (Redis)"
+read_latency  = { min = 0.1, max = 2.0, unit = "ms" }
+write_latency = { min = 0.1, max = 5.0, unit = "ms" }
+durability    = ["ephemeral", "persistent"]
+max_size_gb   = 300
+access_patterns = ["random-read", "random-write", "pub-sub"]
+cost_per_gb_month = 3.20
+requires_vpc  = true
+regions = ["all"]
+
+[storage.memorystore-redis.deploy]
+redis_version  = "REDIS_7_0"
+tier           = "BASIC"
+memory_size_gb = 1
+
+[storage.memorystore-redis.wire]
+class_name      = "RedisBackend"
+module          = "redis_backend"
+env_prefix      = "SKAAL_REDIS_URL"
+uses_namespace  = true
+requires_vpc    = true
+local_service   = "redis"
+local_env_value = "redis://redis:6379"
+extra_deps      = []
+
+[storage.cloud-sql-postgres]
+display_name = "Cloud SQL (PostgreSQL 16)"
+read_latency  = { min = 1.0, max = 50.0, unit = "ms" }
+write_latency = { min = 2.0, max = 100.0, unit = "ms" }
+durability    = ["persistent", "durable"]
+max_size_gb   = 30_720
+access_patterns = ["random-read", "sequential", "transactional"]
+cost_per_gb_month = 0.17
+requires_vpc  = true
+regions = ["all"]
+
+[storage.cloud-sql-postgres.deploy]
+database_version    = "POSTGRES_16"
+tier                = "db-f1-micro"
+backup_enabled      = true
+deletion_protection = false
+
+[storage.cloud-sql-postgres.wire]
+class_name      = "PostgresBackend"
+module          = "postgres_backend"
+env_prefix      = "SKAAL_DB_DSN"
+uses_namespace  = true
+requires_vpc    = true
+local_service   = "postgres"
+local_env_value = "postgresql://skaal_user:skaal_pass@postgres/skaal_db"
+extra_deps      = ["cloud-sql-python-connector[asyncpg]>=1.9"]
+
+[storage.gcs]
+display_name = "Google Cloud Storage"
+read_latency  = { min = 50, max = 500, unit = "ms" }
+write_latency = { min = 100, max = 2000, unit = "ms" }
+durability    = ["durable"]
+max_size_gb   = 0
+access_patterns = ["append-only", "bulk-read"]
+cost_per_gb_month = 0.020
+regions = ["all"]
+
+[storage.firestore.wire]
+class_name  = "FirestoreBackend"
+module      = "firestore_backend"
+env_prefix  = "SKAAL_COLLECTION"
+
+[storage.firestore]
+display_name = "Cloud Firestore"
+read_latency  = { min = 5.0, max = 50.0, unit = "ms" }
+write_latency = { min = 5.0, max = 50.0, unit = "ms" }
+durability    = ["durable"]
+max_size_gb   = 0
+access_patterns = ["random-read", "random-write"]
+cost_per_gb_month = 0.18
+regions = ["all"]
+notes = "Document store; eventual or strong consistency selectable"
+
+[storage.pubsub]
+display_name = "Cloud Pub/Sub"
+read_latency  = { min = 5.0, max = 30.0, unit = "ms" }
+write_latency = { min = 5.0, max = 30.0, unit = "ms" }
+durability    = ["durable"]
+max_size_gb   = 0
+access_patterns = ["pub-sub", "append-only"]
+cost_per_gb_month = 0.04
+regions = ["all"]
+notes = "Preferred for pub-sub access pattern when residency requires GCP"
+
+# ── Compute ────────────────────────────────────────────────────────────────
+
+[compute.n2-standard-2]
+display_name = "n2-standard-2"
+vcpus = 2
+memory_gb = 8
+compute_types = ["cpu"]
+cost_per_hour = 0.097
+
+[compute.n2-standard-4]
+display_name = "n2-standard-4"
+vcpus = 4
+memory_gb = 16
+compute_types = ["cpu"]
+cost_per_hour = 0.194
+
+[compute.n2-standard-8]
+display_name = "n2-standard-8"
+vcpus = 8
+memory_gb = 32
+compute_types = ["cpu"]
+cost_per_hour = 0.388
+
+[compute.n2-highmem-4]
+display_name = "n2-highmem-4"
+vcpus = 4
+memory_gb = 32
+compute_types = ["cpu"]
+cost_per_hour = 0.222
+notes = "Memory-optimised"
+
+[compute.a2-highgpu-1g]
+display_name = "a2-highgpu-1g"
+vcpus = 12
+memory_gb = 85
+gpu_count = 1
+gpu_model = "A100"
+compute_types = ["gpu"]
+cost_per_hour = 3.67
+
+[compute.a2-highgpu-4g]
+display_name = "a2-highgpu-4g"
+vcpus = 48
+memory_gb = 340
+gpu_count = 4
+gpu_model = "A100"
+compute_types = ["gpu"]
+cost_per_hour = 14.69
+
+[compute.cloud-run]
+display_name = "Cloud Run"
+vcpus = 0   # varies (up to 8)
+memory_gb = 0.128
+compute_types = ["cpu"]
+cold_start_ms = 100
+cost_per_invocation = 0.00000024
+notes = "Preferred for bursty, stateless workloads"
+
+[compute.cloud-run.deploy]
+memory        = "512Mi"
+cpu           = "1000m"
+concurrency   = 80
+# 0 = scale to zero when idle (cold starts possible).
+# Set >= 1 to keep instances warm at the cost of always-on billing.
+min_instances = 0
+max_instances = 1000
+
+# ── Network ────────────────────────────────────────────────────────────────
+
+[network.same-zone]
+display_name = "Same Zone"
+latency_ms = { min = 0.1, max = 0.5 }
+bandwidth_gbps = 32
+
+[network.same-region]
+display_name = "Same Region"
+latency_ms = { min = 1.0, max = 5.0 }
+bandwidth_gbps = 10
+
+[network.cross-region]
+display_name = "Cross Region"
+latency_ms = { min = 20, max = 150 }
+bandwidth_gbps = 2

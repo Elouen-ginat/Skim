@@ -91,7 +91,7 @@ class _Bulkhead:
 
     async def guard(self, call: Callable[[], Awaitable[Any]]) -> Any:
         if self.policy.max_wait_ms <= 0:
-            if not self._sem.locked() or self._sem._value > 0:  # type: ignore[attr-defined]
+            if not self._sem.locked() or self._sem._value > 0:
                 async with self._sem:
                     return await call()
             # No slot free and caller opted for fail-fast.
@@ -99,9 +99,7 @@ class _Bulkhead:
         try:
             await asyncio.wait_for(self._sem.acquire(), timeout=self.policy.max_wait_ms / 1000.0)
         except asyncio.TimeoutError as exc:
-            raise SkaalUnavailable(
-                f"bulkhead wait exceeded {self.policy.max_wait_ms}ms"
-            ) from exc
+            raise SkaalUnavailable(f"bulkhead wait exceeded {self.policy.max_wait_ms}ms") from exc
         try:
             return await call()
         finally:
@@ -223,9 +221,13 @@ class ResilientInvoker:
     ) -> None:
         self.fn = fn
         self.compute = compute
-        self._breaker = _Breaker(compute.circuit_breaker) if compute and compute.circuit_breaker else None
+        self._breaker = (
+            _Breaker(compute.circuit_breaker) if compute and compute.circuit_breaker else None
+        )
         self._bulkhead = _Bulkhead(compute.bulkhead) if compute and compute.bulkhead else None
-        self._ratelimit = _RateLimiter(compute.rate_limit) if compute and compute.rate_limit else None
+        self._ratelimit = (
+            _RateLimiter(compute.rate_limit) if compute and compute.rate_limit else None
+        )
         self._fallback: Callable[..., Any] | None = None
         if (
             compute
@@ -246,23 +248,26 @@ class ResilientInvoker:
 
         if self._ratelimit is not None:
             _inner = call
+            _rate = self._ratelimit
 
             async def _rl() -> Any:
-                return await self._ratelimit.guard(_inner, kwargs)
+                return await _rate.guard(_inner, kwargs)
 
             call = _rl
 
         if self._bulkhead is not None:
             _inner2 = call
+            _bulk = self._bulkhead
 
             async def _bh() -> Any:
-                return await self._bulkhead.guard(_inner2)
+                return await _bulk.guard(_inner2)
 
             call = _bh
 
         if self._breaker is not None:
             _inner3 = call
             _fb = self._fallback
+            _brk = self._breaker
 
             async def _fallback_call() -> Any:
                 if _fb is None:
@@ -272,7 +277,7 @@ class ResilientInvoker:
                 return _fb(**kwargs)
 
             async def _cb() -> Any:
-                return await self._breaker.guard(_inner3, _fallback_call if _fb else None)
+                return await _brk.guard(_inner3, _fallback_call if _fb else None)
 
             call = _cb
 

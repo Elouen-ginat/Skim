@@ -26,17 +26,17 @@ _MAX_BODY_SIZE = 10 * 1024 * 1024
 
 
 class MeshRuntime:
-    """Distributed runtime that delegates cross-node routing to the Rust mesh.
+    """Distributed runtime that delegates agent routing and channels to the Rust mesh.
 
     The HTTP server / dispatch path mirrors :class:`~skaal.runtime.local.LocalRuntime`
     so existing Starlette / uvicorn plumbing is reused.  The mesh layer adds:
 
-    - **Function routing**: ``route_invoke`` decides whether a call should be
-      handled locally or forwarded to another node.
-    - **Agent placement**: ``route_agent_call`` activates agents on the
-      least-loaded node.
-    - **Distributed channels**: ``channel_publish`` / ``channel_consume`` use
-      the Rust-side topic buffer (in-process for now; gRPC in a later release).
+    - **Agent placement**: :meth:`route_agent` wraps
+      ``SkaalMesh.route_agent_call`` so agent calls resolve to a live instance.
+    - **Distributed channels**: :meth:`channel_publish` forwards to
+      ``SkaalMesh.publish`` (``tokio::sync::broadcast``-backed pub/sub).
+    - **Health**: :meth:`health` returns the mesh's aggregated health snapshot
+      (agents, state, migrations, channels).
     """
 
     def __init__(
@@ -45,12 +45,12 @@ class MeshRuntime:
         *,
         host: str = "127.0.0.1",
         port: int = 8000,
-        plan_json: str = "{}",
+        plan_json: str = "",
         node_id: str | None = None,
         backend_overrides: dict[str, Any] | None = None,
     ) -> None:
         try:
-            import skaal_mesh  # type: ignore[import-untyped]
+            import skaal_mesh
         except ImportError as exc:
             raise ImportError(
                 "MeshRuntime requires the skaal_mesh native extension.\n"
@@ -61,7 +61,11 @@ class MeshRuntime:
         self.app = app
         self.host = host
         self.port = port
-        self._mesh = skaal_mesh.SkaalMesh(app.name, plan_json, node_id)
+        if plan_json:
+            plan_dict = json.loads(plan_json)
+            plan_dict.setdefault("app_name", app.name)
+            plan_json = json.dumps(plan_dict)
+        self._mesh = skaal_mesh.SkaalMesh(app.name, plan_json)
         self._backends: dict[str, Any] = {}
         self._backend_overrides = backend_overrides or {}
         self._patch_storage()
@@ -152,21 +156,12 @@ class MeshRuntime:
                 except json.JSONDecodeError as exc:
                     return {"error": f"Invalid JSON: {exc}"}, 400
 
-            # Ask the mesh where to run this function.
-            # TODO: forward to remote node when target != self.node_id
-            try:
-                _target_node, _ = self._mesh.route_invoke(fn_name, json.dumps(kwargs))
-            except KeyError:
-                pass
-
             invoker = self._invokers.get(fn_name)
             try:
                 if invoker is not None:
                     result = await invoker(**kwargs)
                 else:
-                    result = (
-                        await fn(**kwargs) if inspect.iscoroutinefunction(fn) else fn(**kwargs)
-                    )
+                    result = await fn(**kwargs) if inspect.iscoroutinefunction(fn) else fn(**kwargs)
                 return result, 200
             except TypeError as exc:
                 return {"error": f"Bad arguments for {fn_name!r}: {exc}"}, 422
@@ -211,7 +206,6 @@ class MeshRuntime:
         for backend in self._backends.values():
             with contextlib.suppress(Exception):
                 await backend.close()
-        self._mesh.shutdown()
 
     async def _serve_skaal(self) -> None:
         try:
@@ -229,9 +223,7 @@ class MeshRuntime:
 
         funcs = self._function_cache
         public_fns = [n for n in sorted(funcs) if not hasattr(funcs[n], "__skaal_schedule__")]
-        mesh_health = json.loads(self._mesh.health_snapshot())
-
-        print(f"\n  Skaal mesh runtime — {self.app.name}  [node: {mesh_health.get('node_id')}]")
+        print(f"\n  Skaal mesh runtime — {self.app.name}")
         print(f"  http://{self.host}:{self.port}\n")
         for name in public_fns:
             print(f"    POST /{name}")
@@ -255,17 +247,11 @@ class MeshRuntime:
 
     # ── Mesh bridge API (used by engines / agents) ────────────────────────────
 
-    def register_node(self, node_id: str, address: str, functions: list[str] | None = None) -> None:
-        self._mesh.register_node(node_id, address, functions)
-
     def route_agent(self, agent_type: str, agent_id: str, method: str, args: dict[str, Any]) -> str:
         return self._mesh.route_agent_call(agent_type, agent_id, method, json.dumps(args))
 
-    def channel_publish(self, topic: str, message: Any) -> None:
-        self._mesh.channel_publish(topic, json.dumps(message))
-
-    def channel_consume(self, topic: str) -> list[Any]:
-        return [json.loads(m) for m in self._mesh.channel_consume(topic)]
+    def channel_publish(self, topic: str, message: Any) -> int:
+        return self._mesh.publish(topic, json.dumps(message))
 
     def health(self) -> dict[str, Any]:
         return json.loads(self._mesh.health_snapshot())

@@ -71,10 +71,13 @@ dev = [
     "pytest-httpx>=0.30",
     "ruff>=0.4",
     "mypy>=1.8",
+    "types-redis>=4.6",
     "hatchling",
     "maturin>=1.4",
     "build>=1.0",
     "pre-commit>=3.6",
+    # Rust mesh extension — compiled from source via maturin on `uv sync`
+    "skaal-mesh",
 ]
 examples = [
     "dash",
@@ -103,11 +106,15 @@ firestore = "skaal.backends.firestore_backend:FirestoreBackend"
 local = "skaal.channel:wire_local"
 redis = "skaal.channel:wire_redis"
 
+[tool.uv.sources]
+skaal-mesh = { path = "mesh", editable = true }
+
 [tool.hatch.build.targets.wheel]
 packages = ["skaal"]
 # Include non-Python template files (Dockerfile, Pulumi.yaml, etc.)
 artifacts = [
     "skaal/deploy/templates/**",
+    "skaal/catalog/data/**",
 ]
 
 [tool.ruff]
