@@ -207,8 +207,10 @@ class PostgresBackend:
                     return updated
         except asyncpg.exceptions.SerializationError as exc:
             raise SkaalConflict(f"atomic_update on {key!r} lost a race") from exc
-        except (asyncpg.exceptions.ConnectionDoesNotExistError,
-                asyncpg.exceptions.InterfaceError) as exc:
+        except (
+            asyncpg.exceptions.ConnectionDoesNotExistError,
+            asyncpg.exceptions.InterfaceError,
+        ) as exc:
             raise SkaalUnavailable(f"Postgres unavailable: {exc}") from exc
 
     async def close(self) -> None:

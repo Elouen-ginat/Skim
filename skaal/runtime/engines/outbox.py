@@ -29,9 +29,7 @@ class OutboxEngine:
         #     await orders_outbox.write(key, payload)
         if not hasattr(self.outbox, "write"):
             setattr(self.outbox, "write", self._write_factory())
-        self._task = asyncio.create_task(
-            self._relay_loop(), name=f"outbox:{self._outbox_name()}"
-        )
+        self._task = asyncio.create_task(self._relay_loop(), name=f"outbox:{self._outbox_name()}")
 
     async def stop(self) -> None:
         self._stopping.set()
@@ -102,9 +100,7 @@ class OutboxEngine:
                     delivered_any = True
                 if not delivered_any:
                     try:
-                        await asyncio.wait_for(
-                            self._stopping.wait(), timeout=self.poll_interval
-                        )
+                        await asyncio.wait_for(self._stopping.wait(), timeout=self.poll_interval)
                     except asyncio.TimeoutError:
                         continue
         except asyncio.CancelledError:

@@ -129,8 +129,14 @@ class TestStorageBackendProtocol:
         # just verify the class has the required methods so protocol conformance
         # is structurally satisfied.
         required = {
-            "get", "set", "delete", "list", "scan",
-            "increment_counter", "atomic_update", "close",
+            "get",
+            "set",
+            "delete",
+            "list",
+            "scan",
+            "increment_counter",
+            "atomic_update",
+            "close",
         }
         missing: dict[str, set[str]] = {}
         for name, cls in registered.items():
@@ -152,9 +158,7 @@ class TestCRUDContract:
             assert await b.get("k") == {"value": 42}
 
     @pytest.mark.asyncio
-    async def test_get_missing_returns_none(
-        self, backend_factory: Any, tmp_path: Path
-    ) -> None:
+    async def test_get_missing_returns_none(self, backend_factory: Any, tmp_path: Path) -> None:
         async with backend_factory(tmp_path) as b:
             assert await b.get("does-not-exist") is None
 
@@ -166,9 +170,7 @@ class TestCRUDContract:
             assert await b.get("k") is None
 
     @pytest.mark.asyncio
-    async def test_delete_missing_is_noop(
-        self, backend_factory: Any, tmp_path: Path
-    ) -> None:
+    async def test_delete_missing_is_noop(self, backend_factory: Any, tmp_path: Path) -> None:
         async with backend_factory(tmp_path) as b:
             # Must not raise.
             await b.delete("never-set")
@@ -183,9 +185,7 @@ class TestCRUDContract:
             assert hits == {"event:1": {"t": "click"}, "event:2": {"t": "hover"}}
 
     @pytest.mark.asyncio
-    async def test_increment_counter(
-        self, backend_factory: Any, tmp_path: Path
-    ) -> None:
+    async def test_increment_counter(self, backend_factory: Any, tmp_path: Path) -> None:
         async with backend_factory(tmp_path) as b:
             assert await b.increment_counter("c", delta=1) == 1
             assert await b.increment_counter("c", delta=5) == 6
@@ -195,6 +195,7 @@ class TestCRUDContract:
         self, backend_factory: Any, tmp_path: Path
     ) -> None:
         async with backend_factory(tmp_path) as b:
+
             def init(current: Any) -> dict[str, int]:
                 assert current is None
                 return {"n": 1}

@@ -8,7 +8,7 @@ version = "0.2.0"
 description = "Infrastructure as Constraints — write it once, scale it with a word."
 readme = "README.md"
 license = { file = "LICENSE" }
-requires-python = ">=3.11"
+requires-python = ">=3.11,<3.13"
 keywords = ["infrastructure", "constraints", "cloud", "deployment", "z3", "solver"]
 classifiers = [
     "Development Status :: 3 - Alpha",
@@ -56,12 +56,8 @@ gcp = [
     "pulumi-gcp>=7.0",
 ]
 mesh = [
-    # The skaal_mesh extension module is built from mesh/ via maturin:
-    #   maturin build --manifest-path mesh/Cargo.toml --release
-    #   pip install target/wheels/skaal-*.whl
-    # This extra exists so `pip install skaal[mesh]` documents the intent;
-    # the wheel must be pre-built since maturin isn't a PEP 517 build dep
-    # of the pure-Python skaal package.
+    # Rust mesh extension — compiled from source via maturin on `uv sync`
+    "skaal-mesh",
 ]
 
 [dependency-groups]
