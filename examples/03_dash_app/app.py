@@ -2,8 +2,8 @@
 Dash app with server-side per-user state via Skaal.
 
 Demonstrates:
-  - app.mount_wsgi() to register a WSGI app for deploy
-  - Map[str, UserState] as scalable session storage
+    - app.mount_wsgi() to register a WSGI app for deploy
+    - Store[UserState] as scalable session storage
   - Sessions.sync_get / sync_set — safe in Dash's sync callbacks
 
 Run locally (no Dash install needed to import this as a module):
@@ -35,7 +35,7 @@ import dash_bootstrap_components as dbc  # type: ignore[import]
 from dash import Input, Output, State, callback, dcc, html
 from pydantic import BaseModel
 
-from skaal import App, Map
+from skaal import App, Store
 
 # ── Domain model ──────────────────────────────────────────────────────────────
 
@@ -57,7 +57,7 @@ skaal_app = App("dash-demo")
     durability="ephemeral",  # session data; Redis/Memorystore preferred
     access_pattern="random-read",
 )
-class Sessions(Map[str, UserState]):
+class Sessions(Store[UserState]):
     """Per-user session state, keyed by session ID."""
 
 

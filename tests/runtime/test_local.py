@@ -9,7 +9,7 @@ import pytest
 from skaal import App
 from skaal.backends.local_backend import LocalMap
 from skaal.runtime.local import LocalRuntime
-from skaal.storage import Map
+from skaal.storage import Store
 
 # ── Storage tests ──────────────────────────────────────────────────────────────
 
@@ -44,7 +44,7 @@ def _make_counter_app() -> App:
     app = App("test-counter")
 
     @app.storage(read_latency="< 5ms", durability="ephemeral")
-    class Counts(Map[str, int]):
+    class Counts(Store[int]):
         pass
 
     @app.function()

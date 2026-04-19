@@ -36,7 +36,7 @@ def storage(
     decommission_policy: DecommissionPolicy | None = None,
     collocate_with: str | None = None,
 ) -> Callable[[C], C]:
-    """Declare infrastructure constraints for a storage variable or Map class."""
+    """Declare infrastructure constraints for a storage variable or Store class."""
 
     def decorator(cls: C) -> C:
         _rl: Latency | None
@@ -51,7 +51,7 @@ def storage(
         else:
             _wl = write_latency
 
-        # Collect schema hints from Map / Collection subclasses
+        # Collect schema hints from Store subclasses
         try:
             from skaal.storage import _schema_hints
 

@@ -50,7 +50,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from skaal import App, Map
+from skaal import App, Store
 
 # ── App declaration ────────────────────────────────────────────────────────────
 
@@ -58,7 +58,7 @@ app = App("mesh-counter")
 
 
 @app.storage(read_latency="< 5ms", durability="ephemeral")
-class Counts(Map[str, int]):
+class Counts(Store[int]):
     """Named integer counters.
 
     Constraint ``durability="ephemeral"`` lets the solver choose the fastest

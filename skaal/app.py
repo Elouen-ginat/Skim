@@ -29,7 +29,7 @@ class App(Module):
         app = App("my-service")
 
         @app.storage(read_latency="< 5ms", durability="persistent")
-        class Profiles(Map[str, Profile]):
+        class Profiles(Store[Profile]):
             pass
 
         @app.function()
@@ -63,12 +63,12 @@ class App(Module):
         Example::
 
             import dash
-            from skaal import App, Map
+            from skaal import App, Store
 
             app = App("dashboard")
 
             @app.storage(read_latency="< 5ms", durability="ephemeral", retention="30m")
-            class Sessions(Map[str, dict]):
+            class Sessions(Store[dict]):
                 pass
 
             dash_app = dash.Dash(__name__)
@@ -103,12 +103,12 @@ class App(Module):
         Example::
 
             from fastapi import FastAPI
-            from skaal import App, Map
+            from skaal import App, Store
 
             skaal_app = App("api")
 
             @skaal_app.storage(read_latency="< 10ms", durability="persistent")
-            class Items(Map[str, Item]):
+            class Items(Store[Item]):
                 pass
 
             fastapi_app = FastAPI()

@@ -5,10 +5,10 @@ Demonstrates most Skaal features in one realistic application:
 
   Storage
   -------
-  - Sessions   Map[str, SessionState]   ephemeral, random-read (Redis / Memorystore)
-  - Users      Map[str, User]           persistent, collocated with Tasks
-  - Tasks      Map[str, Task]           persistent, random-read
-  - Stats      Map[str, StatsView]      persistent, write-heavy (aggregations)
+    - Sessions   Store[SessionState]   ephemeral, random-read (Redis / Memorystore)
+    - Users      Store[User]           persistent, collocated with Tasks
+    - Tasks      Store[Task]           persistent, random-read
+    - Stats      Store[StatsView]      persistent, write-heavy (aggregations)
 
   Patterns
   --------
@@ -68,12 +68,12 @@ from skaal import (
     CircuitBreaker,
     EventLog,
     Every,
-    Map,
     RateLimitPolicy,
     RetryPolicy,
     Saga,
     SagaStep,
     ScheduleContext,
+    Store,
 )
 from skaal.agent import Agent
 from skaal.decorators import handler
@@ -157,7 +157,7 @@ skaal_app = App("task-dashboard")
     # retention is a backend config concern (e.g. Redis TTL), not a solver
     # constraint — local catalogs don't declare it as a selectable property.
 )
-class Sessions(Map[str, SessionState]):
+class Sessions(Store[SessionState]):
     """Ephemeral per-browser session state; Redis / Memorystore preferred."""
 
 
@@ -167,7 +167,7 @@ class Sessions(Map[str, SessionState]):
     access_pattern="random-read",
     collocate_with="task-dashboard.Tasks",
 )
-class Users(Map[str, User]):
+class Users(Store[User]):
     """Registered users, co-located with Tasks for low-latency joins."""
 
 
@@ -177,7 +177,7 @@ class Users(Map[str, User]):
     durability="persistent",
     access_pattern="random-read",
 )
-class Tasks(Map[str, Task]):
+class Tasks(Store[Task]):
     """
     Primary task store.
 
@@ -197,7 +197,7 @@ class Tasks(Map[str, Task]):
     access_pattern="random-write",
     auto_optimize=True,
 )
-class Stats(Map[str, StatsView]):
+class Stats(Store[StatsView]):
     """Aggregated counters rebuilt on every task mutation."""
 
 
@@ -228,9 +228,9 @@ class AuditLog(EventLog[AuditEvent]):
     access_pattern="random-read",
     collocate_with="task-dashboard.AuditLog",
 )
-class RecentAuditEvents(Map[str, AuditEvent]):
+class RecentAuditEvents(Store[AuditEvent]):
     """
-    CQRS read-model: last 100 audit events materialised into a queryable Map.
+    CQRS read-model: last 100 audit events materialised into a queryable Store.
 
     Written synchronously alongside AuditLog so Dash callbacks can read
     the audit trail without an async context.  Keys are ISO timestamps
@@ -504,8 +504,8 @@ async def _record_audit(event: AuditEvent) -> None:
 
     Uses the async storage API throughout so every await runs inside the
     caller's event loop — no cross-loop sharing, no _sync_run detour.
-    AuditLog.append is best-effort: LocalRuntime only wires Map/Collection
-    subclasses so _backend is absent locally.
+    AuditLog.append is best-effort: LocalRuntime only wires Store subclasses,
+    so _backend is absent locally.
     """
     # AuditLog (EventLog subclass) is never instantiated as a class — it cannot
     # be called as AuditLog.append(event) without an instance.  In production
@@ -532,7 +532,7 @@ def _sync_audit(event: AuditEvent) -> None:
     """
     key = f"{event.timestamp}_{event.event_id[:8]}"
     RecentAuditEvents.sync_set(key, event)
-    # Prune oldest entries so the Map stays bounded
+    # Prune oldest entries so the Store stays bounded
     all_entries = RecentAuditEvents.sync_list()
     if len(all_entries) > 100:
         oldest_keys = sorted(k for k, _ in all_entries)[: len(all_entries) - 100]

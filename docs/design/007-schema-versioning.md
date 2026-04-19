@@ -5,7 +5,7 @@
 
 ## Context
 
-Pydantic models stored via `Map[K, V]` or `Collection[T]` evolve over time.
+Pydantic models stored via `Store[T]` evolve over time.
 Stored data may be at an older schema version than the current model.  We need
 a safe, explicit way to upgrade stored data on read.
 

@@ -1,6 +1,6 @@
 """Schema versioning and migration definitions for Skaal models.
 
-Every Pydantic model stored via Map[K, V] or Collection[T] can declare
+Every Pydantic model stored via Store[T] can declare
 a schema version and a migration function that upgrades stored data from
 the previous version.
 

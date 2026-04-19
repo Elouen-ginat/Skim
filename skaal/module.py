@@ -80,7 +80,7 @@ class Module:
         auth = Module("auth")
 
         @auth.storage(read_latency="< 5ms", durability="persistent")
-        class Sessions(skaal.Map[str, Session]):
+        class Sessions(skaal.Store[Session]):
             pass
 
         @auth.agent(persistent=True)

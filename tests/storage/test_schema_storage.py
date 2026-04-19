@@ -1,4 +1,4 @@
-"""Tests for schema-aware Map / Collection storage."""
+"""Tests for schema-aware Store storage."""
 
 from __future__ import annotations
 
@@ -6,14 +6,7 @@ import pytest
 from pydantic import BaseModel
 
 from skaal.backends.local_backend import LocalMap
-from skaal.storage import (
-    Collection,
-    Map,
-    _deserialize,
-    _primary_key_field,
-    _schema_hints,
-    _serialize,
-)
+from skaal.storage import Store, _deserialize, _primary_key_field, _schema_hints, _serialize
 
 # ── Domain models for tests ────────────────────────────────────────────────────
 
@@ -37,19 +30,19 @@ class Product(BaseModel):
     price: float
 
 
-# ── Map[K, V] type extraction ──────────────────────────────────────────────────
+# ── Store[T] type extraction ──────────────────────────────────────────────────
 
 
-def test_map_extracts_value_type():
-    class UserStore(Map[str, User]):
+def test_store_extracts_value_type():
+    class UserStore(Store[User]):
         pass
 
     assert UserStore.__skaal_value_type__ is User
     assert UserStore.__skaal_key_type__ is str
 
 
-def test_map_nested_subclass_inherits():
-    class Base(Map[str, User]):
+def test_store_nested_subclass_inherits():
+    class Base(Store[User]):
         pass
 
     class Sub(Base):
@@ -59,43 +52,43 @@ def test_map_nested_subclass_inherits():
     assert Sub.__skaal_value_type__ is User
 
 
-def test_map_primitive_value_type():
-    class Counts(Map[str, int]):
+def test_store_primitive_value_type():
+    class Counts(Store[int]):
         pass
 
     assert Counts.__skaal_value_type__ is int
 
 
-# ── Collection[T] type and key extraction ─────────────────────────────────────
+# ── Store[T] key-field extraction ─────────────────────────────────────────────
 
 
-def test_collection_extracts_value_type():
-    class Products(Collection[Product]):
+def test_store_extracts_value_type_for_model_collection():
+    class Products(Store[Product]):
         pass
 
     assert Products.__skaal_value_type__ is Product
 
 
-def test_collection_infers_key_field_from_id():
-    class Users(Collection[User]):
+def test_store_infers_key_field_from_id():
+    class Users(Store[User]):
         pass
 
     assert Users.__skaal_key_field__ == "id"
 
 
-def test_collection_infers_key_field_first_when_no_id():
+def test_store_infers_key_field_first_when_no_id():
     class NoIdModel(BaseModel):
         sku: str
         name: str
 
-    class Things(Collection[NoIdModel]):
+    class Things(Store[NoIdModel]):
         pass
 
     assert Things.__skaal_key_field__ == "sku"
 
 
-def test_collection_respects_explicit_key_field():
-    class ProductStore(Collection[Product]):
+def test_store_respects_explicit_key_field():
+    class ProductStore(Store[Product]):
         __skaal_key_field__ = "sku"
 
     assert ProductStore.__skaal_key_field__ == "sku"
@@ -126,8 +119,8 @@ def test_schema_hints_empty_for_plain_class():
     assert _schema_hints(Plain) == {}
 
 
-def test_schema_hints_for_map_with_nested_model():
-    class UserStore(Map[str, User]):
+def test_schema_hints_for_store_with_nested_model():
+    class UserStore(Store[User]):
         pass
 
     hints = _schema_hints(UserStore)
@@ -139,7 +132,7 @@ def test_schema_hints_for_map_with_nested_model():
 
 
 def test_schema_hints_flat_model():
-    class PStore(Map[str, Product]):
+    class PStore(Store[Product]):
         pass
 
     hints = _schema_hints(PStore)
@@ -202,12 +195,12 @@ def test_deserialize_json_string():
     assert result.name == "Eve"
 
 
-# ── Map.wire() ────────────────────────────────────────────────────────────────
+# ── Store.wire() ──────────────────────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
-async def test_map_get_set_returns_model():
-    class UserStore(Map[str, User]):
+async def test_store_get_set_returns_model():
+    class UserStore(Store[User]):
         pass
 
     UserStore.wire(LocalMap())
@@ -223,8 +216,8 @@ async def test_map_get_set_returns_model():
 
 
 @pytest.mark.asyncio
-async def test_map_accepts_dict_on_set():
-    class UserStore(Map[str, User]):
+async def test_store_accepts_dict_on_set():
+    class UserStore(Store[User]):
         pass
 
     UserStore.wire(LocalMap())
@@ -238,8 +231,8 @@ async def test_map_accepts_dict_on_set():
 
 
 @pytest.mark.asyncio
-async def test_map_list_returns_models():
-    class UserStore(Map[str, User]):
+async def test_store_list_returns_models():
+    class UserStore(Store[User]):
         pass
 
     UserStore.wire(LocalMap())
@@ -255,8 +248,8 @@ async def test_map_list_returns_models():
 
 
 @pytest.mark.asyncio
-async def test_map_nested_model_roundtrip():
-    class UserStore(Map[str, User]):
+async def test_store_nested_model_roundtrip():
+    class UserStore(Store[User]):
         pass
 
     UserStore.wire(LocalMap())
@@ -274,12 +267,12 @@ async def test_map_nested_model_roundtrip():
     assert result.address.country == "US"
 
 
-# ── Collection.wire() ─────────────────────────────────────────────────────────
+# ── Store model-centric helpers ───────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
-async def test_collection_add_and_get():
-    class UserCol(Collection[User]):
+async def test_store_add_and_get():
+    class UserCol(Store[User]):
         pass
 
     UserCol.wire(LocalMap())
@@ -293,8 +286,8 @@ async def test_collection_add_and_get():
 
 
 @pytest.mark.asyncio
-async def test_collection_all():
-    class UserCol(Collection[User]):
+async def test_store_all():
+    class UserCol(Store[User]):
         pass
 
     UserCol.wire(LocalMap())
@@ -310,8 +303,8 @@ async def test_collection_all():
 
 
 @pytest.mark.asyncio
-async def test_collection_remove():
-    class UserCol(Collection[User]):
+async def test_store_remove():
+    class UserCol(Store[User]):
         pass
 
     UserCol.wire(LocalMap())
@@ -323,8 +316,8 @@ async def test_collection_remove():
 
 
 @pytest.mark.asyncio
-async def test_collection_update():
-    class UserCol(Collection[User]):
+async def test_store_update_replaces_value():
+    class UserCol(Store[User]):
         pass
 
     UserCol.wire(LocalMap())
@@ -333,15 +326,16 @@ async def test_collection_update():
     await UserCol.add(user)
 
     updated = User(id="u1", name="Karl Updated", address=Address(street="2 Ave", city="MIA"))
-    await UserCol.update("u1", updated)
+    result = await UserCol.update("u1", updated)
 
-    result = await UserCol.get("u1")
     assert result.name == "Karl Updated"
+    stored = await UserCol.get("u1")
+    assert stored.name == "Karl Updated"
 
 
 @pytest.mark.asyncio
-async def test_collection_find_by_prefix():
-    class UserCol(Collection[User]):
+async def test_store_find_by_prefix():
+    class UserCol(Store[User]):
         pass
 
     UserCol.wire(LocalMap())
@@ -354,12 +348,30 @@ async def test_collection_find_by_prefix():
     assert all("Admin" in u.name for u in admins)
 
 
+@pytest.mark.asyncio
+async def test_store_update_accepts_atomic_function():
+    class UserStore(Store[User]):
+        pass
+
+    UserStore.wire(LocalMap())
+    await UserStore.add(User(id="u1", name="Lena", address=Address(street="3 Ave", city="MIA")))
+
+    def rename(current: User | None) -> User:
+        assert current is not None
+        return current.model_copy(update={"name": "Lena Updated"})
+
+    result = await UserStore.update("u1", rename)
+    assert result.name == "Lena Updated"
+    stored = await UserStore.get("u1")
+    assert stored.name == "Lena Updated"
+
+
 # ── todo_api.py integration ────────────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
 async def test_todo_api_end_to_end():
-    """Full integration test of examples/todo_api.py with typed Map storage."""
+    """Full integration test of examples/todo_api.py with typed Store storage."""
     import json
 
     from examples.todo_api import app as todo_app

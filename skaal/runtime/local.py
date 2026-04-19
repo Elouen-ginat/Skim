@@ -78,13 +78,13 @@ class LocalRuntime:
 
     def _patch_storage(self) -> None:
         """Wire all registered storage classes with appropriate backends."""
-        from skaal.storage import Collection, Map
+        from skaal.storage import Store
 
         for qname, obj in self.app._collect_all().items():
             if (
                 isinstance(obj, type)
                 and hasattr(obj, "__skaal_storage__")
-                and issubclass(obj, (Map, Collection))
+                and issubclass(obj, Store)
             ):
                 backend = (
                     self._backend_overrides.get(qname)

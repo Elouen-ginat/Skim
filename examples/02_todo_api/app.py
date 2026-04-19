@@ -1,5 +1,5 @@
 """
-Todo API — demonstrates typed Map storage with nested Pydantic models.
+Todo API — demonstrates typed Store storage with nested Pydantic models.
 
 Run locally:
 
@@ -31,7 +31,7 @@ from datetime import datetime, timezone
 
 from pydantic import BaseModel, Field
 
-from skaal import App, Map
+from skaal import App, Store
 
 # ── Domain models ──────────────────────────────────────────────────────────────
 
@@ -62,7 +62,7 @@ app = App("todos")
     durability="persistent",
     access_pattern="random-read",
 )
-class Todos(Map[str, Todo]):
+class Todos(Store[Todo]):
     """
     Persistent todo items.
 

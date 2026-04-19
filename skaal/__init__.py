@@ -29,7 +29,7 @@ from skaal.decorators import (
 from skaal.module import Module, ModuleExport
 from skaal.patterns import EventLog, Outbox, Projection, Saga, SagaStep
 from skaal.schedule import Cron, Every, Schedule, ScheduleContext
-from skaal.storage import Collection, Map
+from skaal.storage import Store
 from skaal.types import (
     Bulkhead,
     CircuitBreaker,
@@ -44,8 +44,7 @@ __all__ = [
     "App",
     "Module",
     "ModuleExport",
-    "Map",
-    "Collection",
+    "Store",
     "Agent",
     "Channel",
     # Decorators

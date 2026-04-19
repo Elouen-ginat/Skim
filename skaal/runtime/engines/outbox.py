@@ -113,7 +113,7 @@ class OutboxEngine:
 def _backend_of(storage_cls: Any) -> Any:
     """Return the wired backend on a ``@storage`` class.
 
-    ``Map`` / ``Collection`` classes keep their backend on a class-level
+    ``Store`` classes keep their backend on a class-level
     attribute after ``cls.wire(backend)`` is called.
     """
     for attr in ("_backend", "__skaal_backend__"):
