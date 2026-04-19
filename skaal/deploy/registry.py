@@ -74,6 +74,7 @@ class AWSLambdaTarget:
         source_module: str,
         app_name: str,
         config_overrides: dict[str, str] | None = None,
+        runtime_options: dict[str, Any] | None = None,
     ) -> dict[str, str]:
         from skaal.deploy.push import (
             _package_aws,
@@ -93,7 +94,15 @@ class AWSLambdaTarget:
         _package_aws(artifacts_dir, project_root, source_module)
 
         typer.echo("==> Deploying (pulumi up) ...")
-        _pulumi_up(artifacts_dir, yes=yes)
+        _pulumi_up(
+            artifacts_dir,
+            yes=yes,
+            stage="deploy AWS Lambda stack",
+            recovery_hint=(
+                "Validate AWS credentials, region configuration, and the generated Pulumi program, "
+                "then rerun `skaal deploy`."
+            ),
+        )
 
         api_url = _pulumi_output(artifacts_dir, "apiUrl")
         typer.echo(f"\nApp URL: {api_url}")
@@ -145,8 +154,10 @@ class GCPCloudRunTarget:
         source_module: str,
         app_name: str,
         config_overrides: dict[str, str] | None = None,
+        runtime_options: dict[str, Any] | None = None,
     ) -> dict[str, str]:
         from skaal.deploy.push import (
+            DeployCommandError,
             _build_push_image,
             _pulumi_config_set,
             _pulumi_output,
@@ -170,14 +181,42 @@ class GCPCloudRunTarget:
             _pulumi_config_set(artifacts_dir, config_overrides)
 
         typer.echo("==> Provisioning infrastructure (pulumi up) ...")
-        _pulumi_up(artifacts_dir, yes=yes)
+        _pulumi_up(
+            artifacts_dir,
+            yes=yes,
+            stage="provision GCP infrastructure",
+            recovery_hint=(
+                "Validate GCP credentials, region, and service APIs, then rerun `skaal deploy`."
+            ),
+        )
 
         repo = _pulumi_output(artifacts_dir, "imageRepository")
         typer.echo(f"==> Building and pushing image to {repo} ...")
-        _build_push_image(artifacts_dir, gcp_project, resolved_region, repo, app_name)
+        try:
+            _build_push_image(artifacts_dir, gcp_project, resolved_region, repo, app_name)
+        except DeployCommandError as exc:
+            raise exc.with_recovery_hint(
+                "The infrastructure stack was already created. Fix Docker or gcloud authentication "
+                "and rerun `skaal deploy`, or run `pulumi destroy` from the artifacts directory if "
+                "you need to roll the stack back completely."
+            ) from exc
 
         typer.echo("==> Deploying image to Cloud Run (pulumi up) ...")
-        _pulumi_up(artifacts_dir, yes=yes)
+        try:
+            _pulumi_up(
+                artifacts_dir,
+                yes=yes,
+                stage="deploy Cloud Run service revision",
+                recovery_hint=(
+                    "The container image may already be published. Re-run `skaal deploy` to retry the "
+                    "service update, or inspect the stack with `pulumi preview`."
+                ),
+            )
+        except DeployCommandError as exc:
+            raise exc.with_recovery_hint(
+                "The container image may already be published. Re-run `skaal deploy` to retry the "
+                "Cloud Run update after correcting the Pulumi or GCP configuration."
+            ) from exc
 
         service_url = _pulumi_output(artifacts_dir, "serviceUrl")
         typer.echo(f"\nApp URL: {service_url}")
@@ -228,11 +267,44 @@ class LocalDockerComposeTarget:
         source_module: str,
         app_name: str,
         config_overrides: dict[str, str] | None = None,
+        runtime_options: dict[str, Any] | None = None,
     ) -> dict[str, str]:
         from skaal.deploy.push import _run
 
-        typer.echo("==> Starting local stack (docker compose up --build) ...")
-        _run(["docker", "compose", "up", "--build"], cwd=artifacts_dir)
+        detach = bool((runtime_options or {}).get("detach", False))
+        follow_logs = bool((runtime_options or {}).get("follow_logs", False))
+
+        cmd = ["docker", "compose", "up", "--build"]
+        if detach:
+            cmd.append("--detach")
+
+        typer.echo(
+            "==> Starting local stack (docker compose up --build"
+            + (" --detach" if detach else "")
+            + ") ..."
+        )
+        _run(
+            cmd,
+            cwd=artifacts_dir,
+            stage="start local Docker Compose stack",
+            recovery_hint=(
+                "Confirm Docker Desktop is running and that the generated artifacts include a valid "
+                "docker-compose.yml file."
+            ),
+        )
+
+        if detach and follow_logs:
+            typer.echo("==> Following local stack logs ...")
+            _run(
+                ["docker", "compose", "logs", "--follow"],
+                cwd=artifacts_dir,
+                stage="follow local Docker Compose logs",
+                recovery_hint=(
+                    "Confirm the local compose stack is running, or rerun `docker compose up` manually "
+                    "from the artifacts directory."
+                ),
+            )
+
         return {}
 
 

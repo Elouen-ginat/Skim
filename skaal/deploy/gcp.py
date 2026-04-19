@@ -318,18 +318,21 @@ def _build_pulumi_stack(
     # ── VPC connector (required by Cloud SQL and Memorystore) ─────────────────
     service_annotations: dict[str, str] = {}
     if needs_vpc:
-        resources["vpc-connector"] = {
-            "type": "gcp:vpcaccess:Connector",
-            "properties": {
-                "name": "${pulumi.stack}-connector",
-                "region": "${gcp:region}",
-                "ipCidrRange": "10.8.0.0/28",
-                "network": "default",
-            },
-        }
+        connector_ref = deploy.vpc_connector_name
+        if connector_ref is None:
+            resources["vpc-connector"] = {
+                "type": "gcp:vpcaccess:Connector",
+                "properties": {
+                    "name": "${pulumi.stack}-connector",
+                    "region": "${gcp:region}",
+                    "ipCidrRange": deploy.vpc_connector_cidr,
+                    "network": deploy.vpc_connector_network,
+                },
+            }
+            connector_ref = "${vpc-connector.name}"
         service_annotations = {
-            "run.googleapis.com/vpc-access-connector": "${vpc-connector.name}",
-            "run.googleapis.com/vpc-access-egress": "private-ranges-only",
+            "run.googleapis.com/vpc-access-connector": connector_ref,
+            "run.googleapis.com/vpc-access-egress": deploy.vpc_connector_egress,
         }
 
     # ── Cloud Run service ─────────────────────────────────────────────────────
@@ -373,7 +376,13 @@ def _build_pulumi_stack(
         },
     }
 
-    invoker_members = profile_invokers or ["allUsers"]
+    if profile_invokers:
+        invoker_members = profile_invokers
+    elif deploy.allow_public_invoker:
+        invoker_members = ["allUsers"]
+    else:
+        invoker_members = []
+
     for idx, member in enumerate(invoker_members):
         suffix = "" if idx == 0 else f"-{idx}"
         resources[f"invoker{suffix}"] = {

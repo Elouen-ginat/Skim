@@ -19,10 +19,11 @@ The factories below will route to it automatically.
 
 from __future__ import annotations
 
+import ipaddress
 import re
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 # ── Base classes ──────────────────────────────────────────────────────────────
 
@@ -66,6 +67,8 @@ class RDSPostgresDeployConfig(StorageDeployConfig):
     port: int = Field(default=5432, ge=1, le=65535)
     backup_retention_days: int = Field(default=7, ge=0, le=35)
     deletion_protection: bool = False
+    publicly_accessible: bool = False
+    skip_final_snapshot: bool = True
 
     @field_validator("engine_version")
     @classmethod
@@ -178,6 +181,8 @@ _LAMBDA_RUNTIMES = {
 
 class LambdaDeployConfig(ComputeDeployConfig):
     runtime: str = "python3.11"
+    vpc_id: str | None = None
+    subnet_ids: list[str] = Field(default_factory=list)
     timeout: int = Field(
         default=30,
         ge=1,
@@ -220,6 +225,33 @@ class LambdaDeployConfig(ComputeDeployConfig):
             )
         return v
 
+    @field_validator("vpc_id")
+    @classmethod
+    def _valid_vpc_id(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        v = v.strip()
+        if not v:
+            raise ValueError("vpc_id must not be empty when provided.")
+        if not v.startswith("vpc-"):
+            raise ValueError(f"vpc_id must look like 'vpc-...', got {v!r}.")
+        return v
+
+    @field_validator("subnet_ids")
+    @classmethod
+    def _valid_subnet_ids(cls, v: list[str]) -> list[str]:
+        cleaned = [subnet.strip() for subnet in v if subnet.strip()]
+        for subnet in cleaned:
+            if not subnet.startswith("subnet-"):
+                raise ValueError(f"subnet_ids entries must look like 'subnet-...', got {subnet!r}.")
+        return cleaned
+
+    @model_validator(mode="after")
+    def _subnets_require_vpc(self) -> "LambdaDeployConfig":
+        if self.subnet_ids and not self.vpc_id:
+            raise ValueError("subnet_ids requires vpc_id so Skaal knows which VPC to target.")
+        return self
+
 
 # ── GCP compute ───────────────────────────────────────────────────────────────
 
@@ -230,6 +262,11 @@ _CPU_RE = re.compile(r"^\d+(\.\d+)?m?$")
 class CloudRunDeployConfig(ComputeDeployConfig):
     memory: str = "512Mi"
     cpu: str = "1000m"
+    allow_public_invoker: bool = True
+    vpc_connector_name: str | None = None
+    vpc_connector_network: str = "default"
+    vpc_connector_cidr: str = "10.8.0.0/28"
+    vpc_connector_egress: Literal["private-ranges-only", "all-traffic"] = "private-ranges-only"
     concurrency: int = Field(
         default=80,
         ge=1,
@@ -268,6 +305,42 @@ class CloudRunDeployConfig(ComputeDeployConfig):
             raise ValueError(f"cpu must be like '1000m' or '2', got {v!r}.")
         return v
 
+    @field_validator("vpc_connector_network")
+    @classmethod
+    def _valid_vpc_connector_network(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("vpc_connector_network must not be empty.")
+        return v
+
+    @field_validator("vpc_connector_name")
+    @classmethod
+    def _valid_vpc_connector_name(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        v = v.strip()
+        if not v:
+            raise ValueError("vpc_connector_name must not be empty when provided.")
+        return v
+
+    @field_validator("vpc_connector_cidr")
+    @classmethod
+    def _valid_vpc_connector_cidr(cls, v: str) -> str:
+        try:
+            network = ipaddress.ip_network(v, strict=True)
+        except ValueError as exc:
+            raise ValueError(
+                f"vpc_connector_cidr must be a valid IPv4 CIDR block, got {v!r}."
+            ) from exc
+
+        if network.version != 4:
+            raise ValueError("vpc_connector_cidr must be an IPv4 CIDR block.")
+        if network.prefixlen != 28:
+            raise ValueError(
+                f"vpc_connector_cidr must use a /28 range for Serverless VPC Access, got {v!r}."
+            )
+        return v
+
     @field_validator("max_instances")
     @classmethod
     def _max_gte_min(cls, v: int, info: Any) -> int:
@@ -286,10 +359,25 @@ class LocalStackDeployConfig(ComputeDeployConfig):
     Attributes:
         port: HTTP port to expose for the app container.
         app_service_name: Name of the app service in docker-compose.yml.
+        container_name: Docker container name for the app service.
     """
 
     port: int = Field(default=8000, ge=1, le=65535)
     app_service_name: str = "app"
+    container_name: str = "skaal-app"
+
+    @field_validator("app_service_name", "container_name")
+    @classmethod
+    def _valid_compose_name(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("Compose service names must not be empty.")
+        if not re.match(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$", v):
+            raise ValueError(
+                "Compose service names must start with a letter or digit and contain only "
+                "letters, digits, underscores, hyphens, or dots."
+            )
+        return v
 
 
 # ── Registries + factories ────────────────────────────────────────────────────

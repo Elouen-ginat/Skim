@@ -27,6 +27,8 @@ from typing import Optional
 
 import typer
 
+from skaal.errors import SkaalDeployError
+
 app = typer.Typer(help="Package and deploy previously-built artifacts.")
 
 
@@ -63,6 +65,16 @@ def deploy(
         "--yes/--no-yes",
         help="Pass --yes to pulumi up (non-interactive).",
     ),
+    detach: bool = typer.Option(
+        False,
+        "--detach",
+        help="Local target only: start Docker Compose in detached mode.",
+    ),
+    follow_logs: bool = typer.Option(
+        False,
+        "--follow-logs",
+        help="Local target only: after a detached start, follow Docker Compose logs.",
+    ),
 ) -> None:
     """
     Package the app and deploy it using Pulumi.
@@ -87,12 +99,17 @@ def deploy(
             region=region,
             gcp_project=gcp_project,
             yes=yes,
+            local_detach=detach,
+            local_follow_logs=follow_logs,
         )
     except FileNotFoundError as exc:
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(1) from exc
     except ValueError as exc:
         typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(1) from exc
+    except SkaalDeployError as exc:
+        typer.echo(f"Deploy failed:\n{exc}", err=True)
         raise typer.Exit(1) from exc
     except Exception as exc:  # noqa: BLE001
         typer.echo(f"Deploy failed: {exc}", err=True)

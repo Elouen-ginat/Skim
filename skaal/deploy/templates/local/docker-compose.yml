@@ -2,11 +2,11 @@ version: '3.8'
 
 services:
   # Main application service
-  app:
+  ${app_service_name}:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: skaal-app
+    container_name: ${app_container_name}
     ports:
       - "${port}:8000"
     environment:

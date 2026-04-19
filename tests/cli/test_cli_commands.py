@@ -117,6 +117,32 @@ def test_build_command(runner: CliRunner, temp_catalog: Path, tmp_path: Path) ->
     assert "--help" in result.output or result.exit_code == 0
 
 
+def test_deploy_command_surfaces_deploy_error(runner: CliRunner) -> None:
+    """Deploy-specific errors should be printed with their detailed context."""
+    from skaal.errors import SkaalDeployError
+
+    with mock.patch(
+        "skaal.api.deploy",
+        side_effect=SkaalDeployError("Deployment step failed: deploy AWS Lambda stack"),
+    ):
+        result = runner.invoke(cli_app, ["deploy"])
+
+    assert result.exit_code == 1
+    assert "Deploy failed:" in result.output
+    assert "Deployment step failed: deploy AWS Lambda stack" in result.output
+
+
+def test_deploy_command_forwards_local_runtime_flags(runner: CliRunner) -> None:
+    """CLI deploy flags should reach the API layer for the local target."""
+    with mock.patch("skaal.api.deploy") as fake:
+        result = runner.invoke(cli_app, ["deploy", "--detach", "--follow-logs"])
+
+    assert result.exit_code == 0
+    call_kwargs = fake.call_args.kwargs
+    assert call_kwargs["local_detach"] is True
+    assert call_kwargs["local_follow_logs"] is True
+
+
 def test_cli_help(runner: CliRunner) -> None:
     """Test CLI help output."""
     result = runner.invoke(cli_app, ["--help"])

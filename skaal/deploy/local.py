@@ -53,6 +53,7 @@ def _kong_config(
     auth: dict[str, Any] | None,
     rate_limit: dict[str, Any] | None,
     cors_origins: list[str] | None,
+    app_service_name: str = "app",
 ) -> str:
     """Generate a Kong DB-less declarative configuration (kong.yml)."""
     lines: list[str] = [
@@ -61,7 +62,7 @@ def _kong_config(
         "",
         "services:",
         "  - name: skaal-app",
-        "    url: http://app:8000",
+        f"    url: http://{app_service_name}:8000",
         "    routes:",
     ]
 
@@ -125,6 +126,8 @@ def _build_docker_compose(
     app: Any = None,
     dev: bool = False,
     is_wsgi: bool = False,
+    app_service_name: str = "app",
+    app_container_name: str = "skaal-app",
 ) -> str:
     """Build a ``docker-compose.yml`` string with the app service and any
     required storage backend services.
@@ -237,6 +240,8 @@ def _build_docker_compose(
         "local/docker-compose.yml",
         port=str(port),
         source_pkg=source_pkg,
+        app_service_name=app_service_name,
+        app_container_name=app_container_name,
         service_env_vars="\n".join(env_vars) if env_vars else "      {}",
         service_dependencies=depends_on_str,
         app_labels=app_labels,
@@ -436,6 +441,7 @@ def generate_artifacts(
                     auth=gw_comp.config.get("auth"),
                     rate_limit=gw_comp.config.get("rate_limit"),
                     cors_origins=gw_comp.config.get("cors_origins"),
+                    app_service_name=deploy_config.app_service_name,
                 ),
                 encoding="utf-8",
             )
@@ -445,7 +451,14 @@ def generate_artifacts(
     compose_path = output_dir / "docker-compose.yml"
     compose_path.write_text(
         _build_docker_compose(
-            plan, deploy_config.port, source_pkg=top_pkg, app=app, dev=dev, is_wsgi=is_wsgi
+            plan,
+            deploy_config.port,
+            source_pkg=top_pkg,
+            app=app,
+            dev=dev,
+            is_wsgi=is_wsgi,
+            app_service_name=deploy_config.app_service_name,
+            app_container_name=deploy_config.container_name,
         ),
         encoding="utf-8",
     )

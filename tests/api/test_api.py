@@ -395,3 +395,89 @@ def test_deploy_forwards_to_package_and_push(tmp_path: Path) -> None:
     call_kwargs = fake.call_args.kwargs
     assert call_kwargs["stack"] == "dev"
     assert call_kwargs["region"] == "us-east-1"
+    assert call_kwargs["runtime_options"] == {"detach": False, "follow_logs": False}
+
+
+def test_deploy_forwards_local_runtime_options(tmp_path: Path) -> None:
+    """api.deploy() should forward local runtime flags to the deploy target layer."""
+    artifacts = tmp_path / "artifacts"
+    artifacts.mkdir()
+
+    with mock.patch("skaal.deploy.push.package_and_push") as fake:
+        fake.return_value = {}
+        api.deploy(artifacts, local_detach=True, local_follow_logs=True)
+
+    call_kwargs = fake.call_args.kwargs
+    assert call_kwargs["runtime_options"] == {"detach": True, "follow_logs": True}
+
+
+def test_deploy_pre_hook_failure_skips_package_and_push(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failing pre-deploy hook aborts before the deploy executor runs."""
+    from skaal.deploy.push import write_meta
+    from skaal.errors import SkaalHookError
+
+    artifacts = tmp_path / "artifacts"
+    artifacts.mkdir()
+    write_meta(artifacts, target="aws", source_module="examples.counter", app_name="demo")
+
+    class _Settings:
+        stack = "dev"
+        region = "us-east-1"
+        gcp_project = None
+        overrides: dict[str, str] = {}
+        deletion_protection = None
+        pre_deploy = [["missing-pre-hook"]]
+        post_deploy: list[list[str]] = []
+        stacks: dict[str, object] = {}
+
+        def for_stack(self, name: str | None = None):
+            self.stack = name or self.stack
+            return self
+
+    monkeypatch.setattr(api, "SkaalSettings", lambda: _Settings())
+
+    with mock.patch("skaal.deploy.push.package_and_push") as fake_push:
+        with pytest.raises(SkaalHookError) as exc_info:
+            api.deploy(artifacts)
+
+    fake_push.assert_not_called()
+    assert "no infrastructure changes were applied" in str(exc_info.value)
+
+
+def test_deploy_post_hook_failure_reports_committed_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failing post-deploy hook should explain that infra deploy already completed."""
+    from skaal.deploy.push import write_meta
+    from skaal.errors import SkaalHookError
+
+    artifacts = tmp_path / "artifacts"
+    artifacts.mkdir()
+    write_meta(artifacts, target="aws", source_module="examples.counter", app_name="demo")
+
+    class _Settings:
+        stack = "dev"
+        region = "us-east-1"
+        gcp_project = None
+        overrides: dict[str, str] = {}
+        deletion_protection = None
+        pre_deploy: list[list[str]] = []
+        post_deploy = [["missing-post-hook"]]
+        stacks: dict[str, object] = {}
+
+        def for_stack(self, name: str | None = None):
+            self.stack = name or self.stack
+            return self
+
+    monkeypatch.setattr(api, "SkaalSettings", lambda: _Settings())
+
+    with mock.patch("skaal.deploy.push.package_and_push", return_value={"apiUrl": "https://x"}):
+        with pytest.raises(SkaalHookError) as exc_info:
+            api.deploy(artifacts)
+
+    message = str(exc_info.value)
+    assert "Post-deploy hook failed." in message
+    assert "already completed" in message
+    assert "SKAAL_OUTPUT_*" in message
