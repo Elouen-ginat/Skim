@@ -48,17 +48,17 @@ def _generate_artifacts(
         )
     ]
 
-    base_deps = ["skaal[aws]"]
+    base_dependency_sets = ["aws-runtime"]
     if getattr(app, "_wsgi_attribute", None):
-        base_deps.append("mangum>=0.17")
+        base_dependency_sets.append("aws-wsgi")
     if project_has_mesh(output_dir.parent):
-        base_deps.append("skaal-mesh")
+        base_dependency_sets.append("mesh-runtime")
 
     deps = collect_runtime_dependencies(
         plan,
         source_module,
         target="aws",
-        base_deps=base_deps,
+        base_dependency_sets=base_dependency_sets,
     )
     generated.append(write_pyproject_artifact(output_dir, app_name=app.name, deps=deps))
     generated.append(

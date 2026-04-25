@@ -74,17 +74,17 @@ def _generate_artifacts(
     )
     generated.extend(bundles.generated_paths)
 
-    base_deps = ["skaal", "gunicorn>=22.0", "apscheduler>=3.10"]
+    base_dependency_sets = ["local-compose"]
     if not is_wsgi:
-        base_deps.extend(["uvicorn[standard]>=0.29", "starlette>=0.36"])
+        base_dependency_sets.append("local-asgi")
     if bundles.has_mesh:
-        base_deps.append("skaal-mesh")
+        base_dependency_sets.append("mesh-runtime")
 
     deps = collect_runtime_dependencies(
         plan,
         source_module,
         target="local",
-        base_deps=base_deps,
+        base_dependency_sets=base_dependency_sets,
     )
     generated.append(
         write_pyproject_artifact(

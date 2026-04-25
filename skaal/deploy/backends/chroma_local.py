@@ -11,7 +11,7 @@ plugin = BackendPlugin(
         module="chroma_backend",
         path_default="/app/data/chroma",
         uses_namespace=True,
-        extra_deps=("langchain-chroma>=1.1", "chromadb>=1.5"),
+        dependency_sets=("chroma-runtime",),
     ),
     supported_targets=frozenset({"local"}),
 )

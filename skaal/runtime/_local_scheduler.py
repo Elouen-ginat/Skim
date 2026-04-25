@@ -1,22 +1,24 @@
 from __future__ import annotations
 
 import inspect
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
+
+from skaal.types.runtime import RuntimeCallable, SupportsAsyncSend
 
 
 class _LocalSchedulerMixin:
     if TYPE_CHECKING:
 
-        def _collect_schedules(self) -> dict[str, Any]: ...
+        def _collect_schedules(self) -> dict[str, RuntimeCallable]: ...
 
     def _make_schedule_job(
         self,
-        fn: Any,
+        fn: RuntimeCallable,
         *,
         name: str,
-        emit_to: Any,
+        emit_to: SupportsAsyncSend | None,
         log_runs: bool,
-    ) -> Any:
+    ) -> RuntimeCallable:
         async def _job() -> None:
             from datetime import datetime, timezone
 
@@ -45,8 +47,8 @@ class _LocalSchedulerMixin:
 
     def _register_schedules(
         self,
-        scheduler: Any,
-        scheduled: dict[str, Any],
+        scheduler: object,
+        scheduled: dict[str, RuntimeCallable],
         *,
         log_runs: bool,
     ) -> None:
@@ -56,7 +58,7 @@ class _LocalSchedulerMixin:
         from skaal.schedule import Every
 
         for name, fn in scheduled.items():
-            meta = fn.__skaal_schedule__
+            meta = cast(dict[str, Any], getattr(fn, "__skaal_schedule__"))
             trigger = meta["trigger"]
             emit_to = meta.get("emit_to")
             tz = meta.get("timezone", "UTC")
@@ -66,7 +68,7 @@ class _LocalSchedulerMixin:
             else:
                 ap_trigger = CronTrigger.from_crontab(trigger.expression, timezone=tz)
 
-            scheduler.add_job(
+            scheduler.add_job(  # type: ignore[attr-defined]
                 self._make_schedule_job(
                     fn,
                     name=name,

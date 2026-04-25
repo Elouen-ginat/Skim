@@ -331,6 +331,42 @@ def test_build_runtime_returns_local_runtime(simple_app: App) -> None:
     assert runtime.port == 9999
 
 
+def test_build_runtime_from_plan_uses_local_fallbacks(simple_app: App) -> None:
+    from skaal.backends.sqlite_backend import SqliteBackend
+    from skaal.plan import PlanFile, StorageSpec
+    from skaal.runtime.local import LocalRuntime
+    from skaal.storage import Store
+
+    planned_app = App(name="planned-app")
+
+    @planned_app.storage
+    class Counter(Store[int]):
+        pass
+
+    plan_file = PlanFile(
+        app_name="planned-app",
+        deploy_target="aws",
+        storage={
+            "planned-app.Counter": StorageSpec(
+                variable_name="planned-app.Counter",
+                backend="dynamodb",
+                kind="kv",
+            )
+        },
+    )
+
+    runtime = api.build_runtime(planned_app, plan=plan_file)
+    assert isinstance(runtime, LocalRuntime)
+    assert isinstance(runtime._backends["planned-app.Counter"], SqliteBackend)
+
+
+def test_build_runtime_rejects_plan_with_runtime_shortcuts(simple_app: App) -> None:
+    from skaal.plan import PlanFile
+
+    with pytest.raises(ValueError, match="plan cannot be combined"):
+        api.build_runtime(simple_app, plan=PlanFile(app_name="test-app"), persist=True)
+
+
 def test_run_invokes_serve(simple_app: App, monkeypatch: pytest.MonkeyPatch) -> None:
     """run() constructs a runtime and awaits its serve() method."""
     called: dict[str, bool] = {"serve": False}

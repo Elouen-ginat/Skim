@@ -1,0 +1,126 @@
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any, cast
+
+from skaal.backends.base import StorageBackend
+from skaal.types.runtime import (
+    AsyncClosable,
+    BackendFactory,
+    BackendOverrides,
+    RuntimeApp,
+    RuntimeCallable,
+    RuntimeInvoker,
+    StorageClassMap,
+)
+
+if TYPE_CHECKING:
+    from skaal.runtime.engines.base import PatternEngine
+
+
+class _RuntimeCoreMixin:
+    if TYPE_CHECKING:
+        app: RuntimeApp
+        _backends: dict[str, AsyncClosable]
+        _backend_overrides: BackendOverrides
+        _engines: list[PatternEngine]
+        _function_cache: dict[str, RuntimeCallable]
+        _invokers: dict[str, RuntimeInvoker]
+        _stores: StorageClassMap
+        sagas: dict[str, object]
+
+    def _collect_storage_classes(self) -> StorageClassMap:
+        return {
+            qname: obj
+            for qname, obj in self.app._collect_all().items()
+            if isinstance(obj, type) and hasattr(obj, "__skaal_storage__")
+        }
+
+    def _patch_storage_backends(
+        self,
+        *,
+        store_factory: "BackendFactory",
+        vector_factory: "BackendFactory",
+        relational_factory: "BackendFactory",
+    ) -> None:
+        from skaal.relational import is_relational_model, wire_relational_model
+        from skaal.storage import Store
+        from skaal.vector import VectorStore, is_vector_model
+
+        stores = self._collect_storage_classes()
+        for qname, obj in stores.items():
+            backend = self._backend_overrides.get(qname) or self._backend_overrides.get(
+                obj.__name__
+            )
+
+            if is_relational_model(obj):
+                backend = backend or relational_factory(qname, obj)
+                self._backends[qname] = cast(AsyncClosable, backend)
+                wire_relational_model(obj, backend)
+                continue
+
+            if is_vector_model(obj) or issubclass(obj, VectorStore):
+                backend = backend or vector_factory(qname, obj)
+                self._backends[qname] = cast(AsyncClosable, backend)
+                cast(type[VectorStore[Any]], obj).wire(backend)
+                continue
+
+            if issubclass(obj, Store):
+                backend = backend or store_factory(qname, obj)
+                self._backends[qname] = cast(AsyncClosable, backend)
+                obj.wire(cast(StorageBackend, backend))
+
+        self._stores = stores
+
+    def _wire_local_channels(self) -> None:
+        from skaal.channel import Channel as SkaalChannel
+        from skaal.channel import wire_local
+
+        for obj in self.app._collect_all().values():
+            if isinstance(obj, SkaalChannel):
+                wire_local(obj)
+
+    def _collect_functions(self) -> dict[str, RuntimeCallable]:
+        funcs: dict[str, RuntimeCallable] = {
+            qname: obj
+            for qname, obj in self.app._collect_all().items()
+            if callable(obj) and hasattr(obj, "__skaal_compute__")
+        }
+        for name, fn in self.app._functions.items():
+            if callable(fn):
+                funcs.setdefault(name, cast(RuntimeCallable, fn))
+        for name, fn in self.app._schedules.items():
+            if callable(fn):
+                funcs.setdefault(name, cast(RuntimeCallable, fn))
+        return funcs
+
+    def _initialize_runtime_state(self) -> None:
+        from skaal.runtime.middleware import wrap_handler
+
+        self._function_cache = self._collect_functions()
+        self._invokers: dict[str, RuntimeInvoker] = {
+            name: wrap_handler(fn, fallback_lookup=self._function_cache.get)
+            for name, fn in self._function_cache.items()
+        }
+        self._engines = []
+        self.sagas = {}
+        self._stores = self._collect_storage_classes()
+
+    @property
+    def functions(self) -> dict[str, RuntimeCallable]:
+        return self._function_cache
+
+    @property
+    def stores(self) -> StorageClassMap:
+        return self._stores
+
+    async def shutdown(self) -> None:
+        import contextlib
+
+        for engine in self._engines:
+            with contextlib.suppress(Exception):
+                await engine.stop()
+        self._engines = []
+
+        for backend in self._backends.values():
+            with contextlib.suppress(Exception):
+                await backend.close()

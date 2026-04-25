@@ -32,12 +32,16 @@ def run(
         False, "--persist", help="Use SQLite for persistent local storage."
     ),
     db: str = typer.Option("skaal_local.db", "--db", help="SQLite database path (with --persist)."),
+    plan: Optional[str] = typer.Option(
+        None,
+        "--plan",
+        help="Use a solved plan file and local fallbacks to wire runtime backends.",
+    ),
     distributed: bool = typer.Option(
         False,
         "--distributed",
         help="Use the Rust mesh runtime for distributed execution (requires skaal[mesh]).",
     ),
-    node_id: str = typer.Option("node-0", "--node-id", help="Mesh node ID (with --distributed)."),
 ) -> None:
     """
     Run a Skaal app locally.
@@ -65,7 +69,9 @@ def run(
         raise typer.Exit(1)
 
     if distributed:
-        typer.echo(f"Using mesh runtime (node: {node_id})")
+        typer.echo("Using mesh runtime")
+    elif plan:
+        typer.echo(f"Using solved plan: {plan}")
     elif redis:
         typer.echo(f"Using Redis backend: {redis}")
     elif persist:
@@ -80,7 +86,7 @@ def run(
             persist=persist,
             db=db,
             distributed=distributed,
-            node_id=node_id,
+            plan=plan,
         )
     except (ValueError, ModuleNotFoundError, AttributeError) as exc:
         typer.echo(f"Error: {exc}", err=True)

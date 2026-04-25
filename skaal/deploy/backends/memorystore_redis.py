@@ -14,6 +14,7 @@ plugin = BackendPlugin(
         requires_vpc=True,
         local_service="redis",
         local_env_value="redis://redis:6379",
+        dependency_sets=("redis-runtime",),
     ),
     supported_targets=frozenset({"gcp"}),
     local_fallbacks={StorageKind.KV: "local-redis"},

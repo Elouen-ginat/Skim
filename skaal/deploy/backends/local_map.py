@@ -11,7 +11,7 @@ plugin = BackendPlugin(
         module="sqlite_backend",
         path_default="/app/data/skaal_local.db",
         uses_namespace=True,
-        extra_deps=("aiosqlite",),
+        dependency_sets=("sqlite-driver",),
     ),
     supported_targets=frozenset({"local"}),
 )

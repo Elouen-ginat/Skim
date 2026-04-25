@@ -69,19 +69,19 @@ def _generate_artifacts(
         write_rendered_artifact(output_dir, "Dockerfile", "gcp/Dockerfile", cmd_args=cmd_args)
     )
 
-    base_deps = ["skaal[gcp]"]
+    base_dependency_sets = ["gcp-runtime"]
     if is_wsgi:
-        base_deps.append("gunicorn>=22.0")
+        base_dependency_sets.append("gcp-wsgi")
     else:
-        base_deps.extend(["uvicorn[standard]>=0.29", "starlette>=0.36"])
+        base_dependency_sets.append("local-asgi")
     if bundles.has_mesh:
-        base_deps.append("skaal-mesh")
+        base_dependency_sets.append("mesh-runtime")
 
     deps = collect_runtime_dependencies(
         plan,
         source_module,
         target="gcp",
-        base_deps=base_deps,
+        base_dependency_sets=base_dependency_sets,
     )
     generated.append(
         write_pyproject_artifact(

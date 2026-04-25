@@ -7,7 +7,7 @@ class_name     = "SqliteBackend"
 module         = "sqlite_backend"
 uses_namespace = true
 path_default   = "skaal_local.db"
-extra_deps     = ["aiosqlite"]
+dependency_sets = ["sqlite-driver"]
 # No env_prefix — path is hardcoded; all workers share the same file.
 
 [storage.local-map]
@@ -28,6 +28,7 @@ class_name      = "SqliteBackend"
 module          = "sqlite_backend"
 env_prefix      = "SKAAL_SQLITE_PATH"
 local_env_value = "/app/data/skaal.db"
+dependency_sets = ["sqlite-driver"]
 
 [storage.sqlite]
 display_name = "SQLite (local file)"
@@ -47,7 +48,7 @@ env_prefix      = "SKAAL_REDIS_URL"
 uses_namespace  = true
 local_service   = "redis"
 local_env_value = "redis://redis:6379"
-extra_deps      = ["redis>=5.0"]
+dependency_sets = ["redis-runtime"]
 
 [storage.local-redis]
 display_name = "Redis (localhost)"
@@ -65,7 +66,7 @@ class_name     = "ChromaVectorBackend"
 module         = "chroma_backend"
 uses_namespace = true
 path_default   = "skaal_chroma"
-extra_deps     = ["langchain-chroma>=1.1", "chromadb>=1.5"]
+dependency_sets = ["chroma-runtime"]
 
 [storage.chroma-local]
 display_name = "Chroma (local file)"

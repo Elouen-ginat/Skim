@@ -47,7 +47,7 @@ uses_namespace  = true
 requires_vpc    = true
 local_service   = "postgres"
 local_env_value = "postgresql://skaal_user:skaal_pass@postgres/skaal_db"
-extra_deps      = ["asyncpg>=0.29"]
+dependency_sets = ["postgres-asyncpg"]
 
 [storage.rds-pgvector]
 display_name = "Amazon RDS (PostgreSQL 16 + pgvector)"
@@ -81,7 +81,7 @@ uses_namespace  = true
 requires_vpc    = true
 local_service   = "postgres"
 local_env_value = "postgresql://skaal_user:skaal_pass@postgres/skaal_db"
-extra_deps      = ["langchain-postgres>=0.0.17", "psycopg[binary]>=3.3"]
+dependency_sets = ["pgvector-runtime"]
 
 [storage.s3]
 display_name = "Amazon S3"

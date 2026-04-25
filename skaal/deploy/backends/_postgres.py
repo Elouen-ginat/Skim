@@ -13,7 +13,7 @@ def _postgres_plugin(
     kinds: frozenset[StorageKind],
     class_name: str,
     module: str,
-    extra_deps: tuple[str, ...],
+    dependency_sets: tuple[str, ...],
     local_fallbacks: dict[StorageKind, str],
 ) -> BackendPlugin:
     return BackendPlugin(
@@ -24,7 +24,7 @@ def _postgres_plugin(
             module=module,
             env_prefix="SKAAL_DB_DSN",
             uses_namespace=True,
-            extra_deps=extra_deps,
+            dependency_sets=dependency_sets,
             requires_vpc=True,
             local_service="postgres",
             local_env_value=_LOCAL_POSTGRES_DSN,
@@ -38,7 +38,7 @@ def postgres_kv_plugin(
     name: str,
     *,
     target: str,
-    extra_deps: tuple[str, ...],
+    dependency_sets: tuple[str, ...],
 ) -> BackendPlugin:
     return _postgres_plugin(
         name,
@@ -46,7 +46,7 @@ def postgres_kv_plugin(
         kinds=frozenset({StorageKind.KV, StorageKind.RELATIONAL}),
         class_name="PostgresBackend",
         module="postgres_backend",
-        extra_deps=extra_deps,
+        dependency_sets=dependency_sets,
         local_fallbacks={
             StorageKind.KV: "local-redis",
             StorageKind.RELATIONAL: "sqlite",
@@ -58,7 +58,7 @@ def postgres_vector_plugin(
     name: str,
     *,
     target: str,
-    extra_deps: tuple[str, ...],
+    dependency_sets: tuple[str, ...],
 ) -> BackendPlugin:
     return _postgres_plugin(
         name,
@@ -66,7 +66,7 @@ def postgres_vector_plugin(
         kinds=frozenset({StorageKind.VECTOR}),
         class_name="PgVectorBackend",
         module="pgvector_backend",
-        extra_deps=extra_deps,
+        dependency_sets=dependency_sets,
         local_fallbacks={StorageKind.VECTOR: "chroma-local"},
     )
 

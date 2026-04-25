@@ -8,12 +8,13 @@ from typing import TYPE_CHECKING, Any
 
 from skaal.deploy._deps import collect_user_packages
 from skaal.deploy._render import render, to_pulumi_yaml, to_pyproject_toml
+from skaal.deploy.dependencies import resolve_dependency_sets
 from skaal.deploy.packaging.source_bundle import (
     copy_dev_skaal_bundle,
     copy_mesh_bundle,
     copy_source_package,
 )
-from skaal.deploy.wiring import build_runtime_wiring, resolve_backend
+from skaal.deploy.wiring import resolve_backend
 
 if TYPE_CHECKING:
     from skaal.plan import PlanFile
@@ -79,14 +80,13 @@ def write_runtime_bootstrap(
     app: Any,
     non_wsgi_context: dict[str, Any] | None = None,
 ) -> Path:
-    backend_imports, backend_overrides = build_runtime_wiring(plan, target=target)
     wsgi_attribute: str | None = getattr(app, "_wsgi_attribute", None)
 
     context: dict[str, Any] = {
         "source_module": source_module,
         "app_var": app_var,
-        "backend_imports": backend_imports,
-        "backend_overrides": backend_overrides,
+        "plan_json_literal": repr(plan.model_dump_json()),
+        "target_name": target,
     }
     if wsgi_attribute:
         context["wsgi_attribute"] = wsgi_attribute
@@ -103,13 +103,15 @@ def collect_runtime_dependencies(
     source_module: str,
     *,
     target: str,
-    base_deps: list[str],
+    base_dependency_sets: list[str],
 ) -> list[str]:
-    deps = list(base_deps)
+    deps = resolve_dependency_sets(base_dependency_sets)
     seen = set(deps)
 
     for spec in plan.storage.values():
-        for dep in resolve_backend(spec, target=target).wiring.extra_deps:
+        for dep in resolve_dependency_sets(
+            resolve_backend(spec, target=target).wiring.dependency_sets
+        ):
             if dep not in seen:
                 deps.append(dep)
                 seen.add(dep)

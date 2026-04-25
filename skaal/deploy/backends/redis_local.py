@@ -13,7 +13,7 @@ plugin = BackendPlugin(
         uses_namespace=True,
         local_service="redis",
         local_env_value="redis://redis:6379",
-        extra_deps=("redis>=5.0",),
+        dependency_sets=("redis-runtime",),
     ),
     supported_targets=frozenset({"local"}),
 )

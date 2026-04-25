@@ -11,6 +11,7 @@ plugin = BackendPlugin(
         module="sqlite_backend",
         env_prefix="SKAAL_SQLITE_PATH",
         local_env_value="/app/data/skaal.db",
+        dependency_sets=("sqlite-driver",),
     ),
     supported_targets=frozenset({"local"}),
 )

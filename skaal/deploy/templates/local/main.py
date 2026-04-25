@@ -6,16 +6,17 @@
 import importlib
 
 _user_module = importlib.import_module("$source_module")
-$backend_imports
+from skaal.plan import PlanFile
 from skaal.runtime.local import LocalRuntime
 
+_plan = PlanFile.model_validate_json($plan_json_literal)
+
 # Wire Skaal storage and build the ASGI app.
-# LocalRuntime patches every @app.storage() class with its assigned backend.
-_runtime = LocalRuntime(
+# LocalRuntime patches every @app.storage() class from the resolved plan.
+_runtime = LocalRuntime.from_plan(
     _user_module.$app_var,
-    backend_overrides={
-$backend_overrides
-    },
+    _plan,
+    target="$target_name",
 )
 
 # ASGI callable — gunicorn is invoked in the Dockerfile CMD as:

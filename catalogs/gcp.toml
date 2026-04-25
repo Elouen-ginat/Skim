@@ -26,7 +26,7 @@ uses_namespace  = true
 requires_vpc    = true
 local_service   = "redis"
 local_env_value = "redis://redis:6379"
-extra_deps      = []
+dependency_sets = ["redis-runtime"]
 
 [storage.cloud-sql-postgres]
 display_name = "Cloud SQL (PostgreSQL 16)"
@@ -54,7 +54,7 @@ uses_namespace  = true
 requires_vpc    = true
 local_service   = "postgres"
 local_env_value = "postgresql://skaal_user:skaal_pass@postgres/skaal_db"
-extra_deps      = ["cloud-sql-python-connector[asyncpg]>=1.9"]
+dependency_sets = ["cloud-sql-connector"]
 
 [storage.cloud-sql-pgvector]
 display_name = "Cloud SQL (PostgreSQL 16 + pgvector)"
@@ -83,11 +83,7 @@ uses_namespace  = true
 requires_vpc    = true
 local_service   = "postgres"
 local_env_value = "postgresql://skaal_user:skaal_pass@postgres/skaal_db"
-extra_deps      = [
-	"cloud-sql-python-connector[asyncpg]>=1.9",
-	"langchain-postgres>=0.0.17",
-	"psycopg[binary]>=3.3",
-]
+dependency_sets = ["cloud-sql-connector", "pgvector-runtime"]
 
 [storage.gcs]
 display_name = "Google Cloud Storage"
