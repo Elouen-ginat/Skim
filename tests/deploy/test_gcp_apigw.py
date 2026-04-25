@@ -6,7 +6,11 @@ from unittest.mock import MagicMock
 
 from skaal.app import App
 from skaal.components import APIGateway, AuthConfig, Proxy, Route
-from skaal.deploy.gcp import _add_gcp_api_gateway, _build_pulumi_stack, _gcp_openapi_path
+from skaal.deploy.builders.gcp_stack import (
+    _add_gcp_api_gateway,
+    _build_pulumi_stack,
+    _gcp_openapi_path,
+)
 from skaal.plan import PlanFile, StorageSpec
 from skaal.solver.components import encode_component
 

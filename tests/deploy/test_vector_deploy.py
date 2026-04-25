@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 from skaal.app import App
-from skaal.deploy._backends import build_wiring, build_wiring_aws
-from skaal.deploy.aws import _build_pulumi_stack as build_aws_stack
-from skaal.deploy.gcp import _build_pulumi_stack as build_gcp_stack
+from skaal.deploy.builders.aws_stack import _build_pulumi_stack as build_aws_stack
+from skaal.deploy.builders.gcp_stack import _build_pulumi_stack as build_gcp_stack
+from skaal.deploy.wiring import build_runtime_wiring
 from skaal.plan import PlanFile, StorageSpec
 
 
@@ -55,7 +55,7 @@ def test_local_build_falls_back_to_chroma_for_cloud_vector_backend() -> None:
         },
     )
 
-    imports, overrides = build_wiring(plan, local=True)
+    imports, overrides = build_runtime_wiring(plan, target="local")
 
     assert "from skaal.backends.chroma_backend import ChromaVectorBackend" in imports
     assert (
@@ -63,7 +63,7 @@ def test_local_build_falls_back_to_chroma_for_cloud_vector_backend() -> None:
     )
 
 
-def test_build_wiring_aws_uses_pgvector_backend() -> None:
+def test_build_runtime_wiring_aws_uses_pgvector_backend() -> None:
     plan = PlanFile(
         app_name="demo",
         storage={
@@ -76,7 +76,7 @@ def test_build_wiring_aws_uses_pgvector_backend() -> None:
         },
     )
 
-    imports, overrides = build_wiring_aws(plan)
+    imports, overrides = build_runtime_wiring(plan, target="aws")
 
     assert "from skaal.backends.pgvector_backend import PgVectorBackend" in imports
     assert (

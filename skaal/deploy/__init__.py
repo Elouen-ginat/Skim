@@ -1,13 +1,28 @@
-"""Skaal deploy module — generates and pushes deployment artifacts.
+"""Deploy registries and orchestration for Skaal artifact build / deploy."""
 
-Public API:
-- :func:`get_target` — look up a :class:`~skaal.deploy.target.DeployTarget`
-  by name (e.g. ``"aws"``, ``"gcp"``, ``"local"``).
-- :func:`package_and_push` — package and deploy artifacts produced by
-  ``skaal build``.
-"""
+from skaal.deploy.pipeline import build_artifacts, deploy_artifacts
+from skaal.deploy.plugin import BackendPlugin
+from skaal.deploy.registry import (
+    backend_registry,
+    get_backend_plugin,
+    get_target,
+    register_backend,
+    register_target,
+    resolve_backend_plugin,
+    target_registry,
+)
+from skaal.deploy.targets.base import Target
 
-from skaal.deploy.push import package_and_push
-from skaal.deploy.registry import get_target
-
-__all__ = ["get_target", "package_and_push"]
+__all__ = [
+    "BackendPlugin",
+    "Target",
+    "backend_registry",
+    "build_artifacts",
+    "deploy_artifacts",
+    "get_backend_plugin",
+    "get_target",
+    "register_backend",
+    "register_target",
+    "resolve_backend_plugin",
+    "target_registry",
+]

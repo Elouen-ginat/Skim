@@ -5,7 +5,7 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 from skaal.components import APIGateway, Proxy, Route
-from skaal.deploy.local import _build_docker_compose, _kong_config, _traefik_labels
+from skaal.deploy.builders.local_compose import _build_docker_compose, _kong_config, _traefik_labels
 from skaal.plan import PlanFile
 from skaal.solver.components import encode_component
 

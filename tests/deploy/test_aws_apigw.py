@@ -6,8 +6,8 @@ from unittest.mock import MagicMock
 
 from skaal.app import App
 from skaal.components import APIGateway, AuthConfig, Proxy, Route
-from skaal.deploy._backends import build_wiring_aws
-from skaal.deploy.aws import _add_apigw_resources, _apigw_path, _build_pulumi_stack
+from skaal.deploy.builders.aws_stack import _add_apigw_resources, _apigw_path, _build_pulumi_stack
+from skaal.deploy.wiring import build_runtime_wiring
 from skaal.plan import ComponentSpec, PlanFile, StorageSpec
 from skaal.solver.components import encode_component
 from skaal.types import RateLimitPolicy
@@ -211,7 +211,7 @@ def test_stage_depends_on_routes():
         assert f"${{{rk}}}" in depends
 
 
-def test_build_wiring_aws_uses_planned_handlers() -> None:
+def test_build_runtime_wiring_aws_uses_planned_handlers() -> None:
     plan = PlanFile(
         app_name="demo",
         storage={
@@ -240,7 +240,7 @@ def test_build_wiring_aws_uses_planned_handlers() -> None:
         },
     )
 
-    imports, overrides = build_wiring_aws(plan)
+    imports, overrides = build_runtime_wiring(plan, target="aws")
 
     assert "from skaal.backends.dynamodb_backend import DynamoBackend" in imports
     assert "from skaal.backends.postgres_backend import PostgresBackend" in imports

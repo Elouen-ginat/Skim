@@ -169,31 +169,16 @@ def test_build_raises_without_plan(tmp_project: Path) -> None:
 def test_build_delegates_to_target(
     simple_app: App, tmp_project: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """build() resolves the target adapter and forwards its output list."""
+    """build() delegates to the deploy build pipeline."""
     plan_file = api.plan(simple_app, target="local", write=True)
 
     expected_paths = [tmp_project / "artifacts" / "main.py"]
 
-    class _FakeTarget:
-        name = "local"
-        default_region = ""
+    def _fake_build_artifacts(**kwargs):
+        assert kwargs["plan"].app_name == plan_file.app_name
+        return expected_paths
 
-        def generate_artifacts(
-            self,
-            *,
-            app,
-            plan,
-            output_dir,
-            source_module,
-            app_var,
-            region,
-            dev,
-            stack_profile=None,
-        ):
-            assert plan.app_name == plan_file.app_name
-            return expected_paths
-
-    monkeypatch.setattr("skaal.deploy.registry.get_target", lambda name: _FakeTarget())
+    monkeypatch.setattr("skaal.deploy.build_artifacts", _fake_build_artifacts)
 
     generated = api.build(app=simple_app, output_dir=tmp_project / "artifacts")
     assert generated == expected_paths
@@ -375,12 +360,12 @@ def test_deploy_raises_when_dir_missing(tmp_path: Path, monkeypatch: pytest.Monk
         api.deploy("artifacts_does_not_exist")
 
 
-def test_deploy_forwards_to_package_and_push(tmp_path: Path) -> None:
-    """deploy() resolves settings and delegates to package_and_push()."""
+def test_deploy_forwards_to_deploy_artifacts(tmp_path: Path) -> None:
+    """deploy() resolves settings and delegates to deploy_artifacts()."""
     artifacts = tmp_path / "artifacts"
     artifacts.mkdir()
 
-    with mock.patch("skaal.deploy.push.package_and_push") as fake:
+    with mock.patch("skaal.deploy.deploy_artifacts") as fake:
         fake.return_value = {"apiUrl": "https://example.com"}
         result = api.deploy(
             artifacts,
@@ -403,7 +388,7 @@ def test_deploy_forwards_local_runtime_options(tmp_path: Path) -> None:
     artifacts = tmp_path / "artifacts"
     artifacts.mkdir()
 
-    with mock.patch("skaal.deploy.push.package_and_push") as fake:
+    with mock.patch("skaal.deploy.deploy_artifacts") as fake:
         fake.return_value = {}
         api.deploy(artifacts, local_detach=True, local_follow_logs=True)
 
@@ -411,7 +396,7 @@ def test_deploy_forwards_local_runtime_options(tmp_path: Path) -> None:
     assert call_kwargs["runtime_options"] == {"detach": True, "follow_logs": True}
 
 
-def test_deploy_pre_hook_failure_skips_package_and_push(
+def test_deploy_pre_hook_failure_skips_deploy_artifacts(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A failing pre-deploy hook aborts before the deploy executor runs."""
@@ -438,7 +423,7 @@ def test_deploy_pre_hook_failure_skips_package_and_push(
 
     monkeypatch.setattr(api, "SkaalSettings", lambda: _Settings())
 
-    with mock.patch("skaal.deploy.push.package_and_push") as fake_push:
+    with mock.patch("skaal.deploy.deploy_artifacts") as fake_push:
         with pytest.raises(SkaalHookError) as exc_info:
             api.deploy(artifacts)
 
@@ -473,7 +458,7 @@ def test_deploy_post_hook_failure_reports_committed_state(
 
     monkeypatch.setattr(api, "SkaalSettings", lambda: _Settings())
 
-    with mock.patch("skaal.deploy.push.package_and_push", return_value={"apiUrl": "https://x"}):
+    with mock.patch("skaal.deploy.deploy_artifacts", return_value={"apiUrl": "https://x"}):
         with pytest.raises(SkaalHookError) as exc_info:
             api.deploy(artifacts)
 

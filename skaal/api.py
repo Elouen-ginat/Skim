@@ -49,6 +49,7 @@ from skaal.settings import SkaalSettings
 if TYPE_CHECKING:
     from skaal.app import App
     from skaal.catalog.models import Catalog
+    from skaal.deploy.reporting import DeployReporter
     from skaal.migrate.engine import MigrationStage, MigrationState
 
 __all__ = [
@@ -369,7 +370,7 @@ def build(
         ValueError:        If the plan references an unknown deploy target or
                            has no source module and *app* was not provided.
     """
-    from skaal.deploy.registry import get_target
+    from skaal.deploy import build_artifacts
 
     cfg = SkaalSettings().for_stack(stack)
     resolved_out = Path(output_dir) if output_dir is not None else cfg.out
@@ -392,9 +393,7 @@ def build(
             )
         skaal_app = load_app(f"{plan_file.source_module}:{plan_file.app_var}")
 
-    target_adapter = get_target(plan_file.deploy_target)
-
-    return target_adapter.generate_artifacts(
+    return build_artifacts(
         app=skaal_app,
         plan=plan_file,
         output_dir=resolved_out,
@@ -434,6 +433,7 @@ def deploy(
     yes: bool = True,
     local_detach: bool = False,
     local_follow_logs: bool = False,
+    reporter: "DeployReporter | None" = None,
 ) -> dict[str, str]:
     """Package and deploy previously-built artifacts via Pulumi.
 
@@ -450,7 +450,8 @@ def deploy(
         ValueError:        If the target is unknown or required settings (e.g.
                            ``gcp_project`` for GCP) are missing.
     """
-    from skaal.deploy.push import package_and_push, read_meta
+    from skaal.deploy import deploy_artifacts
+    from skaal.deploy.push import read_meta
 
     base = SkaalSettings()
     resolved_stack = stack or base.stack
@@ -492,7 +493,7 @@ def deploy(
         recovery_hint="Fix the hook command and rerun `skaal deploy`; no infrastructure changes were applied.",
     )
 
-    outputs = package_and_push(
+    outputs = deploy_artifacts(
         artifacts_dir=resolved_dir,
         stack=resolved_stack,
         region=resolved_region,
@@ -503,6 +504,7 @@ def deploy(
             "detach": local_detach,
             "follow_logs": local_follow_logs,
         },
+        reporter=reporter,
     )
 
     _run_hooks(

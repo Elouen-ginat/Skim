@@ -91,6 +91,7 @@ def deploy(
       GCP: gcloud authenticated, Docker installed, Pulumi CLI installed.
     """
     from skaal import api
+    from skaal.deploy.reporting import TyperReporter
 
     try:
         api.deploy(
@@ -101,6 +102,7 @@ def deploy(
             yes=yes,
             local_detach=detach,
             local_follow_logs=follow_logs,
+            reporter=TyperReporter(),
         )
     except FileNotFoundError as exc:
         typer.echo(f"Error: {exc}", err=True)

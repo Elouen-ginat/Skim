@@ -2,18 +2,25 @@
 
 from __future__ import annotations
 
+import importlib
 import subprocess
 
 import pytest
 
-from skaal.deploy import push
-from skaal.deploy.registry import LocalDockerComposeTarget
+from skaal.deploy.registry import get_target
+
+pulumi_client = importlib.import_module("skaal.deploy.pulumi.client")
+local_compose_module = importlib.import_module("skaal.deploy.targets.local_compose")
 
 
-def test_run_wraps_missing_tool_with_deploy_context(tmp_path) -> None:
+def test_run_command_wraps_missing_tool_with_deploy_context(tmp_path) -> None:
     """Missing executables should surface as DeployCommandError with recovery help."""
-    with pytest.raises(push.DeployCommandError) as exc_info:
-        push._run(["skaal-tool-that-does-not-exist"], cwd=tmp_path, stage="probe deploy tool")
+    with pytest.raises(pulumi_client.DeployCommandError) as exc_info:
+        pulumi_client.run_command(
+            ["skaal-tool-that-does-not-exist"],
+            cwd=tmp_path,
+            stage="probe deploy tool",
+        )
 
     message = str(exc_info.value)
     assert "Deployment step failed: probe deploy tool" in message
@@ -21,7 +28,7 @@ def test_run_wraps_missing_tool_with_deploy_context(tmp_path) -> None:
     assert "Recovery:" in message
 
 
-def test_pulumi_stack_select_or_init_initializes_missing_stack(
+def test_pulumi_client_select_or_init_initializes_missing_stack(
     tmp_path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A missing stack should trigger `pulumi stack init`, not fail immediately."""
@@ -41,15 +48,15 @@ def test_pulumi_stack_select_or_init_initializes_missing_stack(
             return subprocess.CompletedProcess(cmd, 255, "", "error: no stack named dev")
         return subprocess.CompletedProcess(cmd, 0, "", "")
 
-    monkeypatch.setattr(push, "_run", _fake_run)
+    monkeypatch.setattr(pulumi_client, "run_command", _fake_run)
 
-    push._pulumi_stack_select_or_init(tmp_path, "dev")
+    pulumi_client.PulumiClient(tmp_path).select_or_init_stack("dev")
 
     assert calls[0][0] == ["pulumi", "stack", "select", "dev"]
     assert calls[1][0] == ["pulumi", "stack", "init", "dev"]
 
 
-def test_pulumi_stack_select_or_init_preserves_real_select_failure(
+def test_pulumi_client_select_or_init_preserves_real_select_failure(
     tmp_path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Non-missing-stack failures should not be turned into stack init attempts."""
@@ -67,10 +74,10 @@ def test_pulumi_stack_select_or_init_preserves_real_select_failure(
         calls.append(cmd)
         return subprocess.CompletedProcess(cmd, 255, "", "backend is offline")
 
-    monkeypatch.setattr(push, "_run", _fake_run)
+    monkeypatch.setattr(pulumi_client, "run_command", _fake_run)
 
-    with pytest.raises(push.DeployCommandError) as exc_info:
-        push._pulumi_stack_select_or_init(tmp_path, "dev")
+    with pytest.raises(pulumi_client.DeployCommandError) as exc_info:
+        pulumi_client.PulumiClient(tmp_path).select_or_init_stack("dev")
 
     assert calls == [["pulumi", "stack", "select", "dev"]]
     assert "backend is offline" in str(exc_info.value)
@@ -92,9 +99,9 @@ def test_local_target_detach_and_follow_logs(tmp_path, monkeypatch: pytest.Monke
         calls.append(cmd)
         return subprocess.CompletedProcess(cmd, 0, "", "")
 
-    monkeypatch.setattr(push, "_run", _fake_run)
+    monkeypatch.setattr(local_compose_module, "run_command", _fake_run)
 
-    LocalDockerComposeTarget().package_and_push(
+    get_target("local").deploy(
         tmp_path,
         stack="dev",
         region=None,
@@ -130,9 +137,9 @@ def test_local_target_attached_mode_ignores_follow_logs(
         calls.append(cmd)
         return subprocess.CompletedProcess(cmd, 0, "", "")
 
-    monkeypatch.setattr(push, "_run", _fake_run)
+    monkeypatch.setattr(local_compose_module, "run_command", _fake_run)
 
-    LocalDockerComposeTarget().package_and_push(
+    get_target("local").deploy(
         tmp_path,
         stack="dev",
         region=None,
