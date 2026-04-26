@@ -5,12 +5,15 @@ from typing import TYPE_CHECKING, Any, cast
 
 from skaal.backends.base import StorageBackend
 from skaal.types.runtime import (
+    AgentsService,
     AsyncClosable,
     BackendFactory,
     BackendOverrides,
     RuntimeApp,
     RuntimeCallable,
     RuntimeInvoker,
+    RuntimeObserver,
+    StateService,
     StorageClassMap,
 )
 
@@ -27,6 +30,10 @@ class _RuntimeCoreMixin:
         _function_cache: dict[str, RuntimeCallable]
         _invokers: dict[str, RuntimeInvoker]
         _stores: StorageClassMap
+        agents: AgentsService
+        state: StateService
+        observer: RuntimeObserver
+        _agent_types: dict[str, type[object]]
         sagas: dict[str, object]
 
     def _collect_storage_classes(self) -> StorageClassMap:
@@ -94,6 +101,13 @@ class _RuntimeCoreMixin:
                 funcs.setdefault(name, cast(RuntimeCallable, fn))
         return funcs
 
+    def _collect_agent_classes(self) -> dict[str, type[object]]:
+        return {
+            qname: obj
+            for qname, obj in self.app._collect_all().items()
+            if isinstance(obj, type) and hasattr(obj, "__skaal_agent__")
+        }
+
     def _initialize_runtime_state(self) -> None:
         from skaal.runtime.middleware import wrap_handler
 
@@ -105,6 +119,9 @@ class _RuntimeCoreMixin:
         self._engines = []
         self.sagas = {}
         self._stores = self._collect_storage_classes()
+        self._agent_types = self._collect_agent_classes()
+        for qname, agent_cls in self._agent_types.items():
+            self.agents.declare(qname, agent_cls)
 
     @property
     def functions(self) -> dict[str, RuntimeCallable]:

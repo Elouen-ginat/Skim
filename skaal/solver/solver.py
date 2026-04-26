@@ -411,6 +411,7 @@ def _solve_patterns(
                         else consistency
                     ),
                     "checkpoint_every": pattern_meta.get("checkpoint_every"),
+                    "strict": pattern_meta.get("strict", False),
                 },
             )
 

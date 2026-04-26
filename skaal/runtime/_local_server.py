@@ -56,6 +56,59 @@ class _StarletteServerMixin:
             if scheduler is not None:
                 scheduler.shutdown(wait=False)
 
+    def _skaal_prefix(self) -> str:
+        return "/_skaal"
+
+    def _build_dispatch_routes(self, *, prefix: str = "") -> list[Any]:
+        from starlette.requests import Request as StarletteRequest
+        from starlette.responses import JSONResponse
+        from starlette.routing import Route
+
+        normalized_prefix = prefix.rstrip("/")
+
+        async def _handle(request: StarletteRequest) -> JSONResponse:
+            body = await request.body()
+            path = request.url.path
+            if normalized_prefix and path.startswith(normalized_prefix):
+                path = path[len(normalized_prefix) :] or "/"
+                if not path.startswith("/"):
+                    path = f"/{path}"
+            result, status = await self._dispatch(request.method, path, body)
+            return JSONResponse(result, status_code=status)
+
+        if not normalized_prefix:
+            return [
+                Route("/", _handle, methods=["GET"]),
+                Route("/health", _handle, methods=["GET"]),
+                Route("/{path:path}", _handle, methods=["GET", "POST"]),
+            ]
+
+        return [
+            Route(normalized_prefix, _handle, methods=["GET"]),
+            Route(f"{normalized_prefix}/", _handle, methods=["GET"]),
+            Route(f"{normalized_prefix}/health", _handle, methods=["GET"]),
+            Route(f"{normalized_prefix}/{{path:path}}", _handle, methods=["GET", "POST"]),
+        ]
+
+    def _build_starlette_app(self, mounted_app: Any | None = None) -> Any:
+        from starlette.applications import Starlette
+        from starlette.responses import JSONResponse
+        from starlette.routing import Mount, Route
+
+        if mounted_app is None:
+            return Starlette(routes=self._build_dispatch_routes())
+
+        async def _health(request: Any) -> JSONResponse:  # noqa: ANN001
+            return JSONResponse({"status": "ok", "app": self.app.name})
+
+        return Starlette(
+            routes=[
+                Route("/health", _health),
+                *self._build_dispatch_routes(prefix=self._skaal_prefix()),
+                Mount("/", mounted_app),
+            ]
+        )
+
     async def _serve_with_starlette(
         self,
         mounted_app: Any,
@@ -67,9 +120,6 @@ class _StarletteServerMixin:
     ) -> None:
         try:
             import uvicorn
-            from starlette.applications import Starlette
-            from starlette.responses import JSONResponse
-            from starlette.routing import Mount, Route
         except ImportError as exc:
             raise RuntimeError(
                 f"{missing_message}\n"
@@ -77,20 +127,13 @@ class _StarletteServerMixin:
                 f"Missing: {exc}"
             ) from exc
 
-        async def _health(request: Any) -> JSONResponse:  # noqa: ANN001
-            return JSONResponse({"status": "ok", "app": self.app.name})
-
-        wrapped = Starlette(
-            routes=[
-                Route("/health", _health),
-                Mount("/", mounted_app),
-            ]
-        )
+        wrapped = self._build_starlette_app(mounted_app)
 
         print(f"\n  Skaal local runtime — {self.app.name}  [{runtime_label}: {attribute}]")
         print(f"  http://{self.host}:{self.port}\n")
-        print("    /health  → Skaal health check")
-        print(f"    /*       → {attribute}  ({framework_label})")
+        print("    /health     → Skaal health check")
+        print(f"    {self._skaal_prefix()}/*  → Skaal runtime endpoints")
+        print(f"    /*          → {attribute}  ({framework_label})")
         print()
 
         config = uvicorn.Config(wrapped, host=self.host, port=self.port, log_level="info")
@@ -107,13 +150,18 @@ class _StarletteServerMixin:
 
         Returns:
             A ``starlette.applications.Starlette`` instance wired to
-            :meth:`_dispatch`.
+            :meth:`_dispatch`. If the app mounted a user ASGI/WSGI app,
+            Skaal endpoints are namespaced under ``/_skaal/*`` and the user
+            app remains mounted at ``/``.
         """
         try:
-            from starlette.applications import Starlette
-            from starlette.requests import Request as StarletteRequest
-            from starlette.responses import JSONResponse
-            from starlette.routing import Route
+            mounted_app = getattr(self.app, "_asgi_app", None)
+            if mounted_app is None:
+                wsgi_app = getattr(self.app, "_wsgi_app", None)
+                if wsgi_app is not None:
+                    from starlette.middleware.wsgi import WSGIMiddleware
+
+                    mounted_app = WSGIMiddleware(wsgi_app)
         except ImportError as exc:
             raise RuntimeError(
                 "build_asgi() requires starlette.\n"
@@ -121,27 +169,16 @@ class _StarletteServerMixin:
                 f"Missing: {exc}"
             ) from exc
 
-        async def _handle(request: StarletteRequest) -> JSONResponse:
-            body = await request.body()
-            result, status = await self._dispatch(request.method, request.url.path, body)
-            return JSONResponse(result, status_code=status)
-
-        return Starlette(
-            routes=[
-                Route("/", _handle, methods=["GET"]),
-                Route("/health", _handle, methods=["GET"]),
-                Route("/{path:path}", _handle, methods=["GET", "POST"]),
-            ]
-        )
+        return self._build_starlette_app(mounted_app)
 
     async def _serve_wsgi(self, wsgi_app: Any) -> None:
         """
         Serve a WSGI app (Dash/Flask) via uvicorn + starlette WSGIMiddleware.
 
         Skaal storage is already wired by ``__init__``; this method only
-        handles the HTTP layer.  A ``/health`` endpoint is grafted onto the
-        starlette router before the WSGI catch-all so that load-balancer
-        probes work without touching the Flask app.
+        handles the HTTP layer.  The user app remains mounted at ``/`` while
+        Skaal endpoints are namespaced under ``/_skaal/*`` and ``/health``
+        stays reserved for the runtime health probe.
 
         Requires ``uvicorn`` and ``starlette`` — both are in ``skaal[gcp]``
         and can be installed standalone with::
@@ -170,8 +207,9 @@ class _StarletteServerMixin:
         Serve a native ASGI app (FastAPI, Starlette) directly via uvicorn.
 
         Unlike WSGI apps, no middleware adapter is needed — the app is passed
-        straight to uvicorn.  A ``/health`` endpoint is grafted in front so
-        load-balancer probes work without touching the user's app.
+        straight to uvicorn.  The user app remains mounted at ``/`` while
+        Skaal endpoints move under ``/_skaal/*`` and ``/health`` stays
+        reserved for the runtime health probe.
 
         Requires ``uvicorn`` and ``starlette``::
 

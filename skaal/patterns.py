@@ -185,12 +185,14 @@ class Projection(Generic[TSource, TView]):
         handler: str,
         consistency: Consistency | str = Consistency.EVENTUAL,
         checkpoint_every: int = 100,
+        strict: bool = False,
     ) -> None:
         self.source = source
         self.target = target
         self.handler = handler
         self.consistency = Consistency(consistency) if isinstance(consistency, str) else consistency
         self.checkpoint_every = checkpoint_every
+        self.strict = strict
 
         self.__skaal_pattern__ = {
             "pattern_type": "projection",
@@ -199,6 +201,7 @@ class Projection(Generic[TSource, TView]):
             "handler": handler,
             "consistency": self.consistency,
             "checkpoint_every": checkpoint_every,
+            "strict": strict,
         }
 
     def __repr__(self) -> str:

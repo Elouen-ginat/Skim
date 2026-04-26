@@ -6,11 +6,14 @@ from pathlib import Path
 from typing import Any, cast
 
 from skaal.plan import PlanFile
+from skaal.runtime._observer import StdoutRuntimeObserver
+from skaal.runtime._services import LocalAgentsService
 from skaal.types.runtime import (
     AsyncClosable,
     BackendOverrides,
     RuntimeApp,
     RuntimeCallable,
+    RuntimePayload,
     RuntimePlanSource,
 )
 
@@ -26,6 +29,8 @@ from ._planning import (
     coerce_runtime_plan,
 )
 from ._transport import _RuntimeHttpTransportMixin
+from .agent_registry import AgentRegistry
+from .state import InMemoryStateStore
 
 
 class LocalRuntime(
@@ -70,6 +75,9 @@ class LocalRuntime(
         self.host = host
         self.port = port
         self._backends: dict[str, AsyncClosable] = {}
+        self.state = InMemoryStateStore()
+        self.observer = StdoutRuntimeObserver()
+        self.agents = LocalAgentsService(AgentRegistry(), self.state)
         self._runtime_plan: PlanFile | None
         if runtime_plan is not None:
             self._runtime_plan = coerce_runtime_plan(runtime_plan)
@@ -104,6 +112,18 @@ class LocalRuntime(
     def _patch_channels(self) -> None:
         """Wire Channel instances registered with the app to LocalChannel."""
         self._wire_local_channels()
+
+    def _health_payload(self) -> RuntimePayload:
+        return {"observer": self.observer.snapshot()}
+
+    async def route_agent(
+        self,
+        agent_type: str,
+        agent_id: str,
+        method: str,
+        args: dict[str, object] | None = None,
+    ) -> object:
+        return await self.agents.route(agent_type, agent_id, method, args)
 
     # ── Factory methods ────────────────────────────────────────────────────────
 

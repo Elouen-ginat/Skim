@@ -21,4 +21,6 @@ _runtime = LocalRuntime.from_plan(
 
 # ASGI callable — gunicorn is invoked in the Dockerfile CMD as:
 #   gunicorn -k uvicorn.workers.UvicornWorker main:application
+# If the Skaal app mounted a user ASGI/WSGI app, Skaal endpoints are exposed
+# under /_skaal/* and the user app remains mounted at /.
 application = _runtime.build_asgi()

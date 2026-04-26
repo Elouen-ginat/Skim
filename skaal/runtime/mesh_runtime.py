@@ -18,13 +18,15 @@ Or via the CLI::
 from __future__ import annotations
 
 import json
-from typing import cast
+from dataclasses import asdict
+from typing import Any, cast
 
 from skaal.plan import PlanFile
+from skaal.runtime._observer import InMemoryRuntimeObserver
+from skaal.runtime._services import MeshAgentsService, MeshStateService
 from skaal.types.runtime import (
     AsyncClosable,
     BackendOverrides,
-    MeshClient,
     RuntimeApp,
     RuntimePayload,
     RuntimePlanSource,
@@ -87,6 +89,8 @@ class MeshRuntime(
                 "Then:          pip install target/wheels/skaal-*.whl"
             ) from exc
 
+        from skaal.mesh import MeshClient as SkaalMeshClient
+
         self.app = app
         self.host = host
         self.port = port
@@ -107,11 +111,16 @@ class MeshRuntime(
             self._runtime_plan = build_development_plan(app, mode="memory")
             self._backend_overrides = build_backend_overrides(app, self._runtime_plan)
 
+        plan_dict: dict[str, object] | None = None
         if plan_json:
-            plan_dict = json.loads(plan_json)
-            plan_dict.setdefault("app_name", app.name)
-            plan_json = json.dumps(plan_dict)
-        self._mesh: MeshClient = skaal_mesh.SkaalMesh(app.name, plan_json)
+            loaded_plan = cast(dict[str, object], json.loads(plan_json))
+            loaded_plan.setdefault("app_name", app.name)
+            plan_dict = loaded_plan
+
+        self._mesh: Any = SkaalMeshClient(app.name, plan=plan_dict)
+        self.state = MeshStateService(self._mesh)
+        self.observer = InMemoryRuntimeObserver()
+        self.agents = MeshAgentsService(self._mesh)
         self._backends: dict[str, AsyncClosable] = {}
         self._patch_storage()
         self._patch_channels()
@@ -154,11 +163,19 @@ class MeshRuntime(
 
     # ── Mesh bridge API (used by engines / agents) ────────────────────────────
 
-    def route_agent(self, agent_type: str, agent_id: str, method: str, args: RuntimePayload) -> str:
-        return self._mesh.route_agent_call(agent_type, agent_id, method, json.dumps(args))
+    async def route_agent(
+        self,
+        agent_type: str,
+        agent_id: str,
+        method: str,
+        args: RuntimePayload,
+    ) -> object:
+        return await self.agents.route(agent_type, agent_id, method, args)
 
     def channel_publish(self, topic: str, message: object) -> int:
-        return self._mesh.publish(topic, json.dumps(message))
+        return self._mesh.publish(topic, message)
 
     def health(self) -> RuntimePayload:
-        return cast(RuntimePayload, json.loads(self._mesh.health_snapshot()))
+        snapshot = cast(RuntimePayload, asdict(self._mesh.health_snapshot()))
+        snapshot["observer"] = self.observer.snapshot()
+        return snapshot

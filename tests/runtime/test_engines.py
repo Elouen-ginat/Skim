@@ -9,6 +9,7 @@ import pytest
 
 from skaal.backends.local_backend import LocalMap
 from skaal.patterns import EventLog, Outbox, Saga, SagaStep
+from skaal.runtime._observer import InMemoryRuntimeObserver
 from skaal.runtime.engines.eventlog import EventLogEngine
 from skaal.runtime.engines.outbox import OutboxEngine
 from skaal.runtime.engines.projection import ProjectionEngine
@@ -43,10 +44,16 @@ async def test_eventlog_subscribe_wakes_on_append() -> None:
 async def test_eventlog_engine_start_stop() -> None:
     log: EventLog[dict] = EventLog(LocalMap())
     engine = EventLogEngine(log)
-    await engine.start(SimpleNamespace())
-    assert engine._started is True
+    observer = InMemoryRuntimeObserver()
+    await engine.start(SimpleNamespace(observer=observer))
     await engine.stop()
-    assert engine._started is False
+
+    snapshot = observer.snapshot()
+    engines = snapshot["engines"]
+    engine_name = next(iter(engines))
+    assert engine_name.startswith("eventlog:")
+    assert engines[engine_name]["starts"] == 1
+    assert engines[engine_name]["stops"] == 1
 
 
 # ── Projection ───────────────────────────────────────────────────────────────
@@ -69,9 +76,10 @@ async def test_projection_engine_applies_handler_to_each_event() -> None:
         target=Summary,
         handler="apply",
         checkpoint_every=1,
+        strict=False,
     )
     engine = ProjectionEngine(proj)  # type: ignore[arg-type]
-    context = SimpleNamespace(functions={"apply": apply})
+    context = SimpleNamespace(functions={"apply": apply}, observer=InMemoryRuntimeObserver())
     await engine.start(context)
 
     await asyncio.sleep(0.01)
@@ -86,6 +94,75 @@ async def test_projection_engine_applies_handler_to_each_event() -> None:
         await asyncio.sleep(0.02)
     assert Summary.totals == {"x": 3, "y": 5}
     await engine.stop()
+
+
+@pytest.mark.asyncio
+async def test_projection_engine_persists_checkpoint_to_target_backend() -> None:
+    source: EventLog[dict] = EventLog(LocalMap())
+
+    class SummaryStore:
+        _backend = LocalMap()
+
+    async def apply(_target: type, _event: dict) -> None:
+        return None
+
+    proj = SimpleNamespace(
+        source=source,
+        target=SummaryStore,
+        handler="apply",
+        checkpoint_every=2,
+        strict=False,
+    )
+    engine = ProjectionEngine(proj)  # type: ignore[arg-type]
+    await engine.start(
+        SimpleNamespace(functions={"apply": apply}, observer=InMemoryRuntimeObserver())
+    )
+
+    await asyncio.sleep(0.01)
+    await source.append({"id": 1})
+    await source.append({"id": 2})
+
+    for _ in range(50):
+        offset = await SummaryStore._backend.get("__projection__:apply:offset")
+        if offset == 1:
+            break
+        await asyncio.sleep(0.02)
+
+    assert await SummaryStore._backend.get("__projection__:apply:offset") == 1
+    await engine.stop()
+
+
+@pytest.mark.asyncio
+async def test_projection_engine_strict_mode_surfaces_failures() -> None:
+    source: EventLog[dict] = EventLog(LocalMap())
+    observer = InMemoryRuntimeObserver()
+
+    class SummaryStore:
+        _backend = LocalMap()
+
+    async def apply(_target: type, _event: dict) -> None:
+        raise RuntimeError("projection failed")
+
+    proj = SimpleNamespace(
+        source=source,
+        target=SummaryStore,
+        handler="apply",
+        checkpoint_every=1,
+        strict=True,
+    )
+    engine = ProjectionEngine(proj)  # type: ignore[arg-type]
+    await engine.start(SimpleNamespace(functions={"apply": apply}, observer=observer))
+
+    await asyncio.sleep(0.01)
+    await source.append({"id": 1})
+
+    with pytest.raises(RuntimeError, match="projection failed"):
+        assert engine._task is not None
+        await asyncio.wait_for(engine._task, timeout=1.0)
+
+    stream = observer.snapshot()["events"]["streams"]["apply"]
+    assert stream["failed"] == 1
+    assert stream["last_error"] == "RuntimeError('projection failed')"
 
 
 # ── Saga ─────────────────────────────────────────────────────────────────────
