@@ -66,7 +66,8 @@ class Wiring:
             import os
 
             source = env or os.environ
-            return source[env_var]
+            if env_var in source:
+                return source[env_var]
         return self.path_default
 
     def instantiate(self, class_name: str, *, env: Mapping[str, str] | None = None) -> Any:

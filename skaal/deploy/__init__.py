@@ -19,36 +19,21 @@ def deploy_artifacts(*args: Any, **kwargs: Any) -> Any:
 
 def __getattr__(name: str) -> object:
     if name in {
-        "BackendPlugin",
-        "backend_registry",
-        "get_backend_plugin",
         "get_target",
-        "register_backend_plugin",
         "register_target",
-        "resolve_backend_plugin",
         "target_registry",
         "Target",
     }:
-        from skaal.deploy.plugin import BackendPlugin
         from skaal.deploy.registry import (
-            backend_registry,
-            get_backend_plugin,
             get_target,
-            register_backend_plugin,
             register_target,
-            resolve_backend_plugin,
             target_registry,
         )
         from skaal.deploy.targets.base import Target
 
         exports: dict[str, object] = {
-            "BackendPlugin": BackendPlugin,
-            "backend_registry": backend_registry,
-            "get_backend_plugin": get_backend_plugin,
             "get_target": get_target,
-            "register_backend_plugin": register_backend_plugin,
             "register_target": register_target,
-            "resolve_backend_plugin": resolve_backend_plugin,
             "target_registry": target_registry,
             "Target": Target,
         }
@@ -57,15 +42,10 @@ def __getattr__(name: str) -> object:
 
 
 __all__ = [
-    "BackendPlugin",
     "Target",
-    "backend_registry",
     "build_artifacts",
     "deploy_artifacts",
-    "get_backend_plugin",
     "get_target",
-    "register_backend_plugin",
     "register_target",
-    "resolve_backend_plugin",
     "target_registry",
 ]

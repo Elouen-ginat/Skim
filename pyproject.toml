@@ -99,19 +99,22 @@ skaal = "skaal.cli.main:app"
 # so the discovery path is exercised in-tree and third-party packages can
 # register additional implementations the same way.
 
-[project.entry-points."skaal.backends"]
-local = "skaal.backends.local_backend:LocalMap"
-sqlite = "skaal.backends.sqlite_backend:SqliteBackend"
-redis = "skaal.backends.redis_backend:RedisBackend"
-postgres = "skaal.backends.postgres_backend:PostgresBackend"
-chroma = "skaal.backends.chroma_backend:ChromaVectorBackend"
-pgvector = "skaal.backends.pgvector_backend:PgVectorBackend"
-dynamodb = "skaal.backends.dynamodb_backend:DynamoBackend"
-firestore = "skaal.backends.firestore_backend:FirestoreBackend"
+[project.entry-points."skaal.backend_specs"]
+local-map = "skaal.backends.kv.local_map:LOCAL_MAP_SPEC"
+sqlite = "skaal.backends.kv.sqlite:SQLITE_SPEC"
+local-redis = "skaal.backends.kv.redis:LOCAL_REDIS_SPEC"
+memorystore-redis = "skaal.backends.kv.redis:MEMORYSTORE_REDIS_SPEC"
+rds-postgres = "skaal.backends.kv.postgres:RDS_POSTGRES_SPEC"
+cloud-sql-postgres = "skaal.backends.kv.postgres:CLOUD_SQL_POSTGRES_SPEC"
+chroma-local = "skaal.backends.vector.chroma:CHROMA_LOCAL_SPEC"
+rds-pgvector = "skaal.backends.vector.pgvector:RDS_PGVECTOR_SPEC"
+cloud-sql-pgvector = "skaal.backends.vector.pgvector:CLOUD_SQL_PGVECTOR_SPEC"
+dynamodb = "skaal.backends.kv.dynamodb:DYNAMODB_SPEC"
+firestore = "skaal.backends.kv.firestore:FIRESTORE_SPEC"
 
 [project.entry-points."skaal.channels"]
-local = "skaal.channel:wire_local"
-redis = "skaal.channel:wire_redis"
+local = "skaal.backends.channels.local:wire_local"
+redis = "skaal.backends.channels.redis:wire_redis"
 
 [tool.uv.sources]
 skaal-mesh = { path = "mesh", editable = true }

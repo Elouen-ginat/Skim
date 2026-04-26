@@ -21,7 +21,7 @@ def test_build_runtime_wiring_local_map_uses_local_map() -> None:
 
     imports, overrides = build_runtime_wiring(plan, target="local")
 
-    assert "from skaal.backends.local_backend import LocalMap" in imports
+    assert "from skaal.backends.kv.local_map import LocalMap" in imports
     assert '"Counter": LocalMap(),' in overrides
 
 

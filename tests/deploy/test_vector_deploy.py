@@ -12,7 +12,7 @@ from skaal.plan import PlanFile, StorageSpec
 def _pgvector_wire() -> dict[str, object]:
     return {
         "class_name": "PgVectorBackend",
-        "module": "pgvector_backend",
+        "module": "skaal.backends.vector.pgvector",
         "env_prefix": "SKAAL_DB_DSN",
         "uses_namespace": True,
         "requires_vpc": True,
@@ -57,7 +57,7 @@ def test_local_build_falls_back_to_chroma_for_cloud_vector_backend() -> None:
 
     imports, overrides = build_runtime_wiring(plan, target="local")
 
-    assert "from skaal.backends.chroma_backend import ChromaVectorBackend" in imports
+    assert "from skaal.backends.vector.chroma import ChromaVectorBackend" in imports
     assert (
         '"Knowledge": ChromaVectorBackend("/app/data/chroma", namespace="Knowledge"),' in overrides
     )
@@ -78,7 +78,7 @@ def test_build_runtime_wiring_aws_uses_pgvector_backend() -> None:
 
     imports, overrides = build_runtime_wiring(plan, target="aws")
 
-    assert "from skaal.backends.pgvector_backend import PgVectorBackend" in imports
+    assert "from skaal.backends.vector.pgvector import PgVectorBackend" in imports
     assert (
         '"Knowledge": PgVectorBackend(os.environ["SKAAL_DB_DSN_KNOWLEDGE"], namespace="Knowledge"),'
         in overrides

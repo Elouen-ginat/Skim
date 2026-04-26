@@ -82,7 +82,7 @@ get_backend_plugin = get_backend_spec
 resolve_backend_plugin = resolve_backend_spec
 
 
-from skaal.deploy.backends import BUILTIN_BACKENDS  # noqa: E402
+from skaal.backends import BUILTIN_BACKENDS  # noqa: E402
 
 for _plugin in BUILTIN_BACKENDS:
     register_backend_spec(_plugin)

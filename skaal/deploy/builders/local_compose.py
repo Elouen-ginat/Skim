@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Any
 
 from skaal.deploy._external import DefaultExternalProvisioner
 from skaal.deploy._render import render
-from skaal.deploy.backends.local_services import COMPOSE_SERVICES
+from skaal.deploy.local_services import COMPOSE_SERVICES
 from skaal.deploy.wiring import resolve_backend
 
 if TYPE_CHECKING:

@@ -77,8 +77,8 @@ class _RuntimeCoreMixin:
         self._stores = stores
 
     def _wire_local_channels(self) -> None:
+        from skaal.backends.channels.local import wire_local
         from skaal.channel import Channel as SkaalChannel
-        from skaal.channel import wire_local
 
         for obj in self.app._collect_all().values():
             if isinstance(obj, SkaalChannel):

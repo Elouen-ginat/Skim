@@ -6,8 +6,8 @@ import asyncio
 
 import pytest
 
+from skaal.backends.channels.local import LocalChannel
 from skaal.runtime.agent_registry import AgentRegistry, AgentStatus
-from skaal.runtime.channels import LocalChannel
 from skaal.runtime.state import InMemoryStateStore
 
 
@@ -15,7 +15,7 @@ def test_runtime_module_does_not_export_channel_abc() -> None:
     import skaal.runtime as runtime
 
     assert not hasattr(runtime, "Channel")
-    assert runtime.LocalChannel is LocalChannel
+    assert not hasattr(runtime, "LocalChannel")
 
 
 # ── InMemoryStateStore ────────────────────────────────────────────────────────

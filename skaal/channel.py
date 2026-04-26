@@ -5,7 +5,12 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from typing import Any, Generic, TypeVar
 
+from skaal.backends.channels.local import wire_local
+from skaal.backends.channels.redis import wire_redis
+
 T = TypeVar("T")
+
+__all__ = ["Channel", "wire", "wire_local", "wire_redis"]
 
 
 class Channel(Generic[T]):
@@ -75,56 +80,3 @@ def wire(channel: Channel[Any], backend: str, **kwargs: Any) -> None:
 
     wire_fn = get_channel(backend)
     wire_fn(channel, **kwargs)
-
-
-def wire_local(channel: Channel[Any], *, topic: str = "default") -> None:
-    """Wire a :class:`Channel` to an in-process ``asyncio.Queue`` backend."""
-    from skaal.runtime.channels import LocalChannel
-
-    local = LocalChannel()
-    _topic = topic
-
-    async def _send(item: Any) -> None:
-        await local.publish(_topic, item)
-
-    async def _receive() -> AsyncIterator[Any]:
-        async for msg in local.subscribe(_topic):
-            yield msg
-
-    channel.send = _send  # type: ignore[method-assign]
-    channel.receive = _receive  # type: ignore[method-assign]
-    channel._backend_name = "local"
-    channel._wired = True
-
-
-def wire_redis(
-    channel: Channel[Any],
-    *,
-    url: str = "redis://localhost:6379",
-    namespace: str = "default",
-    topic: str = "default",
-    group: str = "default",
-    consumer: str = "worker-0",
-) -> None:
-    """Wire a :class:`Channel` to a Redis Streams backend."""
-    from skaal.backends.redis_channel import RedisStreamChannel
-
-    backend = RedisStreamChannel(url=url, namespace=namespace)
-    _topic = topic
-    _group = group
-    _consumer = consumer
-
-    async def _send(item: Any) -> None:
-        await backend.publish(_topic, item)
-
-    async def _receive() -> AsyncIterator[Any]:
-        async for msg in backend.subscribe(_topic, group=_group, consumer=_consumer):
-            # Strip internal _id from the yielded message for typed Channel API.
-            msg.pop("_id", None)
-            yield msg
-
-    channel.send = _send  # type: ignore[method-assign]
-    channel.receive = _receive  # type: ignore[method-assign]
-    channel._backend_name = "redis-streams"
-    channel._wired = True
-    channel._redis_backend = backend  # type: ignore[attr-defined]

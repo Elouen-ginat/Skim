@@ -28,6 +28,10 @@ cost_per_gb_month = 3.50
 Python 3.11+ `tomllib` (stdlib) reads the files; no external TOML library
 needed for production.
 
+When a catalog includes `[storage.<backend>.wire]` metadata, the `module`
+field should point at the canonical backend layout under `skaal.backends.kv`
+or `skaal.backends.vector`.
+
 ## Consequences
 
 **Positive:**

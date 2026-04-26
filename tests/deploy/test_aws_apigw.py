@@ -221,7 +221,7 @@ def test_build_runtime_wiring_aws_uses_planned_handlers() -> None:
                 kind="kv",
                 wire_params={
                     "class_name": "DynamoBackend",
-                    "module": "dynamodb_backend",
+                    "module": "skaal.backends.kv.dynamodb",
                     "env_prefix": "SKAAL_TABLE",
                 },
             ),
@@ -231,7 +231,7 @@ def test_build_runtime_wiring_aws_uses_planned_handlers() -> None:
                 kind="relational",
                 wire_params={
                     "class_name": "PostgresBackend",
-                    "module": "postgres_backend",
+                    "module": "skaal.backends.kv.postgres",
                     "env_prefix": "SKAAL_DB_DSN",
                     "uses_namespace": True,
                     "requires_vpc": True,
@@ -242,8 +242,8 @@ def test_build_runtime_wiring_aws_uses_planned_handlers() -> None:
 
     imports, overrides = build_runtime_wiring(plan, target="aws")
 
-    assert "from skaal.backends.dynamodb_backend import DynamoBackend" in imports
-    assert "from skaal.backends.postgres_backend import PostgresBackend" in imports
+    assert "from skaal.backends.kv.dynamodb import DynamoBackend" in imports
+    assert "from skaal.backends.kv.postgres import PostgresBackend" in imports
     assert '"Counter": DynamoBackend(os.environ["SKAAL_TABLE_COUNTER"]),' in overrides
     assert (
         '"User": PostgresBackend(os.environ["SKAAL_DB_DSN_USER"], namespace="User"),' in overrides
@@ -262,7 +262,7 @@ def test_aws_pulumi_stack_provisions_rds_and_lambda_vpc() -> None:
                 kind="kv",
                 wire_params={
                     "class_name": "DynamoBackend",
-                    "module": "dynamodb_backend",
+                    "module": "skaal.backends.kv.dynamodb",
                     "env_prefix": "SKAAL_TABLE",
                 },
             ),
@@ -272,7 +272,7 @@ def test_aws_pulumi_stack_provisions_rds_and_lambda_vpc() -> None:
                 kind="relational",
                 wire_params={
                     "class_name": "PostgresBackend",
-                    "module": "postgres_backend",
+                    "module": "skaal.backends.kv.postgres",
                     "env_prefix": "SKAAL_DB_DSN",
                     "uses_namespace": True,
                     "requires_vpc": True,
@@ -329,7 +329,7 @@ def test_aws_rds_stack_respects_lifecycle_flags() -> None:
                 },
                 wire_params={
                     "class_name": "PostgresBackend",
-                    "module": "postgres_backend",
+                    "module": "skaal.backends.kv.postgres",
                     "env_prefix": "SKAAL_DB_DSN",
                     "uses_namespace": True,
                     "requires_vpc": True,
@@ -361,7 +361,7 @@ def test_aws_pulumi_stack_respects_configured_vpc_and_subnets() -> None:
                 kind="relational",
                 wire_params={
                     "class_name": "PostgresBackend",
-                    "module": "postgres_backend",
+                    "module": "skaal.backends.kv.postgres",
                     "env_prefix": "SKAAL_DB_DSN",
                     "uses_namespace": True,
                     "requires_vpc": True,

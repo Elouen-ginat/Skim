@@ -204,7 +204,7 @@ def test_cloud_run_uses_configured_vpc_connector_values() -> None:
                 deploy_params={},
                 wire_params={
                     "class_name": "PostgresBackend",
-                    "module": "postgres_backend",
+                    "module": "skaal.backends.kv.postgres",
                     "env_prefix": "SKAAL_DB_DSN",
                     "uses_namespace": True,
                     "requires_vpc": True,
@@ -237,7 +237,7 @@ def test_cloud_run_can_reuse_existing_vpc_connector() -> None:
                 deploy_params={},
                 wire_params={
                     "class_name": "PostgresBackend",
-                    "module": "postgres_backend",
+                    "module": "skaal.backends.kv.postgres",
                     "env_prefix": "SKAAL_DB_DSN",
                     "uses_namespace": True,
                     "requires_vpc": True,

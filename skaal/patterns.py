@@ -73,7 +73,7 @@ class EventLog(Generic[T]):
         if actual_backend is not None:
             self._backend = actual_backend
         else:
-            from skaal.backends.local_backend import LocalMap
+            from skaal.backends.kv.local_map import LocalMap
 
             self._backend = LocalMap()
 

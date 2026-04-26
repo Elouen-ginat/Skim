@@ -46,7 +46,7 @@ class LocalRuntime(
     - Each ``@app.function()`` becomes a ``POST /{name}`` endpoint.
     - Storage classes are patched with in-memory :class:`~skaal.backends.local_backend.LocalMap`
       backends (or overrides supplied via *backend_overrides*).
-    - Channel instances are wired to :class:`~skaal.runtime.channels.LocalChannel`.
+    - Channel instances are wired to :class:`~skaal.backends.channels.local.LocalChannel`.
     - ``GET /`` returns a JSON index of available endpoints.
     - ``GET /health`` returns ``{"status": "ok"}``.
 
@@ -103,7 +103,7 @@ class LocalRuntime(
         self._patch_storage_backends()
 
     def _patch_channels(self) -> None:
-        """Wire Channel instances registered with the app to LocalChannel."""
+        """Wire Channel instances registered with the app to the local channel backend."""
         self._wire_local_channels()
 
     def _health_payload(self) -> RuntimePayload:

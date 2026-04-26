@@ -78,7 +78,7 @@ def build_development_plan(
         elif issubclass(obj, Store):
             kind = "kv"
         else:
-            continue
+            kind = "kv"
 
         backend, wire_params = _development_storage_binding(
             kind,
@@ -115,7 +115,7 @@ def _development_storage_binding(
         if kind == "kv":
             return "local-map", {
                 "class_name": "LocalMap",
-                "module": "local_backend",
+                "module": "skaal.backends.kv.local_map",
                 "env_prefix": None,
                 "path_default": None,
                 "uses_namespace": False,
@@ -123,10 +123,12 @@ def _development_storage_binding(
         if kind == "relational":
             return "sqlite", {
                 "env_prefix": None,
+                "module": "skaal.backends.kv.sqlite",
                 "path_default": str(db_path),
                 "uses_namespace": True,
             }
         return "chroma-local", {
+            "module": "skaal.backends.vector.chroma",
             "path_default": "skaal_chroma",
             "uses_namespace": True,
         }
@@ -134,11 +136,13 @@ def _development_storage_binding(
     if mode == "sqlite":
         if kind == "vector":
             return "chroma-local", {
+                "module": "skaal.backends.vector.chroma",
                 "path_default": str(chroma_path),
                 "uses_namespace": True,
             }
         return "sqlite", {
             "env_prefix": None,
+            "module": "skaal.backends.kv.sqlite",
             "path_default": str(db_path),
             "uses_namespace": True,
         }
@@ -153,6 +157,7 @@ def _development_storage_binding(
         return "local-redis", {
             "env_prefix": None,
             "connection_value": redis_url,
+            "module": "skaal.backends.kv.redis",
             "uses_namespace": True,
         }
 
@@ -162,11 +167,13 @@ def _development_storage_binding(
         return "rds-pgvector", {
             "env_prefix": None,
             "connection_value": dsn,
+            "module": "skaal.backends.vector.pgvector",
             "uses_namespace": True,
         }
     return "rds-postgres", {
         "env_prefix": None,
         "connection_value": dsn,
+        "module": "skaal.backends.kv.postgres",
         "uses_namespace": True,
         "constructor_kwargs": {"min_size": min_size, "max_size": max_size},
     }

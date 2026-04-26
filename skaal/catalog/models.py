@@ -87,11 +87,11 @@ class Catalog(BaseModel):
         """
         # Import here to avoid a circular dependency at module level
         # (deploy.config doesn't import catalog, so the dependency is one-way).
+        from skaal.backends._spec import Wiring
         from skaal.deploy.config import (
             compute_deploy_config,
             storage_deploy_config,
         )
-        from skaal.deploy.plugin import Wiring
 
         storage: dict[str, StorageBackendSpec] = {}
         for k, v in data.get("storage", {}).items():
