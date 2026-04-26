@@ -7,7 +7,6 @@ from skaal.backends.base import StorageBackend
 from skaal.types.runtime import (
     AgentsService,
     AsyncClosable,
-    BackendFactory,
     BackendOverrides,
     RuntimeApp,
     RuntimeCallable,
@@ -45,10 +44,6 @@ class _RuntimeCoreMixin:
 
     def _patch_storage_backends(
         self,
-        *,
-        store_factory: "BackendFactory",
-        vector_factory: "BackendFactory",
-        relational_factory: "BackendFactory",
     ) -> None:
         from skaal.relational import is_relational_model, wire_relational_model
         from skaal.storage import Store
@@ -56,24 +51,26 @@ class _RuntimeCoreMixin:
 
         stores = self._collect_storage_classes()
         for qname, obj in stores.items():
-            backend = self._backend_overrides.get(qname) or self._backend_overrides.get(
-                obj.__name__
-            )
+            backend = self._backend_overrides.get(qname)
+            if backend is None:
+                backend = self._backend_overrides.get(obj.__name__)
+            if backend is None:
+                raise ValueError(
+                    f"No backend resolved for storage {qname!r}. "
+                    "Provide a runtime plan or backend_overrides that covers every storage class."
+                )
 
             if is_relational_model(obj):
-                backend = backend or relational_factory(qname, obj)
                 self._backends[qname] = cast(AsyncClosable, backend)
                 wire_relational_model(obj, backend)
                 continue
 
             if is_vector_model(obj) or issubclass(obj, VectorStore):
-                backend = backend or vector_factory(qname, obj)
                 self._backends[qname] = cast(AsyncClosable, backend)
                 cast(type[VectorStore[Any]], obj).wire(backend)
                 continue
 
             if issubclass(obj, Store):
-                backend = backend or store_factory(qname, obj)
                 self._backends[qname] = cast(AsyncClosable, backend)
                 obj.wire(cast(StorageBackend, backend))
 
@@ -159,5 +156,5 @@ class _RuntimeCoreMixin:
         for backend in self._backends.values():
             await _close_backend(backend)
 
-        for backend in self._backend_overrides.values():
-            await _close_backend(backend)
+        for override_backend in self._backend_overrides.values():
+            await _close_backend(override_backend)

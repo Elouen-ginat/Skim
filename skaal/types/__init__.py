@@ -26,7 +26,6 @@ from skaal.types.constraints import (
 from skaal.types.runtime import (
     AgentsService,
     AsyncClosable,
-    BackendFactory,
     BackendOverrides,
     ConstructorKwargs,
     DispatchResult,
@@ -73,7 +72,6 @@ __all__ = [
     # runtime
     "AgentsService",
     "AsyncClosable",
-    "BackendFactory",
     "BackendOverrides",
     "ConstructorKwargs",
     "DispatchResult",

@@ -23,7 +23,6 @@ from ._lifecycle import _RuntimeLifecycleMixin
 from ._local_scheduler import _SchedulerMixin
 from ._local_server import _StarletteServerMixin
 from ._planning import (
-    _default_local_storage_factories,
     build_backend_overrides,
     build_development_plan,
     coerce_runtime_plan,
@@ -101,13 +100,7 @@ class LocalRuntime(
 
     def _patch_storage(self) -> None:
         """Wire all registered storage classes with appropriate backends."""
-        store_factory, vector_factory, relational_factory = _default_local_storage_factories()
-
-        self._patch_storage_backends(
-            store_factory=store_factory,
-            vector_factory=vector_factory,
-            relational_factory=relational_factory,
-        )
+        self._patch_storage_backends()
 
     def _patch_channels(self) -> None:
         """Wire Channel instances registered with the app to LocalChannel."""

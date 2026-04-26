@@ -48,25 +48,6 @@ def build_backend_overrides(
     return overrides
 
 
-def _default_local_storage_factories(
-    *,
-    db_path: str | Path = "skaal_local.db",
-    chroma_path: str | Path = "skaal_chroma",
-) -> tuple[BackendFactory, BackendFactory, BackendFactory]:
-    from skaal.backends.chroma_backend import ChromaVectorBackend
-    from skaal.backends.local_backend import LocalMap
-    from skaal.backends.sqlite_backend import SqliteBackend
-
-    resolved_db_path = Path(db_path)
-    resolved_chroma_path = Path(chroma_path)
-
-    return (
-        lambda qname, obj: LocalMap(),
-        lambda qname, obj: ChromaVectorBackend(resolved_chroma_path, namespace=qname),
-        lambda qname, obj: SqliteBackend(resolved_db_path, namespace=qname),
-    )
-
-
 def build_development_plan(
     app: RuntimeApp,
     *,

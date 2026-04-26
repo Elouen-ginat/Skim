@@ -20,7 +20,6 @@ BackendOverrides: TypeAlias = dict[str, object]
 ConstructorKwargs: TypeAlias = dict[str, object]
 StorageClassMap: TypeAlias = dict[str, type[object]]
 RuntimePlanSource: TypeAlias = PlanFile | Path | str | Mapping[str, object]
-BackendFactory: TypeAlias = Callable[[str, type[object]], object]
 
 
 class RuntimeWireParams(TypedDict, total=False):
@@ -175,7 +174,6 @@ class MeshClient(Protocol):
 __all__ = [
     "AgentsService",
     "AsyncClosable",
-    "BackendFactory",
     "BackendOverrides",
     "ConstructorKwargs",
     "DispatchResult",

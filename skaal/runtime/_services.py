@@ -146,7 +146,7 @@ class LocalAgentsService:
     async def _hydrate_agent(self, agent_cls: type[object], agent_id: str, agent: object) -> None:
         if not getattr(agent_cls, "__skaal_agent__", {}).get("persistent", True):
             return
-        fields = getattr(agent_cls, "__skaal_persistent_fields__", frozenset())
+        fields: frozenset[str] = getattr(agent_cls, "__skaal_persistent_fields__", frozenset())
         if not fields:
             return
 
@@ -160,7 +160,7 @@ class LocalAgentsService:
     async def _persist_agent(self, agent_cls: type[object], agent_id: str, agent: object) -> None:
         if not getattr(agent_cls, "__skaal_agent__", {}).get("persistent", True):
             return
-        fields = getattr(agent_cls, "__skaal_persistent_fields__", frozenset())
+        fields: frozenset[str] = getattr(agent_cls, "__skaal_persistent_fields__", frozenset())
         if not fields:
             return
 

@@ -1,6 +1,21 @@
 from __future__ import annotations
 
+from typing import TypedDict
+
 from skaal.types.runtime import RuntimePayload
+
+
+class EngineStats(TypedDict):
+    starts: int
+    stops: int
+    status: str
+
+
+class EventStats(TypedDict):
+    handled: int
+    failed: int
+    last_offset: int | None
+    last_error: str | None
 
 
 class InMemoryRuntimeObserver:
@@ -8,18 +23,18 @@ class InMemoryRuntimeObserver:
 
     def __init__(self, *, log_to_stdout: bool = False) -> None:
         self._log_to_stdout = log_to_stdout
-        self._engines: dict[str, dict[str, object]] = {}
-        self._events: dict[str, dict[str, object]] = {}
+        self._engines: dict[str, EngineStats] = {}
+        self._events: dict[str, EventStats] = {}
 
     def engine_started(self, name: str) -> None:
         entry = self._engines.setdefault(name, {"starts": 0, "stops": 0, "status": "stopped"})
-        entry["starts"] = int(entry["starts"]) + 1
+        entry["starts"] += 1
         entry["status"] = "running"
         self._log(f"engine started: {name}")
 
     def engine_stopped(self, name: str) -> None:
         entry = self._engines.setdefault(name, {"starts": 0, "stops": 0, "status": "stopped"})
-        entry["stops"] = int(entry["stops"]) + 1
+        entry["stops"] += 1
         entry["status"] = "stopped"
         self._log(f"engine stopped: {name}")
 
@@ -28,7 +43,7 @@ class InMemoryRuntimeObserver:
             name,
             {"handled": 0, "failed": 0, "last_offset": None, "last_error": None},
         )
-        entry["handled"] = int(entry["handled"]) + 1
+        entry["handled"] += 1
         entry["last_offset"] = offset
         self._log(f"event handled: {name}@{offset}")
 
@@ -37,14 +52,14 @@ class InMemoryRuntimeObserver:
             name,
             {"handled": 0, "failed": 0, "last_offset": None, "last_error": None},
         )
-        entry["failed"] = int(entry["failed"]) + 1
+        entry["failed"] += 1
         entry["last_offset"] = offset
         entry["last_error"] = repr(exc)
         self._log(f"event failed: {name}@{offset} ({exc!r})")
 
     def snapshot(self) -> RuntimePayload:
-        handled_total = sum(int(entry.get("handled", 0)) for entry in self._events.values())
-        failed_total = sum(int(entry.get("failed", 0)) for entry in self._events.values())
+        handled_total = sum(entry["handled"] for entry in self._events.values())
+        failed_total = sum(entry["failed"] for entry in self._events.values())
         return {
             "engines": {name: dict(entry) for name, entry in self._engines.items()},
             "events": {

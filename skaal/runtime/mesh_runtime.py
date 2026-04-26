@@ -17,6 +17,7 @@ Or via the CLI::
 
 from __future__ import annotations
 
+import importlib
 import json
 from dataclasses import asdict
 from typing import Any, cast
@@ -31,6 +32,9 @@ from skaal.types.runtime import (
     RuntimePayload,
     RuntimePlanSource,
 )
+from skaal.types.runtime import (
+    MeshClient as MeshClientProtocol,
+)
 
 from ._core import _RuntimeCoreMixin
 from ._dispatch import _RuntimeDispatchMixin
@@ -38,7 +42,6 @@ from ._lifecycle import _RuntimeLifecycleMixin
 from ._local_scheduler import _SchedulerMixin
 from ._local_server import _StarletteServerMixin
 from ._planning import (
-    _default_local_storage_factories,
     build_backend_overrides,
     build_development_plan,
     coerce_runtime_plan,
@@ -81,7 +84,7 @@ class MeshRuntime(
             raise ValueError("Pass either backend_overrides or runtime_plan, not both.")
 
         try:
-            import skaal_mesh
+            importlib.import_module("skaal_mesh")
         except ImportError as exc:
             raise ImportError(
                 "MeshRuntime requires the skaal_mesh native extension.\n"
@@ -117,10 +120,12 @@ class MeshRuntime(
             loaded_plan.setdefault("app_name", app.name)
             plan_dict = loaded_plan
 
-        self._mesh: Any = SkaalMeshClient(app.name, plan=plan_dict)
-        self.state = MeshStateService(self._mesh)
+        mesh_client = cast(MeshClientProtocol, SkaalMeshClient(app.name, plan=plan_dict))
+
+        self._mesh = mesh_client
+        self.state = MeshStateService(mesh_client)
         self.observer = InMemoryRuntimeObserver()
-        self.agents = MeshAgentsService(self._mesh)
+        self.agents = MeshAgentsService(mesh_client)
         self._backends: dict[str, AsyncClosable] = {}
         self._patch_storage()
         self._patch_channels()
@@ -129,13 +134,7 @@ class MeshRuntime(
     # ── Setup (mirrors LocalRuntime) ──────────────────────────────────────────
 
     def _patch_storage(self) -> None:
-        store_factory, vector_factory, relational_factory = _default_local_storage_factories()
-
-        self._patch_storage_backends(
-            store_factory=store_factory,
-            vector_factory=vector_factory,
-            relational_factory=relational_factory,
-        )
+        self._patch_storage_backends()
 
     def _patch_channels(self) -> None:
         self._wire_local_channels()
@@ -176,6 +175,6 @@ class MeshRuntime(
         return self._mesh.publish(topic, message)
 
     def health(self) -> RuntimePayload:
-        snapshot = cast(RuntimePayload, asdict(self._mesh.health_snapshot()))
+        snapshot = cast(RuntimePayload, asdict(cast(Any, self._mesh.health_snapshot())))
         snapshot["observer"] = self.observer.snapshot()
         return snapshot
