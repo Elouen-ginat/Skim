@@ -1,8 +1,7 @@
 """Pub/sub channels for inter-function communication.
 
-Provides an in-process channel implementation used during local development
-and a base class for distributed channel backends (Kafka, Kinesis, Redis
-Streams, …).
+Provides the in-process channel helper used by ``wire_local`` during local
+development and tests.
 """
 
 from __future__ import annotations
@@ -12,17 +11,7 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 
-class Channel:
-    """Abstract pub/sub channel."""
-
-    async def publish(self, topic: str, message: Any) -> None:
-        raise NotImplementedError
-
-    def subscribe(self, topic: str) -> "AsyncIterator[Any]":
-        raise NotImplementedError
-
-
-class LocalChannel(Channel):
+class LocalChannel:
     """
     In-process pub/sub channel backed by ``asyncio.Queue`` objects.
 

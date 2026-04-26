@@ -1,8 +1,8 @@
 """Redis Streams channel backend for distributed pub/sub.
 
-Implements the :class:`~skaal.runtime.channels.Channel` interface using
-Redis Streams (``XADD`` / ``XREADGROUP``).  Each topic maps to a Redis
-Stream key; consumer groups provide competing-consumer semantics.
+Implements a Redis Streams pub/sub backend using ``XADD`` / ``XREADGROUP``.
+Each topic maps to a Redis Stream key; consumer groups provide
+competing-consumer semantics.
 
 Usage::
 
