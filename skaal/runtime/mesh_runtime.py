@@ -33,6 +33,8 @@ from skaal.types.runtime import (
 from ._core import _RuntimeCoreMixin
 from ._dispatch import _RuntimeDispatchMixin
 from ._lifecycle import _RuntimeLifecycleMixin
+from ._local_scheduler import _SchedulerMixin
+from ._local_server import _StarletteServerMixin
 from ._planning import (
     _default_local_storage_factories,
     build_backend_overrides,
@@ -46,6 +48,8 @@ class MeshRuntime(
     _RuntimeCoreMixin,
     _RuntimeDispatchMixin,
     _RuntimeHttpTransportMixin,
+    _StarletteServerMixin,
+    _SchedulerMixin,
     _RuntimeLifecycleMixin,
 ):
     """Distributed runtime that delegates agent routing and channels to the Rust mesh.

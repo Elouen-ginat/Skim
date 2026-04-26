@@ -2,16 +2,59 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from skaal.types.runtime import DispatchResult, RuntimeApp
+from skaal.types.runtime import DispatchResult, RuntimeApp, RuntimeCallable
 
 
-class _LocalServerMixin:
+class _StarletteServerMixin:
     if TYPE_CHECKING:
         app: RuntimeApp
         host: str
         port: int
 
+        def _collect_schedules(self) -> dict[str, RuntimeCallable]: ...
+
+        def _register_schedules(
+            self,
+            scheduler: object,
+            scheduled: dict[str, RuntimeCallable],
+            *,
+            log_runs: bool,
+        ) -> None: ...
+
         async def _dispatch(self, method: str, path: str, body: bytes) -> DispatchResult: ...
+
+        async def _serve_skaal(self) -> None: ...
+
+    async def _serve_runtime(self) -> None:
+        asgi_app = getattr(self.app, "_asgi_app", None)
+        wsgi_app = getattr(self.app, "_wsgi_app", None)
+        if asgi_app is not None:
+            await self._serve_asgi(asgi_app)
+            return
+        if wsgi_app is not None:
+            await self._serve_wsgi(wsgi_app)
+            return
+
+        scheduled = self._collect_schedules()
+        scheduler = None
+        if scheduled:
+            try:
+                from apscheduler.schedulers.asyncio import AsyncIOScheduler
+
+                scheduler = AsyncIOScheduler()
+                self._register_schedules(scheduler, scheduled, log_runs=False)
+                scheduler.start()
+            except ImportError:
+                print(
+                    "  WARNING: apscheduler not installed — scheduled functions will not run.\n"
+                    "           Install with: pip install apscheduler\n"
+                )
+
+        try:
+            await self._serve_skaal()
+        finally:
+            if scheduler is not None:
+                scheduler.shutdown(wait=False)
 
     async def _serve_with_starlette(
         self,

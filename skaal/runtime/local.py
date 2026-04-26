@@ -17,8 +17,8 @@ from skaal.types.runtime import (
 from ._core import _RuntimeCoreMixin
 from ._dispatch import _RuntimeDispatchMixin
 from ._lifecycle import _RuntimeLifecycleMixin
-from ._local_scheduler import _LocalSchedulerMixin
-from ._local_server import _LocalServerMixin
+from ._local_scheduler import _SchedulerMixin
+from ._local_server import _StarletteServerMixin
 from ._planning import (
     _default_local_storage_factories,
     build_backend_overrides,
@@ -32,9 +32,9 @@ class LocalRuntime(
     _RuntimeCoreMixin,
     _RuntimeDispatchMixin,
     _RuntimeHttpTransportMixin,
+    _StarletteServerMixin,
+    _SchedulerMixin,
     _RuntimeLifecycleMixin,
-    _LocalServerMixin,
-    _LocalSchedulerMixin,
 ):
     """
     Runs a Skaal App locally as a minimal asyncio HTTP server.
@@ -182,34 +182,3 @@ class LocalRuntime(
                 trigger = schedule_meta["trigger"]
                 lines.append(f"    schedule /{name}  [{trigger!r}]")
         return lines
-
-    async def _serve_runtime(self) -> None:
-        asgi_app = getattr(self.app, "_asgi_app", None)
-        wsgi_app = getattr(self.app, "_wsgi_app", None)
-        if asgi_app is not None:
-            await self._serve_asgi(asgi_app)
-            return
-        if wsgi_app is not None:
-            await self._serve_wsgi(wsgi_app)
-            return
-
-        scheduled = self._collect_schedules()
-        scheduler = None
-        if scheduled:
-            try:
-                from apscheduler.schedulers.asyncio import AsyncIOScheduler
-
-                scheduler = AsyncIOScheduler()
-                self._register_schedules(scheduler, scheduled, log_runs=False)
-                scheduler.start()
-            except ImportError:
-                print(
-                    "  WARNING: apscheduler not installed — scheduled functions will not run.\n"
-                    "           Install with: pip install apscheduler\n"
-                )
-
-        try:
-            await self._serve_skaal()
-        finally:
-            if scheduler is not None:
-                scheduler.shutdown(wait=False)

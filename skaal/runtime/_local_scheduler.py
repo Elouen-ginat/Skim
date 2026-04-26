@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Any, cast
 from skaal.types.runtime import RuntimeCallable, SupportsAsyncSend
 
 
-class _LocalSchedulerMixin:
+class _SchedulerMixin:
     if TYPE_CHECKING:
 
         def _collect_schedules(self) -> dict[str, RuntimeCallable]: ...
