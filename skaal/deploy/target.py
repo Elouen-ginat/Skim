@@ -1,6 +1,6 @@
 """DeployTarget Protocol — the formal interface for all deploy targets.
 
-Every deploy target (AWS Lambda, GCP Cloud Run, local Docker Compose, and any
+Every deploy target (AWS Lambda, GCP Cloud Run, local Docker + Pulumi, and any
 future targets) must satisfy this Protocol.  The concrete adapters live in
 :mod:`skaal.deploy.registry`; the generator modules (:mod:`skaal.deploy.aws`,
 :mod:`skaal.deploy.gcp`, :mod:`skaal.deploy.local`) are the implementation
@@ -27,7 +27,7 @@ class DeployTarget(Protocol):
     Concrete implementations live in :mod:`skaal.deploy.registry`:
     :class:`~skaal.deploy.registry.AWSLambdaTarget`,
     :class:`~skaal.deploy.registry.GCPCloudRunTarget`,
-    :class:`~skaal.deploy.registry.LocalDockerComposeTarget`.
+    :class:`~skaal.deploy.registry.LocalDockerTarget`.
 
     Adding a new target
     -------------------
@@ -111,5 +111,22 @@ class DeployTarget(Protocol):
         Returns:
             Dict of Pulumi stack outputs, e.g. ``{"apiUrl": "https://..."}``.
             Empty dict for targets that do not produce outputs (local).
+        """
+        ...
+
+    def destroy_stack(
+        self,
+        artifacts_dir: Path,
+        *,
+        stack: str,
+        yes: bool,
+    ) -> None:
+        """Destroy resources for an existing Pulumi stack.
+
+        Args:
+            artifacts_dir: Path to the directory produced by
+                           :meth:`generate_artifacts`.
+            stack:         Pulumi stack name.
+            yes:           Pass ``--yes`` to ``pulumi destroy``.
         """
         ...

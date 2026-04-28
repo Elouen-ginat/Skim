@@ -10,8 +10,8 @@ the runtime app to reach it.  The provisioner's job is narrow:
 3. Surface a list to deploy-time so the operator knows which secrets must be
    populated before the app boots.
 
-For the **local** target we additionally wire the env var through
-``docker-compose`` by forwarding it from the host environment.
+For the **local** target those env vars become container environment entries
+in the generated Pulumi stack.
 
 Provisioned Skaal components (``Proxy``, ``APIGateway``, ``ScheduleTrigger``)
 are handled by target-specific generators and are out of scope here.
@@ -65,7 +65,6 @@ class ExternalProvisioner(Protocol):
     """Target-specific hook for injecting external-component connectivity."""
 
     def env_vars(self, plan: "PlanFile") -> dict[str, str]: ...
-    def compose_fragment(self, plan: "PlanFile") -> str: ...
 
 
 class DefaultExternalProvisioner:
@@ -73,15 +72,3 @@ class DefaultExternalProvisioner:
 
     def env_vars(self, plan: "PlanFile") -> dict[str, str]:
         return external_env_vars(plan)
-
-    def compose_fragment(self, plan: "PlanFile") -> str:
-        """Render a docker-compose ``environment:`` block fragment.
-
-        Forwards each declared ``connection_env`` from the host to the app
-        container so local dev mirrors what deploy artifacts will inject.
-        """
-        envs = external_env_vars(plan)
-        if not envs:
-            return ""
-        lines = [f"      {name}: ${{{name}}}" for name in sorted(envs)]
-        return "\n".join(lines) + "\n"

@@ -6,11 +6,11 @@ via :func:`~skaal.deploy.registry.get_target`, and delegates all platform-specif
 logic to the target's :meth:`~skaal.deploy.target.DeployTarget.package_and_push` method.
 
 The private helpers in this module (``_package_aws``, ``_pulumi_*``,
-``_build_push_image``) are the low-level subprocess layer.  They are called by
+``_build_push_image``) are the low-level subprocess layer. They are called by
 the target adapter classes in :mod:`skaal.deploy.registry`.
 
 All I/O uses :mod:`pathlib` and :mod:`shutil` — no shell syntax, works on
-Windows, macOS, and Linux.  External tools (``pulumi``, ``docker``,
+Windows, macOS, and Linux. External tools (``pulumi``, ``docker``,
 ``gcloud``) are invoked via :mod:`subprocess` using their unquoted name so
 the OS PATH resolver handles platform differences automatically.
 """
@@ -18,6 +18,7 @@ the OS PATH resolver handles platform differences automatically.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -65,16 +66,31 @@ def read_meta(artifacts_dir: Path) -> dict[str, Any]:
 
 
 def _run(
-    cmd: list[str], cwd: Path | None = None, capture: bool = False
+    cmd: list[str], cwd: Path | None = None, capture: bool = False, check: bool = True
 ) -> subprocess.CompletedProcess[str]:
     """Run a command, raising CalledProcessError on non-zero exit."""
-    return subprocess.run(
-        cmd,
-        cwd=cwd,
-        check=True,
-        capture_output=capture,
-        text=True if capture else None,
-    )
+    try:
+        return subprocess.run(
+            cmd,
+            cwd=cwd,
+            check=check,
+            capture_output=capture,
+            text=True if capture else None,
+            env=_pulumi_env(),
+        )
+    except FileNotFoundError as exc:
+        tool = cmd[0]
+        if tool == "pulumi":
+            message = "Pulumi CLI was not found on PATH. Install `pulumi` and retry `skaal deploy`."
+        else:
+            message = f"Required executable was not found on PATH: {tool}"
+        raise FileNotFoundError(message) from exc
+
+
+def _pulumi_env() -> dict[str, str]:
+    env = os.environ.copy()
+    env.setdefault("PULUMI_CONFIG_PASSPHRASE", "")
+    return env
 
 
 # ── AWS helpers ───────────────────────────────────────────────────────────────
@@ -120,13 +136,38 @@ def _package_aws(artifacts_dir: Path, project_root: Path, source_module: str) ->
 
 def _pulumi_stack_select_or_init(artifacts_dir: Path, stack: str) -> None:
     """Select *stack* if it exists, otherwise initialise it."""
-    result = subprocess.run(
+    result = _run(
         ["pulumi", "stack", "select", stack],
         cwd=artifacts_dir,
-        capture_output=True,
+        capture=True,
+        check=False,
     )
     if result.returncode != 0:
         _run(["pulumi", "stack", "init", stack], cwd=artifacts_dir)
+
+
+def _pulumi_stack_select(artifacts_dir: Path, stack: str) -> None:
+    """Select an existing Pulumi *stack*."""
+    _run(["pulumi", "stack", "select", stack], cwd=artifacts_dir)
+
+
+def _pulumi_local_backend_url(state_dir: Path) -> str:
+    """Build a Pulumi filestate backend URL for *state_dir*.
+
+    Pulumi's Windows backend parser rejects the RFC-style ``file:///C:/...`` URI
+    emitted by :meth:`pathlib.Path.as_uri`. It accepts ``file://C:/...`` instead.
+    """
+    posix_path = state_dir.resolve().as_posix()
+    return f"file://{posix_path}"
+
+
+def _pulumi_login_local(state_dir: Path) -> str:
+    """Prepare the local filestate backend rooted at *state_dir* and return its URL."""
+    resolved_state_dir = state_dir.resolve()
+    resolved_state_dir.mkdir(parents=True, exist_ok=True)
+    backend_url = _pulumi_local_backend_url(resolved_state_dir)
+    _run(["pulumi", "login", backend_url])
+    return backend_url
 
 
 def _pulumi_config_set(artifacts_dir: Path, config: dict[str, str]) -> None:
@@ -141,9 +182,26 @@ def _pulumi_up(artifacts_dir: Path, yes: bool) -> None:
     _run(cmd, cwd=artifacts_dir)
 
 
+def _pulumi_destroy(artifacts_dir: Path, yes: bool) -> None:
+    cmd = ["pulumi", "destroy"]
+    if yes:
+        cmd.append("--yes")
+    _run(cmd, cwd=artifacts_dir)
+
+
 def _pulumi_output(artifacts_dir: Path, output_name: str) -> str:
     result = _run(
         ["pulumi", "stack", "output", output_name],
+        cwd=artifacts_dir,
+        capture=True,
+    )
+    return result.stdout.strip()
+
+
+def _build_local_image(artifacts_dir: Path, image_name: str) -> str:
+    _run(["docker", "build", "-t", image_name, str(artifacts_dir.resolve())], cwd=artifacts_dir)
+    result = _run(
+        ["docker", "image", "inspect", image_name, "--format", "{{.Id}}"],
         cwd=artifacts_dir,
         capture=True,
     )
@@ -198,8 +256,7 @@ def package_and_push(
                           after the core project/region config.
 
     Returns:
-        Dict of Pulumi stack outputs (e.g. ``{"apiUrl": "https://..."}``)
-        — empty dict for the local target.
+        Dict of Pulumi stack outputs (e.g. ``{"apiUrl": "https://..."}``).
     """
     from skaal.deploy.registry import get_target
 
@@ -216,4 +273,27 @@ def package_and_push(
         source_module=meta["source_module"],
         app_name=meta["app_name"],
         config_overrides=config_overrides,
+    )
+
+
+def destroy_stack(
+    artifacts_dir: Path,
+    *,
+    stack: str = "dev",
+    yes: bool = True,
+) -> None:
+    """Destroy resources for an existing Pulumi stack.
+
+    Reads ``skaal-meta.json`` from *artifacts_dir* to determine the target
+    platform, then delegates to the appropriate target adapter.
+    """
+    from skaal.deploy.registry import get_target
+
+    artifacts_dir = Path(artifacts_dir).resolve()
+    meta = read_meta(artifacts_dir)
+
+    get_target(meta["target"]).destroy_stack(
+        artifacts_dir,
+        stack=stack,
+        yes=yes,
     )

@@ -9,17 +9,19 @@ file — no catalog access at build time.
 so catalog wire sections stay minimal.
 
 The only Python-side constants are:
-- ``_COMPOSE_SERVICES`` — verbose Docker Compose service specs (stable, not
-  user-facing config, not worth putting in TOML).
+- ``_LOCAL_SERVICE_SPECS`` — verbose local Docker service specs (stable, not
+    user-facing config, not worth putting in TOML).
 - ``_LOCAL_FALLBACK`` — maps cloud backend names to their local equivalents
   when a cloud plan is run with a local generator (edge case).
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field
+
+from skaal.types.deploy import LocalServiceSpec
 
 if TYPE_CHECKING:
     from skaal.plan import StorageSpec
@@ -63,11 +65,11 @@ class BackendHandler(BaseModel):
     """GCP: backend requires a VPC connector (Cloud SQL, Memorystore)."""
 
     local_service: str | None = None
-    """Docker Compose service name this backend needs (``"redis"``,
-    ``"postgres"``).  ``None`` if no separate container is required."""
+    """Local service resource name this backend needs (``"redis"``,
+    ``"postgres"``). ``None`` if no separate container is required."""
 
     local_env_value: str | None = None
-    """Static DSN / URL injected into the Compose ``environment`` block,
+    """Static DSN / URL injected into the local app container environment,
     e.g. ``"redis://redis:6379"``."""
 
     extra_deps: list[str] = Field(default_factory=list)
@@ -80,79 +82,84 @@ class BackendHandler(BaseModel):
         return f"from skaal.backends.{self.module} import {self.class_name}"
 
 
-# ── Docker Compose service specs ──────────────────────────────────────────────
+# ── Local Docker service specs ────────────────────────────────────────────────
 # Kept in Python: verbose, stable, not user-facing config.
 # Referenced by BackendHandler.local_service (service name key).
 
-_COMPOSE_SERVICES: dict[str, dict[str, Any]] = {
+_LOCAL_SERVICE_SPECS: dict[str, LocalServiceSpec] = {
     "postgres": {
         "image": "postgres:16-alpine",
-        "ports": ["- '5432:5432'"],
-        "environment": [
-            "- POSTGRES_USER=skaal_user",
-            "- POSTGRES_PASSWORD=skaal_pass",
-            "- POSTGRES_DB=skaal_db",
+        "ports": [{"internal": 5432, "external": 5432}],
+        "envs": [
+            "POSTGRES_USER=skaal_user",
+            "POSTGRES_PASSWORD=skaal_pass",
+            "POSTGRES_DB=skaal_db",
         ],
         "healthcheck": {
-            "test": ["CMD-SHELL", "pg_isready -U skaal_user -d skaal_db"],
+            "tests": ["CMD-SHELL", "pg_isready -U skaal_user -d skaal_db"],
             "interval": "5s",
             "timeout": "5s",
             "retries": 5,
-            "start_period": "10s",
+            "startPeriod": "10s",
         },
     },
     "redis": {
         "image": "redis:7-alpine",
-        "ports": ["- '6379:6379'"],
-        "environment": [],
+        "ports": [{"internal": 6379, "external": 6379}],
+        "envs": [],
         "healthcheck": {
-            "test": ["CMD", "redis-cli", "ping"],
+            "tests": ["CMD", "redis-cli", "ping"],
             "interval": "5s",
             "timeout": "3s",
             "retries": 5,
-            "start_period": "10s",
+            "startPeriod": "10s",
         },
     },
     # ── Proxy / API-gateway local backends ───────────────────────────────────
     "traefik": {
         "image": "traefik:v3",
-        "ports": ["- '80:80'"],
-        "environment": [],
-        "volumes": ["- /var/run/docker.sock:/var/run/docker.sock:ro"],
+        "ports": [{"internal": 80, "external": 80}],
+        "envs": [],
+        "volumes": [
+            {
+                "containerPath": "/var/run/docker.sock",
+                "hostPath": "/var/run/docker.sock",
+                "readOnly": True,
+            }
+        ],
         "command": [
             "--providers.docker=true",
             "--providers.docker.exposedbydefault=false",
             "--entrypoints.web.address=:80",
         ],
         "healthcheck": {
-            "test": ["CMD", "traefik", "healthcheck"],
+            "tests": ["CMD", "traefik", "healthcheck"],
             "interval": "10s",
             "timeout": "5s",
             "retries": 5,
-            "start_period": "5s",
+            "startPeriod": "5s",
         },
     },
     "kong": {
         "image": "kong:3",
-        "ports": ["- '8080:8000'"],
-        "environment": [
-            "- KONG_DATABASE=off",
-            "- KONG_DECLARATIVE_CONFIG=/kong/config.yml",
-            "- KONG_PROXY_LISTEN=0.0.0.0:8000",
-            "- KONG_ADMIN_LISTEN=127.0.0.1:8001",
+        "ports": [{"internal": 8000, "external": 8080}],
+        "envs": [
+            "KONG_DATABASE=off",
+            "KONG_DECLARATIVE_CONFIG=/kong/config.yml",
+            "KONG_PROXY_LISTEN=0.0.0.0:8000",
+            "KONG_ADMIN_LISTEN=127.0.0.1:8001",
         ],
-        "volumes": ["- ./kong.yml:/kong/config.yml:ro"],
         "healthcheck": {
-            "test": ["CMD", "kong", "health"],
+            "tests": ["CMD", "kong", "health"],
             "interval": "10s",
             "timeout": "5s",
             "retries": 5,
-            "start_period": "15s",
+            "startPeriod": "15s",
         },
     },
 }
 
-# Maps cloud backend names to their local Docker Compose equivalents.
+# Maps cloud backend names to their local Docker equivalents.
 # Only used when a cloud plan is built with the local generator (edge case).
 _LOCAL_FALLBACK: dict[tuple[str, str], str] = {
     ("dynamodb", "kv"): "local-map",
@@ -178,8 +185,8 @@ def get_handler(spec: "StorageSpec", *, local: bool = False) -> BackendHandler:
         spec:  A :class:`~skaal.plan.StorageSpec` from the plan file.
         local: If True, cloud backends are replaced with their local equivalents
                via ``_LOCAL_FALLBACK`` before returning, even when ``wire_params``
-               is present.  This prevents cloud-specific services (e.g. a postgres
-               container) from appearing in a local docker-compose generated from
+               is present. This prevents cloud-specific services (e.g. a postgres
+               container) from appearing in a local Docker stack generated from
                a GCP or AWS plan.
 
     Raises:
@@ -188,7 +195,7 @@ def get_handler(spec: "StorageSpec", *, local: bool = False) -> BackendHandler:
     if local:
         # Always apply the local fallback for cloud backends so that a plan
         # solved for GCP/AWS doesn't leak cloud-specific wire params (and their
-        # local_service sidecars) into the local docker-compose.
+        # local_service sidecars) into the local Docker stack.
         fallback_key = _LOCAL_FALLBACK.get((spec.backend, spec.kind))
         if fallback_key:
             _fallback = _FALLBACK_WIRE.get(fallback_key)

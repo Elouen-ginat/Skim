@@ -379,6 +379,9 @@ def test_deploy_forwards_to_package_and_push(tmp_path: Path) -> None:
     """deploy() resolves settings and delegates to package_and_push()."""
     artifacts = tmp_path / "artifacts"
     artifacts.mkdir()
+    (artifacts / "skaal-meta.json").write_text(
+        '{"target": "aws", "source_module": "examples.app", "app_name": "demo"}'
+    )
 
     with mock.patch("skaal.deploy.push.package_and_push") as fake:
         fake.return_value = {"apiUrl": "https://example.com"}
@@ -395,3 +398,25 @@ def test_deploy_forwards_to_package_and_push(tmp_path: Path) -> None:
     call_kwargs = fake.call_args.kwargs
     assert call_kwargs["stack"] == "dev"
     assert call_kwargs["region"] == "us-east-1"
+
+
+def test_destroy_forwards_to_destroy_stack(tmp_path: Path) -> None:
+    """destroy() resolves settings and delegates to destroy_stack()."""
+    artifacts = tmp_path / "artifacts"
+    artifacts.mkdir()
+    (artifacts / "skaal-meta.json").write_text(
+        '{"target": "local", "source_module": "examples.app", "app_name": "demo"}'
+    )
+
+    with mock.patch("skaal.deploy.push.destroy_stack") as fake:
+        api.destroy(
+            artifacts,
+            stack=None,
+            yes=True,
+        )
+
+    fake.assert_called_once_with(
+        artifacts_dir=artifacts.resolve(),
+        stack="local",
+        yes=True,
+    )

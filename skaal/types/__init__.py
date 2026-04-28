@@ -23,6 +23,22 @@ from skaal.types.constraints import (
     Persistent,
     Throughput,
 )
+from skaal.types.deploy import (
+    DockerBuildConfig,
+    DockerContainerProperties,
+    DockerHealthcheck,
+    DockerImageProperties,
+    DockerLabel,
+    DockerNetworkAttachment,
+    DockerPortBinding,
+    DockerVolumeMount,
+    LocalServiceSpec,
+    PulumiPlugins,
+    PulumiProviderPlugin,
+    PulumiResource,
+    PulumiResourceOptions,
+    PulumiStack,
+)
 from skaal.types.schema import apply_migrations, migrate_from
 
 __all__ = [
@@ -34,6 +50,21 @@ __all__ = [
     "Latency",
     "Persistent",
     "Throughput",
+    # deploy
+    "DockerBuildConfig",
+    "DockerContainerProperties",
+    "DockerHealthcheck",
+    "DockerImageProperties",
+    "DockerLabel",
+    "DockerNetworkAttachment",
+    "DockerPortBinding",
+    "DockerVolumeMount",
+    "LocalServiceSpec",
+    "PulumiPlugins",
+    "PulumiProviderPlugin",
+    "PulumiResource",
+    "PulumiResourceOptions",
+    "PulumiStack",
     # compute
     "Bulkhead",
     "CircuitBreaker",

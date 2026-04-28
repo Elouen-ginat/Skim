@@ -117,6 +117,24 @@ def test_build_command(runner: CliRunner, temp_catalog: Path, tmp_path: Path) ->
     assert "--help" in result.output or result.exit_code == 0
 
 
+def test_destroy_command_forwards_to_api(runner: CliRunner, tmp_path: Path) -> None:
+    """Test 'skaal destroy' delegates to skaal.api.destroy."""
+    artifacts_dir = tmp_path / "artifacts"
+
+    with mock.patch("skaal.api.destroy") as mock_destroy:
+        result = runner.invoke(
+            cli_app,
+            ["destroy", "--artifacts-dir", str(artifacts_dir), "--stack", "local", "--yes"],
+        )
+
+    assert result.exit_code == 0
+    mock_destroy.assert_called_once_with(
+        artifacts_dir=artifacts_dir,
+        stack="local",
+        yes=True,
+    )
+
+
 def test_cli_help(runner: CliRunner) -> None:
     """Test CLI help output."""
     result = runner.invoke(cli_app, ["--help"])

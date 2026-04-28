@@ -277,15 +277,14 @@ class CloudRunDeployConfig(ComputeDeployConfig):
         return v
 
 
-# ── Local Docker Compose compute ──────────────────────────────────────────────
+# ── Local Docker compute ──────────────────────────────────────────────────────
 
 
 class LocalStackDeployConfig(ComputeDeployConfig):
-    """Configuration for local Docker Compose deployments.
+    """Configuration for local Docker deployments.
 
     Attributes:
         port: HTTP port to expose for the app container.
-        app_service_name: Name of the app service in docker-compose.yml.
     """
 
     port: int = Field(default=8000, ge=1, le=65535)
@@ -314,7 +313,7 @@ _COMPUTE_CONFIGS: dict[str, type[ComputeDeployConfig]] = {
     "aws": LambdaDeployConfig,
     "gcp-cloudrun": CloudRunDeployConfig,
     "gcp": CloudRunDeployConfig,
-    "local-compose": LocalStackDeployConfig,
+    "local-docker": LocalStackDeployConfig,
 }
 
 

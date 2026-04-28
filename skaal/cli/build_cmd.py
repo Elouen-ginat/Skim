@@ -5,7 +5,7 @@ artifacts directory (default: ``artifacts/``) containing:
 
   AWS   — ``handler.py``, ``Pulumi.yaml``, ``pyproject.toml``, ``skaal-meta.json``
   GCP   — ``main.py``, ``Dockerfile``, ``Pulumi.yaml``, ``pyproject.toml``, ``skaal-meta.json``
-  local — ``main.py``, ``Dockerfile``, ``docker-compose.yml``, ``pyproject.toml``, ``skaal-meta.json``
+    local — ``main.py``, ``Dockerfile``, ``Pulumi.yaml``, ``pyproject.toml``, ``skaal-meta.json``
 
 Run ``skaal plan MODULE:APP --target TARGET`` first to produce the lock file,
 then ``skaal deploy`` afterwards to push to the cloud.
@@ -68,7 +68,7 @@ def build(
     \b
       aws   — AWS Lambda + DynamoDB + API Gateway (Pulumi YAML)
       gcp   — GCP Cloud Run + Firestore/Redis/Postgres (Pulumi YAML + Dockerfile)
-      local — Docker Compose (for local testing)
+            local — Docker + Pulumi (for local testing)
     """
     from skaal import api
     from skaal.deploy.registry import get_target

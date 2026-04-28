@@ -1,0 +1,139 @@
+"""Tests for local Pulumi Docker stack generation."""
+
+from __future__ import annotations
+
+from pathlib import Path
+from unittest.mock import MagicMock
+
+from skaal.components import APIGateway, Proxy, Route
+from skaal.deploy.local import _build_pulumi_stack, generate_artifacts
+from skaal.plan import PlanFile, StorageSpec
+from skaal.solver.components import encode_component
+
+
+def _make_app(name: str = "test-app", mounts: dict[str, str] | None = None) -> MagicMock:
+    app = MagicMock()
+    app.name = name
+    if mounts:
+        app._mounts = mounts
+    else:
+        del app._mounts
+        app.__dict__.pop("_mounts", None)
+    return app
+
+
+def test_local_stack_emits_core_resources_and_storage_envs(tmp_path: Path):
+    plan = PlanFile(
+        app_name="test-app",
+        storage={
+            "example.Cache": StorageSpec(
+                variable_name="cache",
+                backend="memorystore-redis",
+                kind="kv",
+            )
+        },
+        deploy_config={"port": 8123},
+    )
+
+    stack = _build_pulumi_stack(
+        _make_app(),
+        plan,
+        output_dir=tmp_path / "artifacts",
+        source_module="examples.counter",
+    )
+
+    assert "plugins" not in stack
+    assert stack["config"] == {
+        "localImageRef": {"type": "string", "default": "skaal-test-app:local"}
+    }
+    assert stack["outputs"] == {"appUrl": "http://localhost:8123"}
+
+    resources = stack["resources"]
+    assert resources["skaal-net"]["type"] == "docker:Network"
+    assert resources["skaal-data"]["type"] == "docker:Volume"
+    assert "app-image" not in resources
+    assert resources["redis"]["type"] == "docker:Container"
+
+    app_resource = resources["app"]
+    assert app_resource["type"] == "docker:Container"
+    assert app_resource["properties"]["image"] == "${localImageRef}"
+    assert app_resource["properties"]["ports"] == [{"internal": 8000, "external": 8123}]
+    assert {"name": "${skaal-net.name}", "aliases": ["app"]} in app_resource["properties"][
+        "networksAdvanced"
+    ]
+    assert "SKAAL_REDIS_URL_CACHE=redis://redis:6379" in app_resource["properties"]["envs"]
+    assert "${redis}" in app_resource["options"]["dependsOn"]
+    assert "${app-image}" not in app_resource["options"]["dependsOn"]
+    assert {"containerPath": "/app/data", "volumeName": "${skaal-data.name}"} in app_resource[
+        "properties"
+    ]["volumes"]
+
+
+def test_local_stack_proxy_adds_traefik_and_labels(tmp_path: Path):
+    proxy = Proxy("edge", routes=[Route("/api/*", target="fn")])
+    spec = encode_component("edge", proxy, {}, target="local")
+    plan = PlanFile(app_name="test-app", components={"edge": spec})
+
+    stack = _build_pulumi_stack(
+        _make_app(),
+        plan,
+        output_dir=tmp_path / "artifacts",
+        source_module="examples.counter",
+    )
+
+    resources = stack["resources"]
+    assert resources["traefik"]["type"] == "docker:Container"
+    labels = resources["app"]["properties"]["labels"]
+    assert {"label": "traefik.enable", "value": "true"} in labels
+    assert {
+        "label": "traefik.http.routers.test-app-r0.rule",
+        "value": "PathPrefix(`/api`)",
+    } in labels
+
+
+def test_local_stack_api_gateway_adds_kong_mount(tmp_path: Path):
+    gateway = APIGateway("public", routes=[Route("/v1/*", target="fn")])
+    spec = encode_component("public", gateway, {}, target="local")
+    output_dir = tmp_path / "artifacts"
+
+    stack = _build_pulumi_stack(
+        _make_app(),
+        PlanFile(app_name="test-app", components={"public": spec}),
+        output_dir=output_dir,
+        source_module="examples.counter",
+    )
+
+    kong_resource = stack["resources"]["kong"]
+    assert kong_resource["type"] == "docker:Container"
+    assert {
+        "containerPath": "/kong/config.yml",
+        "hostPath": str((output_dir / "kong.yml").resolve()),
+        "readOnly": True,
+    } in kong_resource["properties"]["volumes"]
+    assert "${app}" in kong_resource["options"]["dependsOn"]
+
+
+def test_generate_artifacts_writes_dockerignore(tmp_path: Path):
+    output_dir = tmp_path / "artifacts"
+    src_pkg = tmp_path / "examples"
+    src_pkg.mkdir()
+    (src_pkg / "__init__.py").write_text("", encoding="utf-8")
+
+    app = _make_app()
+    plan = PlanFile(app_name="test-app", deploy_config={"port": 8000})
+
+    generated = generate_artifacts(
+        app,
+        plan,
+        output_dir=output_dir,
+        source_module="examples.counter",
+    )
+
+    dockerignore_path = output_dir / ".dockerignore"
+    local_spec_path = output_dir / "skaal-local-stack.json"
+    assert dockerignore_path in generated
+    assert local_spec_path in generated
+    assert dockerignore_path.read_text(encoding="utf-8") == (
+        ".pulumi/\n.pulumi-state/\n__pycache__/\n.pytest_cache/\n"
+    )
+    assert '"resources"' in local_spec_path.read_text(encoding="utf-8")

@@ -1,81 +1,137 @@
-"""Local Docker Compose artifact generator."""
+"""Local Pulumi artifact generator backed by the Docker provider."""
 
 from __future__ import annotations
 
+import re
 import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from skaal.deploy._backends import _COMPOSE_SERVICES, build_wiring, get_handler
+from skaal.deploy._backends import _LOCAL_SERVICE_SPECS, build_wiring, get_handler
 from skaal.deploy._deps import collect_user_packages
 from skaal.deploy._external import DefaultExternalProvisioner
-from skaal.deploy._render import render, to_pyproject_toml
+from skaal.deploy._render import render, to_pulumi_yaml, to_pyproject_toml
 from skaal.deploy.config import LocalStackDeployConfig
+from skaal.deploy.local_automation import write_local_stack_spec
 from skaal.deploy.push import write_meta
+from skaal.types.deploy import (
+    DockerContainerProperties,
+    DockerLabel,
+    DockerNetworkAttachment,
+    DockerPortBinding,
+    DockerVolumeMount,
+    LocalServiceSpec,
+    PulumiResource,
+    PulumiStack,
+)
 
 if TYPE_CHECKING:
     from skaal.plan import PlanFile
 
 
-# ── Local gateway helpers ─────────────────────────────────────────────────────
+_LOCAL_GITIGNORE = (
+    ".pulumi/\n" ".pulumi-state/\n" "__pycache__/\n" ".pytest_cache/\n" ".env\n" ".env.local\n"
+)
+_LOCAL_DOCKERIGNORE = ".pulumi/\n.pulumi-state/\n__pycache__/\n.pytest_cache/\n"
 
 
-def _traefik_labels(routes: list[dict[str, Any]], app_name: str) -> str:
-    """Generate docker-compose label lines that wire Traefik routing rules.
+def _resource_slug(name: str, *, max_len: int = 40) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
+    if not slug:
+        slug = "skaal"
+    if not slug[0].isalpha():
+        slug = f"skaal-{slug}"
+    return slug[:max_len].rstrip("-") or "skaal"
 
-    Each route produces a Traefik router + service label pair.  The app
-    container retains its direct port binding so it is reachable without
-    Traefik during development.
-    """
+
+def local_image_name(app_name: str) -> str:
+    return f"skaal-{_resource_slug(app_name)}:local"
+
+
+def _gateway_component(plan: "PlanFile") -> Any | None:
+    return next(
+        (
+            component
+            for component in plan.components.values()
+            if component.kind in ("proxy", "api-gateway")
+        ),
+        None,
+    )
+
+
+def _gateway_routes(app: Any, gw_comp: Any) -> list[dict[str, Any]]:
+    routes: list[dict[str, Any]] = gw_comp.config.get("routes") or []
+    mounts: dict[str, str] = getattr(app, "_mounts", {}) if app is not None else {}
+    if not routes and mounts:
+        routes = [
+            {"path": prefix.rstrip("/") + "/*", "target": ns, "methods": ["GET", "POST"]}
+            for ns, prefix in mounts.items()
+        ]
+    return routes
+
+
+def _traefik_labels(routes: list[dict[str, Any]], app_name: str) -> list[DockerLabel]:
+    labels: list[DockerLabel] = [{"label": "traefik.enable", "value": "true"}]
     if not routes:
-        return (
-            "    labels:\n"
-            f'      - "traefik.enable=true"\n'
-            f'      - "traefik.http.routers.{app_name}.rule=PathPrefix(`/`)"\n'
-            f'      - "traefik.http.services.{app_name}.loadbalancer.server.port=8000"\n'
-        )
+        return labels + [
+            {"label": f"traefik.http.routers.{app_name}.rule", "value": "PathPrefix(`/`)"},
+            {
+                "label": f"traefik.http.services.{app_name}.loadbalancer.server.port",
+                "value": "8000",
+            },
+        ]
 
-    label_lines: list[str] = ["    labels:", '      - "traefik.enable=true"']
-    for i, route in enumerate(routes):
+    for index, route in enumerate(routes):
         path = route["path"].rstrip("*").rstrip("/") or "/"
-        router = f"{app_name}-r{i}"
-        # PathPrefix strips trailing /* so /api/* → PathPrefix(`/api`)
+        router = f"{app_name}-r{index}"
         rule = f"PathPrefix(`{path}`)" if path != "/" else "PathPrefix(`/`)"
-        label_lines.append(f'      - "traefik.http.routers.{router}.rule={rule}"')
-        label_lines.append(
-            f'      - "traefik.http.services.{router}.loadbalancer.server.port=8000"'
+        labels.append({"label": f"traefik.http.routers.{router}.rule", "value": rule})
+        labels.append(
+            {
+                "label": f"traefik.http.services.{router}.loadbalancer.server.port",
+                "value": "8000",
+            }
         )
-    return "\n".join(label_lines) + "\n"
+    return labels
 
 
-def _kong_config(
-    routes: list[dict[str, Any]],
-    auth: dict[str, Any] | None,
-    rate_limit: dict[str, Any] | None,
-    cors_origins: list[str] | None,
-) -> str:
-    """Generate a Kong DB-less declarative configuration (kong.yml)."""
+def build_kong_config(app: Any, plan: "PlanFile", *, app_service_name: str = "app") -> str | None:
+    """Build the optional Kong config for a local api-gateway target."""
+    gw_comp = _gateway_component(plan)
+    if gw_comp is None:
+        return None
+
+    impl = gw_comp.implementation or ("traefik" if gw_comp.kind == "proxy" else "kong")
+    if impl != "kong":
+        return None
+
+    routes = _gateway_routes(app, gw_comp)
+    if not routes:
+        routes = [{"path": "/", "target": "app", "methods": ["GET", "POST"]}]
+
     lines: list[str] = [
         '_format_version: "3.0"',
         "_transform: true",
         "",
         "services:",
         "  - name: skaal-app",
-        "    url: http://app:8000",
+        f"    url: http://{app_service_name}:8000",
         "    routes:",
     ]
 
-    for i, route in enumerate(routes):
+    for index, route in enumerate(routes):
         path = route["path"].rstrip("*").rstrip("/") or "/"
         methods = route.get("methods") or ["GET", "POST"]
-        lines.append(f"      - name: route-{i}")
+        lines.append(f"      - name: route-{index}")
         lines.append("        paths:")
         lines.append(f"          - {path}")
         lines.append("        methods:")
-        for m in methods:
-            lines.append(f"          - {m.upper()}")
+        for method in methods:
+            lines.append(f"          - {method.upper()}")
 
-    # Global plugins
+    auth = gw_comp.config.get("auth")
+    rate_limit = gw_comp.config.get("rate_limit")
+    cors_origins = gw_comp.config.get("cors_origins")
     has_plugins = auth or rate_limit or cors_origins
     if has_plugins:
         lines.append("")
@@ -91,7 +147,7 @@ def _kong_config(
         ]
 
     if cors_origins:
-        origins_str = ", ".join(f'"{o}"' for o in cors_origins)
+        origins_str = ", ".join(f'"{origin}"' for origin in cors_origins)
         lines += [
             "  - name: cors",
             "    config:",
@@ -115,30 +171,36 @@ def _kong_config(
     return "\n".join(lines) + "\n"
 
 
-# ── Docker Compose YAML builder ───────────────────────────────────────────────
+def _depends_on(*resource_names: str) -> dict[str, list[str]]:
+    deps = [f"${{{resource_name}}}" for resource_name in resource_names if resource_name]
+    return {"dependsOn": deps} if deps else {}
 
 
-def _build_docker_compose(
-    plan: "PlanFile",
-    port: int,
-    source_pkg: str,
-    app: Any = None,
-    dev: bool = False,
-    is_wsgi: bool = False,
-) -> str:
-    """Build a ``docker-compose.yml`` string with the app service and any
-    required storage backend services.
+def _network_attachment(alias: str) -> DockerNetworkAttachment:
+    return {"name": "${skaal-net.name}", "aliases": [alias]}
 
-    Cloud backends (e.g. firestore, cloud-sql-postgres) are automatically
-    resolved to their local equivalents via :func:`~skaal.deploy._backends.get_handler`
-    with ``local=True``.
 
-    When *plan.components* includes a proxy or api-gateway component, the
-    matching local gateway service (Traefik or Kong) is added automatically.
-    """
-    services_needed: dict[str, dict[str, Any]] = {}
+def _app_command(is_wsgi: bool) -> list[str]:
+    command = [
+        "uv",
+        "run",
+        "gunicorn",
+        "--bind",
+        "0.0.0.0:8000",
+        "--workers",
+        "1",
+        "--timeout",
+        "120",
+    ]
+    if not is_wsgi:
+        command += ["-k", "uvicorn.workers.UvicornWorker"]
+    command += ["--reload", "main:application"]
+    return command
+
+
+def _app_envs(plan: "PlanFile") -> tuple[list[str], list[str]]:
+    envs: dict[str, str] = {}
     service_dependencies: list[str] = []
-    env_vars: list[str] = []
 
     for qname, spec in plan.storage.items():
         class_name = qname.split(".")[-1]
@@ -146,120 +208,163 @@ def _build_docker_compose(
 
         if handler.env_prefix and handler.local_env_value:
             env_var = f"{handler.env_prefix}_{class_name.upper()}"
-            env_vars.append(f"      {env_var}: {handler.local_env_value}")
+            envs[env_var] = handler.local_env_value
 
-        if handler.local_service and handler.local_service not in services_needed:
-            compose_spec = _COMPOSE_SERVICES.get(handler.local_service)
-            if compose_spec:
-                services_needed[handler.local_service] = compose_spec
-            if handler.local_service not in service_dependencies:
-                service_dependencies.append(handler.local_service)
+        if handler.local_service and handler.local_service not in service_dependencies:
+            service_dependencies.append(handler.local_service)
 
-    # ── External components: forward host env vars into the container ──────────
-    ext_fragment = DefaultExternalProvisioner().compose_fragment(plan)
-    if ext_fragment:
-        env_vars.append(ext_fragment.rstrip("\n"))
+    for env_name, value in DefaultExternalProvisioner().env_vars(plan).items():
+        envs[env_name] = value
 
-    # ── Proxy / API-gateway services ──────────────────────────────────────────
-    app_labels = ""
-    gw_comp = next(
-        (c for c in plan.components.values() if c.kind in ("proxy", "api-gateway")),
-        None,
-    )
-    if gw_comp is not None:
-        impl = gw_comp.implementation or ("traefik" if gw_comp.kind == "proxy" else "kong")
-        gateway_svc = "traefik" if impl == "traefik" else "kong"
-        compose_spec = _COMPOSE_SERVICES.get(gateway_svc)
-        if compose_spec and gateway_svc not in services_needed:
-            services_needed[gateway_svc] = compose_spec
-        if gateway_svc not in service_dependencies:
-            service_dependencies.append(gateway_svc)
+    return [f"{name}={value}" for name, value in sorted(envs.items())], service_dependencies
 
-        routes: list[dict[str, Any]] = gw_comp.config.get("routes") or []
-        mounts: dict[str, str] = getattr(app, "_mounts", {}) if app is not None else {}
-        if not routes and mounts:
-            routes = [
-                {"path": prefix.rstrip("/") + "/*", "target": ns, "methods": ["GET", "POST"]}
-                for ns, prefix in mounts.items()
-            ]
 
-        if gateway_svc == "traefik":
-            app_name = getattr(app, "name", "app") if app is not None else "app"
-            app_labels = _traefik_labels(routes, app_name)
+def _app_volumes(output_dir: Path, source_module: str, dev: bool) -> list[DockerVolumeMount]:
+    project_root = output_dir.parent.resolve()
+    top_pkg = source_module.split(".")[0]
+    source_path = project_root / top_pkg
+    if not source_path.exists():
+        source_path = output_dir / top_pkg
 
-    # Re-build additional_services after gateway was potentially added
-    additional_services = ""
-    if services_needed:
-        service_lines: list[str] = []
-        for service_name, service_config in services_needed.items():
-            service_lines.append(f"  {service_name}:")
-            service_lines.append(f"    image: {service_config['image']}")
+    volumes: list[DockerVolumeMount] = [
+        {"containerPath": "/app/data", "volumeName": "${skaal-data.name}"}
+    ]
+    if source_path.exists():
+        volumes.insert(
+            0, {"containerPath": f"/app/{top_pkg}", "hostPath": str(source_path.resolve())}
+        )
+    if dev and (project_root / "skaal").is_dir():
+        volumes.append(
+            {"containerPath": "/app/skaal", "hostPath": str((project_root / "skaal").resolve())}
+        )
+    return volumes
 
-            if service_config.get("command"):
-                service_lines.append("    command:")
-                for cmd in service_config["command"]:
-                    service_lines.append(f"      - {cmd}")
 
-            if service_config.get("ports"):
-                service_lines.append("    ports:")
-                for port_mapping in service_config["ports"]:
-                    service_lines.append(f"      {port_mapping}")
+def _service_container_resource(
+    service_name: str,
+    *,
+    app_slug: str,
+    spec: LocalServiceSpec,
+    extra_volumes: list[DockerVolumeMount] | None = None,
+    depends_on: list[str] | None = None,
+) -> PulumiResource:
+    properties: DockerContainerProperties = {
+        "name": f"skaal-{app_slug}-{service_name}",
+        "image": spec["image"],
+        "networksAdvanced": [_network_attachment(service_name)],
+    }
+    if spec.get("command"):
+        properties["command"] = list(spec["command"])
+    if spec.get("envs"):
+        properties["envs"] = list(spec["envs"])
+    if spec.get("healthcheck"):
+        properties["healthcheck"] = dict(spec["healthcheck"])
+        properties["wait"] = True
+        properties["waitTimeout"] = 120
+    if spec.get("labels"):
+        properties["labels"] = list(spec["labels"])
+    if spec.get("ports"):
+        properties["ports"] = list(spec["ports"])
+    volumes = list(spec.get("volumes") or [])
+    if extra_volumes:
+        volumes.extend(extra_volumes)
+    if volumes:
+        properties["volumes"] = volumes
 
-            if service_config.get("environment"):
-                service_lines.append("    environment:")
-                for env in service_config["environment"]:
-                    service_lines.append(f"      {env}")
+    resource: PulumiResource = {
+        "type": "docker:Container",
+        "properties": properties,
+    }
+    options = _depends_on("skaal-net", *(depends_on or []))
+    if options:
+        resource["options"] = options
+    return resource
 
-            if service_config.get("volumes"):
-                service_lines.append("    volumes:")
-                for vol in service_config["volumes"]:
-                    service_lines.append(f"      {vol}")
 
-            if service_config.get("healthcheck"):
-                hc = service_config["healthcheck"]
-                service_lines.append("    healthcheck:")
-                service_lines.append(f"      test: {hc['test']}")
-                service_lines.append(f"      interval: {hc['interval']}")
-                service_lines.append(f"      timeout: {hc['timeout']}")
-                service_lines.append(f"      retries: {hc['retries']}")
-                service_lines.append(f"      start_period: {hc['start_period']}")
+def _build_pulumi_stack(
+    app: Any,
+    plan: "PlanFile",
+    *,
+    output_dir: Path,
+    source_module: str,
+    dev: bool = False,
+) -> PulumiStack:
+    deploy = LocalStackDeployConfig.model_validate(plan.deploy_config)
+    app_slug = _resource_slug(app.name)
+    app_envs, storage_services = _app_envs(plan)
 
-            service_lines.append("")
-        additional_services = "\n".join(service_lines)
+    resources: dict[str, PulumiResource] = {
+        "skaal-net": {
+            "type": "docker:Network",
+            "properties": {"name": f"skaal-{app_slug}-net"},
+        },
+        "skaal-data": {
+            "type": "docker:Volume",
+            "properties": {"name": f"skaal-{app_slug}-data"},
+        },
+    }
 
-    depends_on_lines = [f"      - {dep}" for dep in service_dependencies]
-    depends_on_str = "\n".join(depends_on_lines) if depends_on_lines else "      []"
+    gateway = _gateway_component(plan)
+    gateway_service: str | None = None
+    app_labels: list[DockerLabel] = []
+    if gateway is not None:
+        gateway_service = gateway.implementation or (
+            "traefik" if gateway.kind == "proxy" else "kong"
+        )
+        routes = _gateway_routes(app, gateway)
+        if gateway_service == "traefik":
+            app_labels = _traefik_labels(routes, app_slug)
 
-    # ASGI needs the uvicorn worker class; WSGI uses gunicorn's default sync worker.
-    gunicorn_worker = "" if is_wsgi else " -k uvicorn.workers.UvicornWorker"
-
-    composed = render(
-        "local/docker-compose.yml",
-        port=str(port),
-        source_pkg=source_pkg,
-        service_env_vars="\n".join(env_vars) if env_vars else "      {}",
-        service_dependencies=depends_on_str,
-        app_labels=app_labels,
-        additional_services=additional_services,
-        gunicorn_worker=gunicorn_worker,
-    )
-
-    if dev:
-        # In --dev mode, append a volume mount for the local skaal source so
-        # live edits are picked up without rebuilding the image.
-        # PYTHONPATH=/app (set in Dockerfile) makes /app/skaal take precedence
-        # over the PyPI-installed package in site-packages.
-        composed = composed.replace(
-            f"      - ../{source_pkg}:/app/{source_pkg}",
-            f"      - ../{source_pkg}:/app/{source_pkg}\n"
-            f"      # Mount local skaal source for live library reload (--dev only)\n"
-            f"      - ../skaal:/app/skaal",
+    for service_name in storage_services:
+        resources[service_name] = _service_container_resource(
+            service_name,
+            app_slug=app_slug,
+            spec=_LOCAL_SERVICE_SPECS[service_name],
         )
 
-    return composed
+    if gateway_service is not None:
+        extra_volumes: list[DockerVolumeMount] | None = None
+        if gateway_service == "kong":
+            extra_volumes = [
+                {
+                    "containerPath": "/kong/config.yml",
+                    "hostPath": str((output_dir / "kong.yml").resolve()),
+                    "readOnly": True,
+                }
+            ]
+        resources[gateway_service] = _service_container_resource(
+            gateway_service,
+            app_slug=app_slug,
+            spec=_LOCAL_SERVICE_SPECS[gateway_service],
+            extra_volumes=extra_volumes,
+            depends_on=["app"],
+        )
 
+    app_properties: DockerContainerProperties = {
+        "name": f"skaal-{app_slug}-app",
+        "image": "${localImageRef}",
+        "command": _app_command(bool(getattr(app, "_wsgi_attribute", None))),
+        "envs": app_envs,
+        "networksAdvanced": [_network_attachment("app")],
+        "ports": [DockerPortBinding(internal=8000, external=deploy.port)],
+        "volumes": _app_volumes(output_dir, source_module, dev),
+    }
+    if app_labels:
+        app_properties["labels"] = app_labels
 
-# ── Public entry point ─────────────────────────────────────────────────────────
+    resources["app"] = {
+        "type": "docker:Container",
+        "properties": app_properties,
+        "options": _depends_on("skaal-data", "skaal-net", *storage_services),
+    }
+
+    return {
+        "name": f"skaal-{app_slug}",
+        "runtime": "yaml",
+        "config": {"localImageRef": {"type": "string", "default": local_image_name(app.name)}},
+        "resources": resources,
+        "outputs": {"appUrl": f"http://localhost:{deploy.port}"},
+    }
 
 
 def generate_artifacts(
@@ -270,33 +375,7 @@ def generate_artifacts(
     app_var: str = "app",
     dev: bool = False,
 ) -> list[Path]:
-    """Generate Docker Compose deployment artifacts.
-
-    Writes into *output_dir*:
-
-    - ``main.py``            — App entry point (rendered from template)
-    - ``Dockerfile``         — Container build spec
-    - ``docker-compose.yml`` — Service orchestration (app + storage backends)
-    - ``pyproject.toml``     — Python dependencies
-    - ``.gitignore``         — Ignores runtime data files
-    - ``skaal-meta.json``    — Target metadata consumed by ``skaal deploy``
-
-    Cloud backends in the plan (e.g. ``firestore``, ``cloud-sql-postgres``)
-    are transparently mapped to their local Docker equivalents
-    (``postgres``, ``redis``) so the same plan works everywhere.
-
-    Args:
-        app:           The Skaal App instance.
-        plan:          The solved PlanFile (``plan.skaal.lock``).
-        output_dir:    Directory to write files into (created if absent).
-        source_module: Python module path, e.g. ``"examples.counter"``.
-        app_var:       Variable name of the App in the module.
-        dev:           Bundle the local skaal source into the artifact so the
-                       Docker image uses the working copy instead of PyPI.
-
-    Returns:
-        List of generated :class:`~pathlib.Path` objects.
-    """
+    """Generate local Docker deployment artifacts backed by Pulumi YAML."""
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -305,10 +384,9 @@ def generate_artifacts(
 
     generated: list[Path] = []
     backend_imports, backend_overrides = build_wiring(plan, local=True)
-    deploy_config = LocalStackDeployConfig.model_validate(plan.deploy_config)
     wsgi_attribute: str | None = getattr(app, "_wsgi_attribute", None)
+    is_wsgi = bool(wsgi_attribute)
 
-    # ── main.py ───────────────────────────────────────────────────────────────
     main_path = output_dir / "main.py"
     if wsgi_attribute:
         main_path.write_text(
@@ -335,16 +413,12 @@ def generate_artifacts(
         )
     generated.append(main_path)
 
-    # ── skaal source bundle (--dev only) ──────────────────────────────────────
     skaal_bundle_dir = output_dir / "_skaal"
     skaal_src_dir = project_root / "skaal"
     skaal_root_pyproject = project_root / "pyproject.toml"
     if dev and skaal_src_dir.is_dir() and skaal_root_pyproject.exists():
         skaal_bundle_dir.mkdir(exist_ok=True)
         shutil.copytree(skaal_src_dir, skaal_bundle_dir / "skaal", dirs_exist_ok=True)
-        # Write a patched pyproject.toml: rewrite [tool.uv.sources] paths that are
-        # relative to the project root so they stay valid from inside _skaal/.
-        # e.g. skaal-mesh = { path = "mesh" } → { path = "../mesh" }
         raw = skaal_root_pyproject.read_text(encoding="utf-8")
         raw = raw.replace('path = "mesh"', 'path = "../mesh"')
         (skaal_bundle_dir / "pyproject.toml").write_text(raw, encoding="utf-8")
@@ -354,9 +428,6 @@ def generate_artifacts(
                 shutil.copy2(src, skaal_bundle_dir / extra)
         generated.append(skaal_bundle_dir)
 
-    # ── mesh bundle ───────────────────────────────────────────────────────────
-    # Copy the Rust mesh source into the artifact so `uv sync` can compile it
-    # inside Docker without needing the project root mounted.
     mesh_bundle_dir = output_dir / "mesh"
     mesh_src_dir = project_root / "mesh"
     has_mesh = mesh_src_dir.is_dir() and (mesh_src_dir / "Cargo.toml").exists()
@@ -364,11 +435,6 @@ def generate_artifacts(
         shutil.copytree(mesh_src_dir, mesh_bundle_dir, dirs_exist_ok=True)
         generated.append(mesh_bundle_dir)
 
-    is_wsgi = bool(wsgi_attribute)
-
-    # ── pyproject.toml ────────────────────────────────────────────────────────
-    # ASGI mode needs uvicorn[standard] for the UvicornWorker class.
-    # WSGI mode (Flask/Dash) uses gunicorn's built-in sync worker — no uvicorn needed.
     infra_deps = ["skaal", "gunicorn>=22.0", "apscheduler>=3.10"]
     if not is_wsgi:
         infra_deps += ["uvicorn[standard]>=0.29", "starlette>=0.36"]
@@ -393,7 +459,6 @@ def generate_artifacts(
     )
     generated.append(pyproject_path)
 
-    # ── Dockerfile ────────────────────────────────────────────────────────────
     gunicorn_worker = "" if is_wsgi else ', "-k", "uvicorn.workers.UvicornWorker"'
     dockerfile_path = output_dir / "Dockerfile"
     dockerfile_path.write_text(
@@ -401,72 +466,53 @@ def generate_artifacts(
     )
     generated.append(dockerfile_path)
 
-    # ── source package ────────────────────────────────────────────────────────
     src_pkg_dir = project_root / top_pkg
     dst_pkg_dir = output_dir / top_pkg
     if src_pkg_dir.is_dir():
         shutil.copytree(src_pkg_dir, dst_pkg_dir, dirs_exist_ok=True)
         generated.append(dst_pkg_dir)
 
-    # ── kong.yml (DB-less config for Kong api-gateway) ────────────────────────
-    gw_comp = next(
-        (c for c in plan.components.values() if c.kind in ("proxy", "api-gateway")),
-        None,
-    )
-    if gw_comp is not None:
-        impl = gw_comp.implementation or ("traefik" if gw_comp.kind == "proxy" else "kong")
-        if impl == "kong":
-            routes: list[dict[str, Any]] = gw_comp.config.get("routes") or []
-            mounts: dict[str, str] = getattr(app, "_mounts", {})
-            if not routes and mounts:
-                routes = [
-                    {
-                        "path": prefix.rstrip("/") + "/*",
-                        "target": ns,
-                        "methods": ["GET", "POST"],
-                    }
-                    for ns, prefix in mounts.items()
-                ]
-            if not routes:
-                routes = [{"path": "/", "target": "app", "methods": ["GET", "POST"]}]
-            kong_path = output_dir / "kong.yml"
-            kong_path.write_text(
-                _kong_config(
-                    routes,
-                    auth=gw_comp.config.get("auth"),
-                    rate_limit=gw_comp.config.get("rate_limit"),
-                    cors_origins=gw_comp.config.get("cors_origins"),
-                ),
-                encoding="utf-8",
-            )
-            generated.append(kong_path)
+    kong_config = build_kong_config(app, plan)
+    if kong_config is not None:
+        kong_path = output_dir / "kong.yml"
+        kong_path.write_text(kong_config, encoding="utf-8")
+        generated.append(kong_path)
 
-    # ── docker-compose.yml ────────────────────────────────────────────────────
-    compose_path = output_dir / "docker-compose.yml"
-    compose_path.write_text(
-        _build_docker_compose(
-            plan, deploy_config.port, source_pkg=top_pkg, app=app, dev=dev, is_wsgi=is_wsgi
+    pulumi_yaml_path = output_dir / "Pulumi.yaml"
+    pulumi_yaml_path.write_text(
+        to_pulumi_yaml(
+            _build_pulumi_stack(
+                app,
+                plan,
+                output_dir=output_dir,
+                source_module=source_module,
+                dev=dev,
+            )
         ),
         encoding="utf-8",
     )
-    generated.append(compose_path)
+    generated.append(pulumi_yaml_path)
 
-    # ── .gitignore ────────────────────────────────────────────────────────────
-    gitignore_path = output_dir / ".gitignore"
-    gitignore_path.write_text(
-        "# Local data\n"
-        "data/\n"
-        "*.db\n"
-        "*.sqlite3\n"
-        "__pycache__/\n"
-        ".pytest_cache/\n"
-        ".env\n"
-        ".env.local\n",
-        encoding="utf-8",
+    local_stack_spec_path = write_local_stack_spec(
+        output_dir,
+        _build_pulumi_stack(
+            app,
+            plan,
+            output_dir=output_dir,
+            source_module=source_module,
+            dev=dev,
+        ),
     )
+    generated.append(local_stack_spec_path)
+
+    gitignore_path = output_dir / ".gitignore"
+    gitignore_path.write_text(_LOCAL_GITIGNORE, encoding="utf-8")
     generated.append(gitignore_path)
 
-    # ── skaal-meta.json ───────────────────────────────────────────────────────
+    dockerignore_path = output_dir / ".dockerignore"
+    dockerignore_path.write_text(_LOCAL_DOCKERIGNORE, encoding="utf-8")
+    generated.append(dockerignore_path)
+
     meta_path = write_meta(
         output_dir, target="local", source_module=source_module, app_name=app.name
     )

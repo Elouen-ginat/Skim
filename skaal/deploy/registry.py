@@ -99,6 +99,13 @@ class AWSLambdaTarget:
         typer.echo(f"\nApp URL: {api_url}")
         return {"apiUrl": api_url}
 
+    def destroy_stack(self, artifacts_dir: Path, *, stack: str, yes: bool) -> None:
+        from skaal.deploy.push import _pulumi_destroy, _pulumi_stack_select
+
+        _pulumi_stack_select(artifacts_dir, stack)
+        typer.echo("==> Destroying AWS stack (pulumi destroy) ...")
+        _pulumi_destroy(artifacts_dir, yes=yes)
+
 
 # ── GCP Cloud Run ─────────────────────────────────────────────────────────────
 
@@ -183,12 +190,19 @@ class GCPCloudRunTarget:
         typer.echo(f"\nApp URL: {service_url}")
         return {"serviceUrl": service_url}
 
+    def destroy_stack(self, artifacts_dir: Path, *, stack: str, yes: bool) -> None:
+        from skaal.deploy.push import _pulumi_destroy, _pulumi_stack_select
 
-# ── Local Docker Compose ──────────────────────────────────────────────────────
+        _pulumi_stack_select(artifacts_dir, stack)
+        typer.echo("==> Destroying GCP stack (pulumi destroy) ...")
+        _pulumi_destroy(artifacts_dir, yes=yes)
 
 
-class LocalDockerComposeTarget:
-    """Deploy target adapter for local Docker Compose."""
+# ── Local Docker + Pulumi ─────────────────────────────────────────────────────
+
+
+class LocalDockerTarget:
+    """Deploy target adapter for local Docker via Pulumi."""
 
     name = "local"
     default_region = ""
@@ -229,11 +243,22 @@ class LocalDockerComposeTarget:
         app_name: str,
         config_overrides: dict[str, str] | None = None,
     ) -> dict[str, str]:
-        from skaal.deploy.push import _run
+        from skaal.deploy.local_automation import deploy_local_stack
 
-        typer.echo("==> Starting local stack (docker compose up --build) ...")
-        _run(["docker", "compose", "up", "--build"], cwd=artifacts_dir)
-        return {}
+        app_url = deploy_local_stack(
+            artifacts_dir,
+            stack=stack,
+            yes=yes,
+            app_name=app_name,
+            config_overrides=config_overrides,
+        )
+        typer.echo(f"\nApp URL: {app_url}")
+        return {"appUrl": app_url}
+
+    def destroy_stack(self, artifacts_dir: Path, *, stack: str, yes: bool) -> None:
+        from skaal.deploy.local_automation import destroy_local_stack
+
+        destroy_local_stack(artifacts_dir, stack=stack, yes=yes)
 
 
 # ── Registry ──────────────────────────────────────────────────────────────────
@@ -241,7 +266,7 @@ class LocalDockerComposeTarget:
 # Singleton adapter instances (stateless — safe to reuse).
 _aws = AWSLambdaTarget()
 _gcp = GCPCloudRunTarget()
-_local = LocalDockerComposeTarget()
+_local = LocalDockerTarget()
 
 _TARGET_REGISTRY: dict[str, DeployTarget] = {
     # Canonical names
@@ -251,7 +276,7 @@ _TARGET_REGISTRY: dict[str, DeployTarget] = {
     # Aliases accepted by the solver / lock file / CLI
     "aws-lambda": _aws,
     "gcp-cloudrun": _gcp,
-    "local-compose": _local,
+    "local-docker": _local,
 }
 
 

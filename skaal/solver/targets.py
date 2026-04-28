@@ -45,7 +45,7 @@ _TARGET_FAMILIES: Final[dict[str, TargetFamily]] = {
     "gcp-cloudrun": TargetFamily.GCP,  # legacy alias
     # ── Local ─────────────────────────────────────────────────────────────────
     "local": TargetFamily.LOCAL,
-    "local-compose": TargetFamily.LOCAL,
+    "local-docker": TargetFamily.LOCAL,
     # ── Generic container / VM targets ────────────────────────────────────────
     "k8s": TargetFamily.GENERIC,
     "ecs": TargetFamily.GENERIC,

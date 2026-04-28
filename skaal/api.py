@@ -438,7 +438,6 @@ def deploy(
 
     Returns:
         Dict of Pulumi stack outputs (e.g. ``{"apiUrl": "https://..."}``).
-        Empty dict for the local target.
 
     Raises:
         FileNotFoundError: If *artifacts_dir* does not exist or is missing
@@ -449,11 +448,6 @@ def deploy(
     from skaal.deploy.push import package_and_push, read_meta
 
     base = SkaalSettings()
-    resolved_stack = stack or base.stack
-    cfg = base.for_stack(resolved_stack)
-    resolved_region = region or cfg.region
-    resolved_gcp_project = gcp_project or cfg.gcp_project
-
     resolved_dir = Path(artifacts_dir).resolve()
     if not resolved_dir.is_dir():
         raise FileNotFoundError(
@@ -461,11 +455,14 @@ def deploy(
             "Run `skaal.api.build(...)` first."
         )
 
+    meta = read_meta(resolved_dir)
+    resolved_stack = stack or ("local" if meta.get("target") == "local" else base.stack)
+    cfg = base.for_stack(resolved_stack)
+    resolved_region = region or cfg.region
+    resolved_gcp_project = gcp_project or cfg.gcp_project
+
     if resolved_gcp_project is None:
-        try:
-            target = read_meta(resolved_dir).get("target")
-        except FileNotFoundError:
-            target = None
+        target = meta.get("target")
         if target in ("gcp", "gcp-cloudrun"):
             known = sorted(base.stacks)
             hint = (
@@ -499,6 +496,42 @@ def deploy(
     )
 
     return outputs
+
+
+def destroy(
+    artifacts_dir: Path | str = "artifacts",
+    *,
+    stack: str | None = None,
+    yes: bool = True,
+) -> None:
+    """Destroy previously-deployed artifacts via Pulumi.
+
+    Equivalent to ``skaal destroy``. Reads ``skaal-meta.json`` from
+    *artifacts_dir* to detect the target platform.
+
+    Raises:
+        FileNotFoundError: If *artifacts_dir* does not exist or is missing
+                           ``skaal-meta.json``.
+        ValueError:        If the target is unknown.
+    """
+    from skaal.deploy.push import destroy_stack, read_meta
+
+    base = SkaalSettings()
+    resolved_dir = Path(artifacts_dir).resolve()
+    if not resolved_dir.is_dir():
+        raise FileNotFoundError(
+            f"Artifacts directory {resolved_dir} does not exist. "
+            "Run `skaal.api.build(...)` first."
+        )
+
+    meta = read_meta(resolved_dir)
+    resolved_stack = stack or ("local" if meta.get("target") == "local" else base.stack)
+
+    destroy_stack(
+        artifacts_dir=resolved_dir,
+        stack=resolved_stack,
+        yes=yes,
+    )
 
 
 def _run_hooks(
