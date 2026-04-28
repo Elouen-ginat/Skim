@@ -40,15 +40,17 @@ import subprocess
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Iterable, Literal, Union
+from typing import TYPE_CHECKING, Any, Literal, Union
 
 from skaal.errors import SkaalHookError
 from skaal.plan import PLAN_FILE_NAME, ComputeSpec, PlanFile, StorageSpec
 from skaal.settings import SkaalSettings
+from skaal.types.runtime import RuntimeInstance, RuntimePlanSource
 
 if TYPE_CHECKING:
     from skaal.app import App
     from skaal.catalog.models import Catalog
+    from skaal.deploy.reporting import DeployReporter
     from skaal.migrate.engine import MigrationStage, MigrationState
 
 __all__ = [
@@ -320,11 +322,16 @@ def plan(
 # ── build ─────────────────────────────────────────────────────────────────────
 
 
-def _coerce_plan(value: PlanFile | Path | str | None) -> PlanFile:
+def _coerce_plan(value: RuntimePlanSource | None) -> PlanFile:
     """Return a :class:`PlanFile` from a plan object, a path, or the default."""
     if isinstance(value, PlanFile):
         return value
-    path = Path(value) if value is not None else Path(PLAN_FILE_NAME)
+    if value is None:
+        path = Path(PLAN_FILE_NAME)
+    elif isinstance(value, (str, Path)):
+        path = Path(value)
+    else:
+        return PlanFile.model_validate(value)
     if not path.exists():
         raise FileNotFoundError(
             f"Plan file not found at {path}. " "Run `skaal.api.plan(app, target=...)` first."
@@ -369,7 +376,7 @@ def build(
         ValueError:        If the plan references an unknown deploy target or
                            has no source module and *app* was not provided.
     """
-    from skaal.deploy.registry import get_target
+    from skaal.deploy import build_artifacts
 
     cfg = SkaalSettings().for_stack(stack)
     resolved_out = Path(output_dir) if output_dir is not None else cfg.out
@@ -392,9 +399,7 @@ def build(
             )
         skaal_app = load_app(f"{plan_file.source_module}:{plan_file.app_var}")
 
-    target_adapter = get_target(plan_file.deploy_target)
-
-    return target_adapter.generate_artifacts(
+    return build_artifacts(
         app=skaal_app,
         plan=plan_file,
         output_dir=resolved_out,
@@ -434,6 +439,7 @@ def deploy(
     yes: bool = True,
     local_detach: bool = False,
     local_follow_logs: bool = False,
+    reporter: "DeployReporter | None" = None,
 ) -> dict[str, str]:
     """Package and deploy previously-built artifacts via Pulumi.
 
@@ -450,7 +456,8 @@ def deploy(
         ValueError:        If the target is unknown or required settings (e.g.
                            ``gcp_project`` for GCP) are missing.
     """
-    from skaal.deploy.push import package_and_push, read_meta
+    from skaal.deploy import deploy_artifacts
+    from skaal.deploy.push import read_meta
 
     base = SkaalSettings()
     resolved_stack = stack or base.stack
@@ -492,7 +499,7 @@ def deploy(
         recovery_hint="Fix the hook command and rerun `skaal deploy`; no infrastructure changes were applied.",
     )
 
-    outputs = package_and_push(
+    outputs = deploy_artifacts(
         artifacts_dir=resolved_dir,
         stack=resolved_stack,
         region=resolved_region,
@@ -503,6 +510,7 @@ def deploy(
             "detach": local_detach,
             "follow_logs": local_follow_logs,
         },
+        reporter=reporter,
     )
 
     _run_hooks(
@@ -638,8 +646,8 @@ def build_runtime(
     persist: bool = False,
     db: str | Path = "skaal_local.db",
     distributed: bool = False,
-    node_id: str = "node-0",
-) -> Any:
+    plan: RuntimePlanSource | None = None,
+) -> RuntimeInstance:
     """Construct a runtime for *app*.
 
     Returns a :class:`~skaal.runtime.local.LocalRuntime` by default, or a
@@ -652,13 +660,22 @@ def build_runtime(
     """
     skaal_app = resolve_app(app)
 
+    if plan is not None and (redis or persist):
+        raise ValueError("plan cannot be combined with redis or persist runtime shortcuts.")
+
+    plan_file = _coerce_plan(plan) if plan is not None else None
+
     if distributed:
         from skaal.runtime.mesh_runtime import MeshRuntime
 
-        return MeshRuntime(skaal_app, host=host, port=port, node_id=node_id)
+        if plan_file is not None:
+            return MeshRuntime.from_plan(skaal_app, plan_file, host=host, port=port, target="local")
+        return MeshRuntime(skaal_app, host=host, port=port)
 
     from skaal.runtime.local import LocalRuntime
 
+    if plan_file is not None:
+        return LocalRuntime.from_plan(skaal_app, plan_file, host=host, port=port, target="local")
     if redis:
         return LocalRuntime.from_redis(skaal_app, redis_url=redis, host=host, port=port)
     if persist:
@@ -675,7 +692,7 @@ async def serve_async(
     persist: bool = False,
     db: str | Path = "skaal_local.db",
     distributed: bool = False,
-    node_id: str = "node-0",
+    plan: RuntimePlanSource | None = None,
 ) -> None:
     """Async variant of :func:`run` — await inside an existing event loop."""
     runtime = build_runtime(
@@ -686,7 +703,7 @@ async def serve_async(
         persist=persist,
         db=db,
         distributed=distributed,
-        node_id=node_id,
+        plan=plan,
     )
     await runtime.serve()
 
@@ -700,7 +717,7 @@ def run(
     persist: bool = False,
     db: str | Path = "skaal_local.db",
     distributed: bool = False,
-    node_id: str = "node-0",
+    plan: RuntimePlanSource | None = None,
 ) -> None:
     """Run a Skaal app locally, blocking until the server is stopped.
 
@@ -720,7 +737,7 @@ def run(
                 persist=persist,
                 db=db,
                 distributed=distributed,
-                node_id=node_id,
+                plan=plan,
             )
         )
     except KeyboardInterrupt:
@@ -818,12 +835,12 @@ def diff(
         new = old
 
     return PlanDiff(
-        old=old,
-        new=new,
-        storage=_diff_specs(old.storage, new.storage, "backend"),
-        compute=_diff_specs(old.compute, new.compute, "instance_type"),
-        components=_diff_specs(old.components, new.components, "implementation"),
-        patterns=_diff_specs(old.patterns, new.patterns, "backend"),
+        old,
+        new,
+        _diff_specs(old.storage, new.storage, "backend"),
+        _diff_specs(old.compute, new.compute, "instance_type"),
+        _diff_specs(old.components, new.components, "implementation"),
+        _diff_specs(old.patterns, new.patterns, "backend"),
     )
 
 
@@ -990,15 +1007,3 @@ def migrate_list(app_name: str | None = None) -> list["MigrationState"]:
             except Exception:  # noqa: BLE001
                 continue
     return states
-
-
-# ── Helpers exposed for the CLI layer ─────────────────────────────────────────
-
-
-def iter_plan_files(root: Path | None = None) -> Iterable[Path]:
-    """Yield every ``plan.skaal.lock`` file found under *root*.
-
-    Convenience helper for tooling built on top of the Python API.
-    """
-    base = Path(root) if root is not None else Path.cwd()
-    yield from base.rglob(PLAN_FILE_NAME)

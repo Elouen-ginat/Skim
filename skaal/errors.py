@@ -23,10 +23,6 @@ class SkaalBackendError(SkaalError):
     """A storage backend failed an operation."""
 
 
-class SkaalNotFound(SkaalBackendError):
-    """The requested key / document / table does not exist."""
-
-
 class SkaalConflict(SkaalBackendError):
     """An optimistic-concurrency / compare-and-swap update lost the race.
 
@@ -41,15 +37,7 @@ class SkaalUnavailable(SkaalBackendError):
     """Transient, retriable failure (network blip, pool exhausted, 5xx)."""
 
 
-class SkaalSerialization(SkaalBackendError):
-    """A value could not be serialized or deserialized for the backend."""
-
-
-# ── Configuration & plugin errors ─────────────────────────────────────────────
-
-
-class SkaalConfigError(SkaalError):
-    """A catalog, settings file, or environment variable is invalid."""
+# ── Deploy & plugin errors ────────────────────────────────────────────────────
 
 
 class SkaalDeployError(SkaalError):
@@ -66,13 +54,10 @@ class SkaalPluginError(SkaalError):
 
 __all__ = [
     "SkaalBackendError",
-    "SkaalConfigError",
     "SkaalConflict",
     "SkaalDeployError",
     "SkaalError",
     "SkaalHookError",
-    "SkaalNotFound",
     "SkaalPluginError",
-    "SkaalSerialization",
     "SkaalUnavailable",
 ]

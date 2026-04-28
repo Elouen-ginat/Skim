@@ -24,7 +24,7 @@ def _make_vector_app() -> App:
 
 
 def test_from_sqlite_uses_chroma_for_vector_store(tmp_path) -> None:
-    from skaal.backends.chroma_backend import ChromaVectorBackend
+    from skaal.backends.vector.chroma import ChromaVectorBackend
 
     rt = LocalRuntime.from_sqlite(_make_vector_app(), db_path=str(tmp_path / "runtime.db"))
 
@@ -33,7 +33,7 @@ def test_from_sqlite_uses_chroma_for_vector_store(tmp_path) -> None:
 
 
 def test_from_postgres_uses_pgvector_for_vector_store() -> None:
-    from skaal.backends.pgvector_backend import PgVectorBackend
+    from skaal.backends.vector.pgvector import PgVectorBackend
 
     rt = LocalRuntime.from_postgres(
         _make_vector_app(),

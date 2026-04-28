@@ -6,7 +6,11 @@ from unittest.mock import MagicMock
 
 from skaal.app import App
 from skaal.components import APIGateway, AuthConfig, Proxy, Route
-from skaal.deploy.gcp import _add_gcp_api_gateway, _build_pulumi_stack, _gcp_openapi_path
+from skaal.deploy.builders.gcp_stack import (
+    _add_gcp_api_gateway,
+    _build_pulumi_stack,
+    _gcp_openapi_path,
+)
 from skaal.plan import PlanFile, StorageSpec
 from skaal.solver.components import encode_component
 
@@ -200,7 +204,7 @@ def test_cloud_run_uses_configured_vpc_connector_values() -> None:
                 deploy_params={},
                 wire_params={
                     "class_name": "PostgresBackend",
-                    "module": "postgres_backend",
+                    "module": "skaal.backends.kv.postgres",
                     "env_prefix": "SKAAL_DB_DSN",
                     "uses_namespace": True,
                     "requires_vpc": True,
@@ -233,7 +237,7 @@ def test_cloud_run_can_reuse_existing_vpc_connector() -> None:
                 deploy_params={},
                 wire_params={
                     "class_name": "PostgresBackend",
-                    "module": "postgres_backend",
+                    "module": "skaal.backends.kv.postgres",
                     "env_prefix": "SKAAL_DB_DSN",
                     "uses_namespace": True,
                     "requires_vpc": True,

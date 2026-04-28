@@ -7,7 +7,7 @@ import json
 import pytest
 
 from skaal import App
-from skaal.backends.local_backend import LocalMap
+from skaal.backends.kv.local_map import LocalMap
 from skaal.runtime.local import LocalRuntime
 from skaal.storage import Store
 

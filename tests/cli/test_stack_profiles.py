@@ -276,7 +276,7 @@ def test_gcp_pulumi_stack_applies_profile() -> None:
     """env / invokers / labels from the profile land in the right places
     inside the generated Pulumi stack dict."""
     from skaal.app import App
-    from skaal.deploy.gcp import _build_pulumi_stack
+    from skaal.deploy.builders.gcp_stack import _build_pulumi_stack
     from skaal.plan import PlanFile
 
     app = App(name="demo")
@@ -309,7 +309,7 @@ def test_gcp_pulumi_stack_applies_profile() -> None:
 def test_gcp_pulumi_stack_defaults_to_public_invoker() -> None:
     """With no invokers profile key, the invoker resource stays public."""
     from skaal.app import App
-    from skaal.deploy.gcp import _build_pulumi_stack
+    from skaal.deploy.builders.gcp_stack import _build_pulumi_stack
     from skaal.plan import PlanFile
 
     app = App(name="demo")

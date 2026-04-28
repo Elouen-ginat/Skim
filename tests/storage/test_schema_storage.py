@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from pydantic import BaseModel
 
-from skaal.backends.local_backend import LocalMap
+from skaal.backends.kv.local_map import LocalMap
 from skaal.storage import Store, _deserialize, _primary_key_field, _schema_hints, _serialize
 
 # ── Domain models for tests ────────────────────────────────────────────────────

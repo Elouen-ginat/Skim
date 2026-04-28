@@ -22,6 +22,49 @@ F = TypeVar("F", bound=Callable[..., Any])
 C = TypeVar("C", bound=type)
 
 
+def _build_storage_attrs(
+    *,
+    kind: str | None,
+    read_latency: Latency | str | None,
+    write_latency: Latency | str | None,
+    durability: Durability | str,
+    size_hint: str | None,
+    access_pattern: AccessPattern | str,
+    write_throughput: Throughput | str | None,
+    residency: str | None,
+    retention: str | None,
+    auto_optimize: bool,
+    decommission_policy: DecommissionPolicy | None,
+    collocate_with: str | None,
+    schema: dict[str, Any],
+) -> dict[str, Any]:
+    """Normalise the constraint kwargs shared by ``@storage``, ``@relational``,
+    and ``@vector`` into the dict stored on ``__skaal_storage__``."""
+    attrs: dict[str, Any] = {
+        "read_latency": Latency(read_latency) if isinstance(read_latency, str) else read_latency,
+        "write_latency": (
+            Latency(write_latency) if isinstance(write_latency, str) else write_latency
+        ),
+        "durability": Durability(durability) if isinstance(durability, str) else durability,
+        "size_hint": size_hint,
+        "access_pattern": (
+            AccessPattern(access_pattern) if isinstance(access_pattern, str) else access_pattern
+        ),
+        "write_throughput": (
+            Throughput(write_throughput) if isinstance(write_throughput, str) else write_throughput
+        ),
+        "residency": residency,
+        "retention": retention,
+        "auto_optimize": auto_optimize,
+        "decommission_policy": decommission_policy,
+        "collocate_with": collocate_with,
+        "schema": schema,
+    }
+    if kind is not None:
+        attrs["kind"] = kind
+    return attrs
+
+
 def storage(
     *,
     read_latency: Latency | str | None = None,
@@ -39,19 +82,6 @@ def storage(
     """Declare infrastructure constraints for a storage variable or Store class."""
 
     def decorator(cls: C) -> C:
-        _rl: Latency | None
-        if isinstance(read_latency, str):
-            _rl = Latency(read_latency)
-        else:
-            _rl = read_latency
-
-        _wl: Latency | None
-        if isinstance(write_latency, str):
-            _wl = Latency(write_latency)
-        else:
-            _wl = write_latency
-
-        # Collect schema hints from Store subclasses
         try:
             from skaal.storage import _schema_hints
 
@@ -62,28 +92,21 @@ def storage(
         setattr(
             cls,
             "__skaal_storage__",
-            {
-                "read_latency": _rl,
-                "write_latency": _wl,
-                "durability": Durability(durability) if isinstance(durability, str) else durability,
-                "size_hint": size_hint,
-                "access_pattern": (
-                    AccessPattern(access_pattern)
-                    if isinstance(access_pattern, str)
-                    else access_pattern
-                ),
-                "write_throughput": (
-                    Throughput(write_throughput)
-                    if isinstance(write_throughput, str)
-                    else write_throughput
-                ),
-                "residency": residency,
-                "retention": retention,
-                "auto_optimize": auto_optimize,
-                "decommission_policy": decommission_policy,
-                "collocate_with": collocate_with,
-                "schema": schema,  # empty dict for plain classes
-            },
+            _build_storage_attrs(
+                kind=None,
+                read_latency=read_latency,
+                write_latency=write_latency,
+                durability=durability,
+                size_hint=size_hint,
+                access_pattern=access_pattern,
+                write_throughput=write_throughput,
+                residency=residency,
+                retention=retention,
+                auto_optimize=auto_optimize,
+                decommission_policy=decommission_policy,
+                collocate_with=collocate_with,
+                schema=schema,
+            ),
         )
         return cls
 
@@ -109,42 +132,24 @@ def relational(
 
         validate_relational_model(cls)
 
-        _rl: Latency | None
-        if isinstance(read_latency, str):
-            _rl = Latency(read_latency)
-        else:
-            _rl = read_latency
-
-        _wl: Latency | None
-        if isinstance(write_latency, str):
-            _wl = Latency(write_latency)
-        else:
-            _wl = write_latency
-
-        schema = _schema_hints(cls)
-
         setattr(
             cls,
             "__skaal_storage__",
-            {
-                "kind": "relational",
-                "read_latency": _rl,
-                "write_latency": _wl,
-                "durability": Durability(durability) if isinstance(durability, str) else durability,
-                "size_hint": size_hint,
-                "access_pattern": AccessPattern.TRANSACTIONAL,
-                "write_throughput": (
-                    Throughput(write_throughput)
-                    if isinstance(write_throughput, str)
-                    else write_throughput
-                ),
-                "residency": residency,
-                "retention": None,
-                "auto_optimize": auto_optimize,
-                "decommission_policy": decommission_policy,
-                "collocate_with": collocate_with,
-                "schema": schema,
-            },
+            _build_storage_attrs(
+                kind="relational",
+                read_latency=read_latency,
+                write_latency=write_latency,
+                durability=durability,
+                size_hint=size_hint,
+                access_pattern=AccessPattern.TRANSACTIONAL,
+                write_throughput=write_throughput,
+                residency=residency,
+                retention=None,
+                auto_optimize=auto_optimize,
+                decommission_policy=decommission_policy,
+                collocate_with=collocate_with,
+                schema=_schema_hints(cls),
+            ),
         )
         return cls
 
@@ -172,48 +177,30 @@ def vector(
 
         validate_vector_model(cls)
 
-        normalized_metric = metric.lower()
         if dim <= 0:
             raise ValueError("@app.vector requires dim > 0.")
 
-        _rl: Latency | None
-        if isinstance(read_latency, str):
-            _rl = Latency(read_latency)
-        else:
-            _rl = read_latency
-
-        _wl: Latency | None
-        if isinstance(write_latency, str):
-            _wl = Latency(write_latency)
-        else:
-            _wl = write_latency
-
         setattr(cls, "__skaal_vector_dimensions__", dim)
-        setattr(cls, "__skaal_vector_metric__", normalized_metric)
-        schema = _schema_hints(cls)
+        setattr(cls, "__skaal_vector_metric__", metric.lower())
 
         setattr(
             cls,
             "__skaal_storage__",
-            {
-                "kind": "vector",
-                "read_latency": _rl,
-                "write_latency": _wl,
-                "durability": Durability(durability) if isinstance(durability, str) else durability,
-                "size_hint": size_hint,
-                "access_pattern": AccessPattern.BULK_READ,
-                "write_throughput": (
-                    Throughput(write_throughput)
-                    if isinstance(write_throughput, str)
-                    else write_throughput
-                ),
-                "residency": residency,
-                "retention": None,
-                "auto_optimize": auto_optimize,
-                "decommission_policy": decommission_policy,
-                "collocate_with": collocate_with,
-                "schema": schema,
-            },
+            _build_storage_attrs(
+                kind="vector",
+                read_latency=read_latency,
+                write_latency=write_latency,
+                durability=durability,
+                size_hint=size_hint,
+                access_pattern=AccessPattern.BULK_READ,
+                write_throughput=write_throughput,
+                residency=residency,
+                retention=None,
+                auto_optimize=auto_optimize,
+                decommission_policy=decommission_policy,
+                collocate_with=collocate_with,
+                schema=_schema_hints(cls),
+            ),
         )
         return cls
 

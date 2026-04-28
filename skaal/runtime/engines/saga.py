@@ -22,10 +22,11 @@ from typing import Any
 
 from skaal.errors import SkaalError
 from skaal.patterns import Saga
+from skaal.runtime.engines.base import register_engine
 
 
 class SagaExecutor:
-    """Runs a single saga instance; exposed on the app via :meth:`SagaEngine.executor`."""
+    """Runs a single saga instance exposed on the runtime context."""
 
     def __init__(
         self,
@@ -122,6 +123,7 @@ class SagaExecutor:
             pass
 
 
+@register_engine(Saga)
 class SagaEngine:
     """Registers a :class:`SagaExecutor` on the app so user code can trigger it."""
 
@@ -146,8 +148,3 @@ class SagaEngine:
 
     async def stop(self) -> None:
         self._executor = None
-
-    def executor(self) -> SagaExecutor:
-        if self._executor is None:
-            raise SkaalError("saga engine is not started")
-        return self._executor

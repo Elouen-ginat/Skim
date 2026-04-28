@@ -8,7 +8,7 @@ when the app boots / shuts down.
 
 from __future__ import annotations
 
-from skaal.runtime.engines.base import PatternEngine, start_engines_for
+from skaal.runtime.engines.base import PatternEngine, engine_for, register_engine, start_engines_for
 from skaal.runtime.engines.eventlog import EventLogEngine
 from skaal.runtime.engines.outbox import OutboxEngine
 from skaal.runtime.engines.projection import ProjectionEngine
@@ -21,5 +21,7 @@ __all__ = [
     "ProjectionEngine",
     "SagaEngine",
     "SagaExecutor",
+    "engine_for",
+    "register_engine",
     "start_engines_for",
 ]

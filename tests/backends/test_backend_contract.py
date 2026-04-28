@@ -14,8 +14,8 @@ from typing import Any, AsyncIterator, Callable
 import pytest
 
 from skaal.backends.base import StorageBackend
-from skaal.backends.local_backend import LocalMap
-from skaal.backends.sqlite_backend import SqliteBackend
+from skaal.backends.kv.local_map import LocalMap
+from skaal.backends.kv.sqlite import SqliteBackend
 
 # ── Helpers for skipping server-backed backends when the server is down ───────
 
@@ -69,7 +69,7 @@ async def _redis_factory(tmp_path: Path) -> AsyncIterator[Any]:
     try:
         import redis.asyncio  # noqa: F401
 
-        from skaal.backends.redis_backend import RedisBackend
+        from skaal.backends.kv.redis import RedisBackend
     except ImportError:
         pytest.skip("redis not installed")
 

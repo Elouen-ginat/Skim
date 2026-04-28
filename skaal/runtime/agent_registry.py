@@ -42,6 +42,25 @@ class AgentRegistry:
         self._agents: dict[str, AgentRecord] = {}
         self._lock = asyncio.Lock()
 
+    def declare(
+        self,
+        agent_id: str,
+        function_name: str,
+        instance: int = 0,
+        metadata: dict[str, Any] | None = None,
+        *,
+        status: AgentStatus = AgentStatus.IDLE,
+    ) -> AgentRecord:
+        record = AgentRecord(
+            agent_id=agent_id,
+            function_name=function_name,
+            status=status,
+            instance=instance,
+            metadata=metadata or {},
+        )
+        self._agents[agent_id] = record
+        return record
+
     async def register(
         self,
         agent_id: str,

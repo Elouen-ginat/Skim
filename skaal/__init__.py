@@ -4,7 +4,7 @@ Skaal — Infrastructure as Constraints.
 Write it once. Scale it with a word.
 """
 
-from skaal import api, types
+from skaal import api, components, decorators, errors, schedule, types
 from skaal.agent import Agent, agent
 from skaal.app import App
 from skaal.channel import Channel
@@ -30,6 +30,7 @@ from skaal.decorators import (
 )
 from skaal.module import Module, ModuleExport
 from skaal.patterns import EventLog, Outbox, Projection, Saga, SagaStep
+from skaal.plan import PlanFile
 from skaal.relational import ensure_schema as ensure_relational_schema
 from skaal.relational import open_session as open_relational_session
 from skaal.schedule import Cron, Every, Schedule, ScheduleContext
@@ -45,6 +46,11 @@ from skaal.vector import VectorStore
 __all__ = [
     # Python API namespace (run/plan/build/deploy/...)
     "api",
+    "components",
+    "decorators",
+    "errors",
+    "schedule",
+    "PlanFile",
     # Core
     "App",
     "Module",

@@ -14,14 +14,15 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 import $source_module as _user_module
 
-$backend_imports
+from skaal.plan import PlanFile
 from skaal.runtime.local import LocalRuntime
 
-_runtime = LocalRuntime(
+_plan = PlanFile.model_validate_json($plan_json_literal)
+
+_runtime = LocalRuntime.from_plan(
     _user_module.$app_var,
-    backend_overrides={
-$backend_overrides
-    },
+    _plan,
+    target="$target_name",
 )
 
 

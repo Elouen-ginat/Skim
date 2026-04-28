@@ -18,6 +18,10 @@ real infrastructure.  The local runtime must be lightweight, zero-dependency
 - `GET /` returns a JSON index of available endpoints.
 - `GET /health` returns `{"status": "ok"}`.
 
+When a user ASGI/WSGI app is mounted, that app keeps `/` and Skaal's own
+dispatcher moves under `/_skaal/*` so the UI/API and Skaal function surface
+remain reachable in the same local process.
+
 Optional factory methods (`from_redis`, `from_sqlite`) swap in persistent
 backends for integration testing.
 

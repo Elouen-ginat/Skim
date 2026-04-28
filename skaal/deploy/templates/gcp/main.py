@@ -9,17 +9,17 @@ import sys
 sys.path.insert(0, os.path.dirname(__file__))
 
 import $source_module as _user_module
-
-$backend_imports
+from skaal.plan import PlanFile
 from skaal.runtime.local import LocalRuntime
 
-_runtime = LocalRuntime(
+_plan = PlanFile.model_validate_json($plan_json_literal)
+
+_runtime = LocalRuntime.from_plan(
     _user_module.$app_var,
+    _plan,
+    target="$target_name",
     host="0.0.0.0",
     port=int(os.environ.get("PORT", "8080")),
-    backend_overrides={
-$backend_overrides
-    },
 )
 
 if __name__ == "__main__":

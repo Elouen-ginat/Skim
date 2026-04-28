@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, TypeAdapter
 
 
 class LatencyRange(BaseModel):
@@ -36,7 +36,7 @@ class StorageBackendSpec(BaseModel):
     # Code-generation wiring metadata (not used by the solver).
     # Populated from the optional [storage.<name>.wire] TOML subsection.
     # Tells deploy generators which Python class to instantiate and how to
-    # connect it.  Validated as a BackendHandler at catalog load time.
+    # connect it.  Validated as deploy Wiring metadata at catalog load time.
     wire: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -87,7 +87,7 @@ class Catalog(BaseModel):
         """
         # Import here to avoid a circular dependency at module level
         # (deploy.config doesn't import catalog, so the dependency is one-way).
-        from skaal.deploy._backends import BackendHandler
+        from skaal.backends._spec import Wiring
         from skaal.deploy.config import (
             compute_deploy_config,
             storage_deploy_config,
@@ -100,7 +100,7 @@ class Catalog(BaseModel):
                 storage_deploy_config(k, spec.deploy)  # raises ValueError on bad config
             if spec.wire:
                 try:
-                    BackendHandler.model_validate(spec.wire)  # raises ValueError on bad wire
+                    TypeAdapter(Wiring).validate_python(spec.wire)
                 except Exception as exc:
                     raise ValueError(f"Invalid [storage.{k}.wire] configuration: {exc}") from exc
             storage[k] = spec

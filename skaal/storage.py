@@ -299,62 +299,62 @@ class Store(Generic[T]):
     @classmethod
     def sync_get(cls, key: str) -> T | None:
         """Synchronous wrapper for :meth:`get`."""
-        from skaal.backends.local_backend import _sync_run
+        from skaal.backends.kv.local_map import _sync_run
 
         return _sync_run(cls.get(key))
 
     @classmethod
     def sync_set(cls, key: str, value: T) -> None:
         """Synchronous wrapper for :meth:`set`."""
-        from skaal.backends.local_backend import _sync_run
+        from skaal.backends.kv.local_map import _sync_run
 
         _sync_run(cls.set(key, value))
 
     @classmethod
     def sync_delete(cls, key: str) -> None:
         """Synchronous wrapper for :meth:`delete`."""
-        from skaal.backends.local_backend import _sync_run
+        from skaal.backends.kv.local_map import _sync_run
 
         _sync_run(cls.delete(key))
 
     @classmethod
     def sync_list(cls) -> _List[tuple[str, T]]:
         """Synchronous wrapper for :meth:`list`."""
-        from skaal.backends.local_backend import _sync_run
+        from skaal.backends.kv.local_map import _sync_run
 
         return _sync_run(cls.list())
 
     @classmethod
     def sync_scan(cls, prefix: str = "") -> _List[tuple[str, T]]:
         """Synchronous wrapper for :meth:`scan`."""
-        from skaal.backends.local_backend import _sync_run
+        from skaal.backends.kv.local_map import _sync_run
 
         return _sync_run(cls.scan(prefix))
 
     @classmethod
     def sync_add(cls, item: T) -> None:
         """Synchronous wrapper for :meth:`add`."""
-        from skaal.backends.local_backend import _sync_run
+        from skaal.backends.kv.local_map import _sync_run
 
         _sync_run(cls.add(item))
 
     @classmethod
     def sync_all(cls) -> _List[T]:
         """Synchronous wrapper for :meth:`all`."""
-        from skaal.backends.local_backend import _sync_run
+        from skaal.backends.kv.local_map import _sync_run
 
         return _sync_run(cls.all())
 
     @classmethod
     def sync_find(cls, prefix: str = "") -> _List[T]:
         """Synchronous wrapper for :meth:`find`."""
-        from skaal.backends.local_backend import _sync_run
+        from skaal.backends.kv.local_map import _sync_run
 
         return _sync_run(cls.find(prefix))
 
     @classmethod
     def sync_update(cls, key: str, value_or_fn: Callable[[T | None], T] | T) -> T:
         """Synchronous wrapper for :meth:`update`."""
-        from skaal.backends.local_backend import _sync_run
+        from skaal.backends.kv.local_map import _sync_run
 
         return _sync_run(cls.update(key, value_or_fn))

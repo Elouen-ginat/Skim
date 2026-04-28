@@ -25,7 +25,7 @@ class User(SQLModel, table=True):
     email: str = Field(index=True, unique=True)
     address: "Address" = Relationship(...)
 Solver picks a SQL backend (postgres, cloud-sql-postgres, sqlite).
-postgres_backend.py hosts a SQLAlchemy engine keyed on the SQLModel.metadata; ensure_schema() runs SQLModel.metadata.create_all (or Alembic when you add real migrations).
+skaal/backends/kv/postgres.py hosts the SQLAlchemy engine keyed on the SQLModel metadata; ensure_schema() runs SQLModel.metadata.create_all (or Alembic when you add real migrations).
 You kill the skaal_kv(ns, key, value JSONB) facade entirely for this tier — real tables, real indexes, real joins. Nested Pydantic models get flattened the SQLModel way (FK or JSON column per field, declarer's choice).
 3. Vector tier — wrap LangChain's VectorStore
 

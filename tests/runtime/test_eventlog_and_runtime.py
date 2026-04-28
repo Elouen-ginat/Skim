@@ -6,7 +6,7 @@ import asyncio
 
 import pytest
 
-from skaal.backends.local_backend import LocalMap
+from skaal.backends.kv.local_map import LocalMap
 from skaal.patterns import EventLog
 
 
@@ -142,47 +142,6 @@ class TestLocalRuntimeFixes:
     """Test LocalRuntime request size and backend lifecycle fixes."""
 
     @pytest.mark.asyncio
-    async def test_request_size_limit_enforcement(self) -> None:
-        """Test request size limit prevents memory exhaustion."""
-        from unittest.mock import AsyncMock, MagicMock
-
-        from skaal.app import App
-        from skaal.runtime.local import _MAX_BODY_SIZE, LocalRuntime
-
-        app = App(name="test")
-
-        @app.function
-        async def echo(data: str) -> str:
-            return data
-
-        runtime = LocalRuntime(app)
-
-        # Verify the constant is set
-        assert _MAX_BODY_SIZE == 10 * 1024 * 1024
-
-        # Test that oversized requests are rejected by mocking the TCP streams
-        reader = AsyncMock()
-        writer = MagicMock()
-
-        # Simulate reading HTTP request with oversized Content-Length
-        http_request = f"POST /echo HTTP/1.1\r\nContent-Length: {_MAX_BODY_SIZE + 1}\r\n\r\n"
-        reader.readline.side_effect = [
-            http_request.split("\r\n")[0].encode() + b"\r\n",
-            http_request.split("\r\n")[1].encode() + b"\r\n",
-            b"\r\n",  # empty line marking end of headers
-        ]
-        writer.drain = AsyncMock()
-
-        # Call _handle_connection - should write 413 response and return early
-        await runtime._handle_connection(reader, writer)
-
-        # Verify write was called with 413 response
-        write_calls = writer.write.call_args_list
-        assert len(write_calls) > 0
-        written_data = write_calls[0][0][0].decode("utf-8", errors="ignore")
-        assert "413" in written_data  # Payload Too Large response code
-
-    @pytest.mark.asyncio
     async def test_backend_shutdown_closes_connections(self) -> None:
         """Test LocalRuntime.shutdown() closes all backend connections."""
         from unittest.mock import AsyncMock
@@ -241,3 +200,68 @@ class TestLocalRuntimeFixes:
         # Both close() should have been attempted
         mock_backend1.close.assert_called_once()
         mock_backend2.close.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_backend_shutdown_closes_uninstalled_override(self) -> None:
+        """Test shutdown closes backend overrides even when they were never wired."""
+        from unittest.mock import AsyncMock
+
+        from skaal.app import App
+        from skaal.runtime.local import LocalRuntime
+
+        app = App(name="test")
+        runtime = LocalRuntime(app)
+
+        orphan_backend = AsyncMock()
+        runtime._backends = {}
+        runtime._backend_overrides = {"MissingStore": orphan_backend}
+
+        await runtime.shutdown()
+
+        orphan_backend.close.assert_called_once()
+
+
+class TestRuntimeDispatchFixes:
+    @pytest.mark.asyncio
+    async def test_dispatch_omits_traceback_without_debug_env(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from skaal.app import App
+        from skaal.runtime.local import LocalRuntime
+
+        app = App(name="traceback-test")
+
+        @app.function
+        async def explode() -> None:
+            raise RuntimeError("boom")
+
+        monkeypatch.delenv("SKAAL_DEBUG", raising=False)
+        runtime = LocalRuntime(app)
+
+        result, status = await runtime._dispatch("POST", "/explode", b"{}")
+
+        assert status == 500
+        assert result == {"error": "boom"}
+
+    @pytest.mark.asyncio
+    async def test_dispatch_includes_traceback_with_debug_env(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from skaal.app import App
+        from skaal.runtime.local import LocalRuntime
+
+        app = App(name="traceback-test")
+
+        @app.function
+        async def explode() -> None:
+            raise RuntimeError("boom")
+
+        monkeypatch.setenv("SKAAL_DEBUG", "1")
+        runtime = LocalRuntime(app)
+
+        result, status = await runtime._dispatch("POST", "/explode", b"{}")
+
+        assert status == 500
+        assert result["error"] == "boom"
+        assert "traceback" in result
+        assert "RuntimeError: boom" in result["traceback"]

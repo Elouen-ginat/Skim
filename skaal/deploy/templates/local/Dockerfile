@@ -40,4 +40,4 @@ ENV PYTHONPATH=/app
 
 EXPOSE 8000
 
-CMD ["uv", "run", "gunicorn", "--bind", "0.0.0.0:8000", "--workers", "2", "--timeout", "120"$gunicorn_worker, "main:application"]
+CMD ["uv", "run", "gunicorn", "--bind", "0.0.0.0:8000", "--workers", "2", "--timeout", "120"$gunicorn_worker, "$bootstrap_module:application"]

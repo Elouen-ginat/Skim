@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from skaal.backends.sqlite_backend import SqliteBackend
+from skaal.backends.kv.sqlite import SqliteBackend
 
 
 @pytest.mark.asyncio

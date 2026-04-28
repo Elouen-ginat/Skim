@@ -1,21 +1,22 @@
-"""Z3-based constraint solver for Skaal infrastructure planning."""
+"""Advanced solver primitives for Skaal infrastructure planning.
+
+Most application code should use :mod:`skaal.api`; this module exposes the
+lower-level planning and stability helpers used by tests and advanced tooling.
+"""
 
 from skaal.solver.explain import explain_plan
 from skaal.solver.graph import ResourceGraph, build_graph
-from skaal.solver.plan import plan, plan_diff
 from skaal.solver.solver import solve
-from skaal.solver.stability import PlanDiff, StabilityVerdict, diff_plans
+from skaal.solver.stability import StabilityReport, StabilityVerdict, diff_plans
 from skaal.solver.targets import TargetFamily
 
 __all__ = [
-    "PlanDiff",
     "ResourceGraph",
+    "StabilityReport",
     "StabilityVerdict",
     "TargetFamily",
     "build_graph",
     "diff_plans",
     "explain_plan",
-    "plan",
-    "plan_diff",
     "solve",
 ]

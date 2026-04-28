@@ -5,7 +5,7 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 from skaal.components import APIGateway, Proxy, Route
-from skaal.deploy.local import _build_docker_compose, _kong_config, _traefik_labels
+from skaal.deploy.builders.local_compose import _build_docker_compose, _kong_config, _traefik_labels
 from skaal.plan import PlanFile
 from skaal.solver.components import encode_component
 
@@ -163,6 +163,17 @@ def test_compose_api_gateway_adds_kong():
     assert "traefik" not in compose
 
 
+def test_compose_proxy_can_override_to_kong():
+    proxy = Proxy("edge", routes=[Route("/api/*", target="fn")], implementation="kong")
+    spec = encode_component("edge", proxy, {}, target="local")
+    plan = _empty_plan(components={"edge": spec})
+    app = _make_app()
+    compose = _build_docker_compose(plan, port=8000, source_pkg="myapp", app=app)
+
+    assert "kong" in compose
+    assert "traefik" not in compose
+
+
 # ── Mount routes wired to Traefik ─────────────────────────────────────────────
 
 
@@ -191,3 +202,18 @@ def test_compose_respects_custom_app_service_names():
 
     assert "\n  backend:\n" in compose
     assert "container_name: demo-local" in compose
+
+
+def test_compose_supports_single_file_source_mounts_and_bootstrap_module():
+    plan = _empty_plan()
+    app = _make_app(name="demo")
+    compose = _build_docker_compose(
+        plan,
+        port=8000,
+        source_pkg="main.py",
+        app=app,
+        bootstrap_module="_skaal_bootstrap",
+    )
+
+    assert "- ../main.py:/app/main.py" in compose
+    assert "--reload _skaal_bootstrap:application" in compose

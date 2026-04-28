@@ -35,7 +35,7 @@ class ResourceDiff:
 
 
 @dataclass
-class PlanDiff:
+class StabilityReport:
     verdict: StabilityVerdict
     diffs: list[ResourceDiff]
 
@@ -61,9 +61,9 @@ class PlanDiff:
         return "\n".join(lines)
 
 
-def diff_plans(old: "PlanFile", new: "PlanFile") -> PlanDiff:
+def diff_plans(old: "PlanFile", new: "PlanFile") -> StabilityReport:
     """
-    Compare *old* and *new* plan files and return a :class:`PlanDiff`.
+    Compare *old* and *new* plan files and return a :class:`StabilityReport`.
 
     Backend changes and instance-type changes are flagged as requiring
     migration (``breaking``); new/removed resources are ``drift``.
@@ -150,4 +150,4 @@ def diff_plans(old: "PlanFile", new: "PlanFile") -> PlanDiff:
     else:
         verdict = StabilityVerdict.DRIFT
 
-    return PlanDiff(verdict=verdict, diffs=diffs)
+    return StabilityReport(verdict=verdict, diffs=diffs)

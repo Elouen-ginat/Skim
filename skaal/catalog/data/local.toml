@@ -3,11 +3,9 @@
 # All backends map to local equivalents for zero-setup development.
 
 [storage.local-map.wire]
-class_name     = "SqliteBackend"
-module         = "sqlite_backend"
-uses_namespace = true
-path_default   = "skaal_local.db"
-extra_deps     = ["aiosqlite"]
+class_name     = "LocalMap"
+module         = "skaal.backends.kv.local_map"
+uses_namespace = false
 # No env_prefix — path is hardcoded; all workers share the same file.
 
 [storage.local-map]
@@ -25,7 +23,7 @@ notes = "Pure in-process Python dict. Used by LocalRuntime automatically."
 
 [storage.sqlite.wire]
 class_name      = "SqliteBackend"
-module          = "sqlite_backend"
+module          = "skaal.backends.kv.sqlite"
 env_prefix      = "SKAAL_SQLITE_PATH"
 local_env_value = "/app/data/skaal.db"
 
@@ -42,7 +40,7 @@ notes = "Persistent local storage via aiosqlite. Use `skaal run --persist`."
 
 [storage.local-redis.wire]
 class_name      = "RedisBackend"
-module          = "redis_backend"
+module          = "skaal.backends.kv.redis"
 env_prefix      = "SKAAL_REDIS_URL"
 uses_namespace  = true
 local_service   = "redis"
@@ -62,7 +60,7 @@ notes = "Local Redis instance. Use `skaal run --redis redis://localhost:6379`."
 
 [storage.chroma-local.wire]
 class_name     = "ChromaVectorBackend"
-module         = "chroma_backend"
+module         = "skaal.backends.vector.chroma"
 uses_namespace = true
 path_default   = "skaal_chroma"
 extra_deps     = ["langchain-chroma>=1.1", "chromadb>=1.5"]
