@@ -10,6 +10,7 @@ import warnings
 from typing import TYPE_CHECKING, Any
 
 from skaal.plan import ComponentSpec, ComputeSpec, PatternSpec, PlanFile, StorageSpec
+from skaal.solver._pattern_solvers import PatternSolveContext, collect_function_names, solve_pattern
 from skaal.solver.graph import CyclicDependencyError, build_graph
 from skaal.solver.storage import UnsatisfiableConstraints, select_backend
 from skaal.solver.targets import catalog_compute_key
@@ -69,28 +70,6 @@ def _policy_to_dict(policy: Any) -> dict[str, Any] | None:
     return dict(policy) if hasattr(policy, "keys") else None
 
 
-def _storage_constraints_from_pattern(pattern_meta: dict[str, Any]) -> dict[str, Any]:
-    """
-    Build a ``__skaal_storage__``-shaped dict from an ``EventLog`` pattern's
-    ``pattern_meta["storage"]`` sub-dict, so it can be fed to ``select_backend``.
-    """
-    src = pattern_meta.get("storage", {})
-    # The source may lack throughput/size_hint/etc. — fill with the few keys
-    # the checker registry understands.
-    return {
-        "kind": "kv",
-        "access_pattern": src.get("access_pattern"),
-        "durability": src.get("durability"),
-        "write_throughput": src.get("throughput"),
-        "retention": None,  # retention here is a duration string, not an enum
-        "read_latency": None,
-        "write_latency": None,
-        "consistency": None,
-        "residency": None,
-        "size_hint": None,
-    }
-
-
 def _collect_all_components(app: "App") -> dict[str, Any]:
     """
     Recursively collect all components from *app* and every mounted submodule.
@@ -111,38 +90,6 @@ def _collect_all_components(app: "App") -> dict[str, Any]:
 
     _recurse(app)
     return result
-
-
-def _collect_function_names(app: "App") -> set[str]:
-    """
-    Return the set of all function identifiers a Saga step can legally
-    reference.  Includes bare names and qualified names so module authors can
-    use either form.
-    """
-    names: set[str] = set()
-    for qname, obj in app._collect_all().items():
-        if callable(obj) and hasattr(obj, "__skaal_compute__"):
-            names.add(qname)
-            # Also register the bare leaf name (saga.function → "reserve_inventory")
-            names.add(qname.rsplit(".", 1)[-1])
-    return names
-
-
-def _resolve_resource_qname(obj: Any, all_resources: dict[str, Any]) -> str | None:
-    """
-    Reverse-lookup: given a resource object, return the qualified name it's
-    registered under in ``all_resources``.  Used to resolve Projection/Outbox
-    cross-references from Python object to plan entry.
-    """
-    for qname, registered in all_resources.items():
-        if registered is obj:
-            return qname
-    # Fall back to class name for storage classes
-    name = getattr(obj, "__name__", None) or type(obj).__name__
-    for qname in all_resources:
-        if qname == name or qname.endswith(f".{name}"):
-            return qname
-    return None
 
 
 def _resolve_collocate(
@@ -326,160 +273,29 @@ def _solve_patterns(
     May mutate *storage_specs* — Projections force their target store to
     co-locate with the source.
     """
+    from skaal.solver import patterns as _pattern_solver_registrations
+
+    _ = _pattern_solver_registrations
     pattern_specs: dict[str, PatternSpec] = {}
-    registered_functions = _collect_function_names(app)
+    registered_functions = collect_function_names(app)
 
     for qname, obj in all_resources.items():
         pattern_meta = getattr(obj, "__skaal_pattern__", None)
         if not isinstance(pattern_meta, dict):
             continue
-        ptype = pattern_meta.get("pattern_type")
-
-        if ptype == "event-log":
-            pattern_constraints = _storage_constraints_from_pattern(pattern_meta)
-            try:
-                backend_name, reason = select_backend(
-                    qname, pattern_constraints, storage_backends, target=target
-                )
-            except UnsatisfiableConstraints as exc:
-                warnings.warn(
-                    f"EventLog {qname!r} could not be solved: {exc}. "
-                    "No backing store will be provisioned.",
-                    RuntimeWarning,
-                    stacklevel=2,
-                )
-                backend_name, reason = "", str(exc)
-
-            storage_meta = pattern_meta.get("storage", {})
-            pattern_specs[qname] = PatternSpec(
-                pattern_name=qname,
-                pattern_type="event-log",
-                backend=backend_name or None,
-                reason=reason,
-                config={
-                    "retention": storage_meta.get("retention"),
-                    "partitions": storage_meta.get("partitions"),
-                    "durability": (
-                        storage_meta.get("durability").value
-                        if hasattr(storage_meta.get("durability"), "value")
-                        else storage_meta.get("durability")
-                    ),
-                },
+        spec = solve_pattern(
+            PatternSolveContext(
+                qname=qname,
+                pattern_meta=pattern_meta,
+                all_resources=all_resources,
+                storage_specs=storage_specs,
+                storage_backends=storage_backends,
+                registered_functions=registered_functions,
+                target=target,
             )
-
-        elif ptype == "projection":
-            source = pattern_meta.get("source")
-            target_obj = pattern_meta.get("target")
-            handler = pattern_meta.get("handler")
-
-            source_qname = _resolve_resource_qname(source, all_resources) if source else None
-            target_qname = (
-                _resolve_resource_qname(target_obj, all_resources) if target_obj else None
-            )
-
-            if handler and handler not in registered_functions:
-                warnings.warn(
-                    f"Projection {qname!r} references unknown handler {handler!r}. "
-                    "Make sure it is registered via @app.function.",
-                    RuntimeWarning,
-                    stacklevel=2,
-                )
-
-            # Projections force the target store to co-locate with the source.
-            if target_qname and source_qname and target_qname in storage_specs:
-                existing = storage_specs[target_qname]
-                storage_specs[target_qname] = existing.model_copy(
-                    update={"collocate_with": source_qname}
-                )
-
-            consistency = pattern_meta.get("consistency")
-            pattern_specs[qname] = PatternSpec(
-                pattern_name=qname,
-                pattern_type="projection",
-                backend=None,
-                reason=(
-                    f"projection {qname!r}: {source_qname!r} → {target_qname!r} "
-                    f"via handler={handler!r}"
-                ),
-                config={
-                    "source": source_qname,
-                    "target": target_qname,
-                    "handler": handler,
-                    "consistency": (
-                        consistency.value
-                        if consistency is not None and hasattr(consistency, "value")
-                        else consistency
-                    ),
-                    "checkpoint_every": pattern_meta.get("checkpoint_every"),
-                    "strict": pattern_meta.get("strict", False),
-                },
-            )
-
-        elif ptype == "saga":
-            steps = pattern_meta.get("steps", [])
-            missing: list[str] = []
-            for step in steps:
-                fn_name = step.get("function")
-                comp_name = step.get("compensate")
-                if fn_name and fn_name not in registered_functions:
-                    missing.append(f"function={fn_name!r}")
-                if comp_name and comp_name not in registered_functions:
-                    missing.append(f"compensate={comp_name!r}")
-            if missing:
-                warnings.warn(
-                    f"Saga {qname!r} references unregistered names: {', '.join(missing)}. "
-                    "Register them via @app.function before deploying.",
-                    RuntimeWarning,
-                    stacklevel=2,
-                )
-
-            pattern_specs[qname] = PatternSpec(
-                pattern_name=qname,
-                pattern_type="saga",
-                backend=None,
-                reason=(
-                    f"saga {pattern_meta.get('name')!r}: {len(steps)} step(s), "
-                    f"coordination={pattern_meta.get('coordination')!r}"
-                ),
-                config={
-                    "name": pattern_meta.get("name"),
-                    "steps": steps,
-                    "coordination": pattern_meta.get("coordination"),
-                    "timeout_ms": pattern_meta.get("timeout_ms"),
-                    "missing_references": missing,
-                },
-            )
-
-        elif ptype == "outbox":
-            channel_obj = pattern_meta.get("channel")
-            storage_obj = pattern_meta.get("storage")
-            channel_qname = (
-                _resolve_resource_qname(channel_obj, all_resources) if channel_obj else None
-            )
-            storage_qname = (
-                _resolve_resource_qname(storage_obj, all_resources) if storage_obj else None
-            )
-
-            # The outbox table must live on the same backend as the primary
-            # storage so the write is transactional.  Borrow its backend.
-            outbox_backend: str | None = None
-            if storage_qname and storage_qname in storage_specs:
-                outbox_backend = storage_specs[storage_qname].backend
-
-            pattern_specs[qname] = PatternSpec(
-                pattern_name=qname,
-                pattern_type="outbox",
-                backend=outbox_backend,
-                reason=(
-                    f"outbox: writes to {storage_qname!r}, forwards to {channel_qname!r}, "
-                    f"delivery={pattern_meta.get('delivery')!r}"
-                ),
-                config={
-                    "channel": channel_qname,
-                    "storage": storage_qname,
-                    "delivery": pattern_meta.get("delivery"),
-                },
-            )
+        )
+        if spec is not None:
+            pattern_specs[qname] = spec
     return pattern_specs
 
 
