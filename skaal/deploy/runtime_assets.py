@@ -26,7 +26,14 @@ class SourceBundleResult:
 
     generated_paths: list[Path] = field(default_factory=list)
     has_mesh: bool = False
+    source_entry: str | None = None
     uv_sources: dict[str, str] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
+class BootstrapArtifact:
+    filename: str
+    module_name: str
 
 
 def prepare_output_dir(output_dir: Path) -> Path:
@@ -38,6 +45,13 @@ def prepare_output_dir(output_dir: Path) -> Path:
 def project_has_mesh(project_root: Path) -> bool:
     mesh_src_dir = Path(project_root) / "mesh"
     return mesh_src_dir.is_dir() and (mesh_src_dir / "Cargo.toml").exists()
+
+
+def resolve_bootstrap_artifact(source_module: str, *, default_filename: str) -> BootstrapArtifact:
+    default_module = Path(default_filename).stem
+    if "." not in source_module and source_module == default_module:
+        return BootstrapArtifact(filename="_skaal_bootstrap.py", module_name="_skaal_bootstrap")
+    return BootstrapArtifact(filename=default_filename, module_name=default_module)
 
 
 def write_text_artifact(
@@ -109,9 +123,12 @@ def collect_runtime_dependencies(
     seen = set(deps)
 
     for spec in plan.storage.values():
-        for dep in resolve_dependency_sets(
-            resolve_backend(spec, target=target).wiring.dependency_sets
-        ):
+        wiring = resolve_backend(spec, target=target).wiring
+        for dep in resolve_dependency_sets(wiring.dependency_sets):
+            if dep not in seen:
+                deps.append(dep)
+                seen.add(dep)
+        for dep in wiring.dependencies:
             if dep not in seen:
                 deps.append(dep)
                 seen.add(dep)
@@ -174,5 +191,6 @@ def copy_runtime_source_bundle(
         )
         if source_bundle is not None:
             result.generated_paths.append(source_bundle)
+            result.source_entry = source_bundle.name
 
     return result

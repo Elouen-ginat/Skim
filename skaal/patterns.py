@@ -32,7 +32,7 @@ class Pattern(Protocol):
 # ── EventLog ──────────────────────────────────────────────────────────────
 
 
-class EventLog(Generic[T]):
+class EventLog(Pattern, Generic[T]):
     """
     Append-only, ordered, replayable typed event log (Event Sourcing).
 
@@ -231,7 +231,7 @@ class SagaStep:
     timeout_ms: int | None = None
 
 
-class Saga:
+class Saga(Pattern):
     """
     Multi-step distributed transaction with compensating actions.
 

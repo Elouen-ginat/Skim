@@ -202,3 +202,18 @@ def test_compose_respects_custom_app_service_names():
 
     assert "\n  backend:\n" in compose
     assert "container_name: demo-local" in compose
+
+
+def test_compose_supports_single_file_source_mounts_and_bootstrap_module():
+    plan = _empty_plan()
+    app = _make_app(name="demo")
+    compose = _build_docker_compose(
+        plan,
+        port=8000,
+        source_pkg="main.py",
+        app=app,
+        bootstrap_module="_skaal_bootstrap",
+    )
+
+    assert "- ../main.py:/app/main.py" in compose
+    assert "--reload _skaal_bootstrap:application" in compose

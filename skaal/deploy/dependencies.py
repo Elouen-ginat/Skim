@@ -14,6 +14,10 @@ def _dependency_manifest() -> dict[str, tuple[str, ...]]:
     return {name: tuple(values) for name, values in dependency_sets.items()}
 
 
+def is_dependency_set_name(name: str) -> bool:
+    return name in _dependency_manifest()
+
+
 def resolve_dependency_sets(names: Iterable[str]) -> list[str]:
     manifest = _dependency_manifest()
     resolved: list[str] = []
@@ -33,4 +37,4 @@ def resolve_dependency_sets(names: Iterable[str]) -> list[str]:
     return resolved
 
 
-__all__ = ["resolve_dependency_sets"]
+__all__ = ["is_dependency_set_name", "resolve_dependency_sets"]

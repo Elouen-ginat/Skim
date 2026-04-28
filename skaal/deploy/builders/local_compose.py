@@ -5,12 +5,10 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from skaal.deploy._external import DefaultExternalProvisioner
+from skaal.deploy._render import render
 from skaal.deploy.builders._gateways import (
-    _kong_config,
-    _traefik_labels,
     adapter_for_component,
 )
-from skaal.deploy._render import render
 from skaal.deploy.local_services import COMPOSE_SERVICES
 from skaal.deploy.wiring import resolve_backend
 
@@ -70,6 +68,7 @@ def _build_docker_compose(
     app: Any = None,
     dev: bool = False,
     is_wsgi: bool = False,
+    bootstrap_module: str = "main",
     app_service_name: str = "app",
     app_container_name: str = "skaal-app",
 ) -> str:
@@ -164,6 +163,7 @@ def _build_docker_compose(
         service_dependencies=depends_on_str,
         app_labels=app_labels,
         additional_services=additional_services,
+        bootstrap_module=bootstrap_module,
         gunicorn_worker=gunicorn_worker,
     )
 

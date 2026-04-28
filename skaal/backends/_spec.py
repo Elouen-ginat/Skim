@@ -25,6 +25,7 @@ class Wiring:
     connection_value: str | None = None
     uses_namespace: bool = False
     constructor_kwargs: dict[str, Any] = field(default_factory=dict)
+    dependencies: tuple[str, ...] = ()
     dependency_sets: tuple[str, ...] = ()
     requires_vpc: bool = False
     local_service: str | None = None
@@ -136,8 +137,8 @@ def resolve_wiring(plugin: BackendSpec, spec: "StorageSpec") -> Wiring:
         return plugin.wiring
 
     overrides = dict(spec.wire_params)
-    if "extra_deps" in overrides and "dependency_sets" not in overrides:
-        overrides["dependency_sets"] = tuple(overrides.pop("extra_deps"))
+    if "dependencies" in overrides:
+        overrides["dependencies"] = tuple(overrides["dependencies"])
     if "dependency_sets" in overrides:
         overrides["dependency_sets"] = tuple(overrides["dependency_sets"])
     if "impl" not in overrides and ({"class_name", "module"} & set(overrides)):

@@ -28,6 +28,7 @@ def _generate_artifacts(
         collect_runtime_dependencies,
         copy_runtime_source_bundle,
         prepare_output_dir,
+        resolve_bootstrap_artifact,
         write_pulumi_stack_artifact,
         write_pyproject_artifact,
         write_rendered_artifact,
@@ -36,12 +37,13 @@ def _generate_artifacts(
 
     output_dir = prepare_output_dir(output_dir)
     is_wsgi = bool(getattr(app, "_wsgi_attribute", None))
+    bootstrap = resolve_bootstrap_artifact(source_module, default_filename="main.py")
 
     generated = [
         write_runtime_bootstrap(
             output_dir,
             target="gcp",
-            output_name="main.py",
+            output_name=bootstrap.filename,
             template_name="gcp/main",
             source_module=source_module,
             app_var=app_var,
@@ -61,9 +63,9 @@ def _generate_artifacts(
     generated.extend(bundles.generated_paths)
 
     cmd_args = (
-        "gunicorn --bind 0.0.0.0:8080 --workers 4 --timeout 120 main:application"
+        f"gunicorn --bind 0.0.0.0:8080 --workers 4 --timeout 120 {bootstrap.module_name}:application"
         if is_wsgi
-        else "python main.py"
+        else f"python {bootstrap.filename}"
     )
     generated.append(
         write_rendered_artifact(output_dir, "Dockerfile", "gcp/Dockerfile", cmd_args=cmd_args)

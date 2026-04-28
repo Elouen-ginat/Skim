@@ -40,6 +40,7 @@ def _generate_artifacts(
         collect_runtime_dependencies,
         copy_runtime_source_bundle,
         prepare_output_dir,
+        resolve_bootstrap_artifact,
         write_pyproject_artifact,
         write_rendered_artifact,
         write_runtime_bootstrap,
@@ -49,13 +50,13 @@ def _generate_artifacts(
     output_dir = prepare_output_dir(output_dir)
     deploy_config = LocalStackDeployConfig.model_validate(plan.deploy_config)
     is_wsgi = bool(getattr(app, "_wsgi_attribute", None))
-    top_pkg = source_module.split(".")[0]
+    bootstrap = resolve_bootstrap_artifact(source_module, default_filename="main.py")
 
     generated = [
         write_runtime_bootstrap(
             output_dir,
             target="local",
-            output_name="main.py",
+            output_name=bootstrap.filename,
             template_name="local/main",
             source_module=source_module,
             app_var=app_var,
@@ -73,6 +74,7 @@ def _generate_artifacts(
         include_dev_skaal=dev,
     )
     generated.extend(bundles.generated_paths)
+    source_entry = bundles.source_entry or source_module.split(".")[0]
 
     base_dependency_sets = ["local-compose"]
     if not is_wsgi:
@@ -101,6 +103,7 @@ def _generate_artifacts(
             output_dir,
             "Dockerfile",
             "local/Dockerfile",
+            bootstrap_module=bootstrap.module_name,
             gunicorn_worker=gunicorn_worker,
         )
     )
@@ -120,10 +123,11 @@ def _generate_artifacts(
             _build_docker_compose(
                 plan,
                 deploy_config.port,
-                source_pkg=top_pkg,
+                source_pkg=source_entry,
                 app=app,
                 dev=dev,
                 is_wsgi=is_wsgi,
+                bootstrap_module=bootstrap.module_name,
                 app_service_name=deploy_config.app_service_name,
                 app_container_name=deploy_config.container_name,
             ),

@@ -18,7 +18,7 @@ ${service_dependencies}
       - ../${source_pkg}:/app/${source_pkg}
       # Named volume for SQLite and other file-backed storage; persists across container restarts
       - skaal_data:/app/data
-    command: uv run gunicorn --bind 0.0.0.0:8000 --workers 1 --timeout 120$gunicorn_worker --reload main:application  # 1 worker: scheduler must run once
+    command: uv run gunicorn --bind 0.0.0.0:8000 --workers 1 --timeout 120$gunicorn_worker --reload ${bootstrap_module}:application  # 1 worker: scheduler must run once
 ${app_labels}
 ${additional_services}
 volumes:
