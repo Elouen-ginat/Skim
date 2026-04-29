@@ -10,6 +10,11 @@ Skaal lets you describe your application's storage and compute needs as constrai
 pip install skaal
 ```
 
+```bash
+# Distributed mesh runtime (prebuilt wheel)
+pip install "skaal[mesh]"
+```
+
 ```python
 from skaal import App, Module, storage, compute
 
@@ -57,6 +62,7 @@ skaal deploy --app myapp:app --target gcp --catalog catalogs/gcp.toml
 | `skaal` | Core (local SQLite + Redis) |
 | `skaal[aws]` | + boto3, Pulumi AWS, asyncpg |
 | `skaal[gcp]` | + google-cloud-firestore/storage, Cloud SQL connector, Pulumi GCP |
+| `skaal[mesh]` | + prebuilt `skaal-mesh` wheel for the distributed runtime |
 | `skaal[examples]` | + Dash, FastAPI, dash-bootstrap-components |
 
 ## License

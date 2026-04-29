@@ -2,8 +2,11 @@
 
 Requires the ``mesh`` extra::
 
-    maturin build --manifest-path mesh/Cargo.toml --release
-    pip install target/wheels/skaal-*.whl
+    pip install "skaal[mesh]"
+
+If you are editing the Rust crate locally::
+
+    make build-dev
 
 Usage::
 
@@ -54,8 +57,8 @@ class MeshRuntime:
         except ImportError as exc:
             raise ImportError(
                 "MeshRuntime requires the skaal_mesh native extension.\n"
-                "Build it with: maturin build --manifest-path mesh/Cargo.toml --release\n"
-                "Then:          pip install target/wheels/skaal-*.whl"
+                'Install it with: pip install "skaal[mesh]"\n'
+                "If you are editing the Rust crate locally, run: make build-dev"
             ) from exc
 
         self.app = app
@@ -65,7 +68,7 @@ class MeshRuntime:
             plan_dict = json.loads(plan_json)
             plan_dict.setdefault("app_name", app.name)
             plan_json = json.dumps(plan_dict)
-        self._mesh = skaal_mesh.SkaalMesh(app.name, plan_json)
+        self._mesh = cast(Any, skaal_mesh).SkaalMesh(app.name, plan_json)
         self._backends: dict[str, Any] = {}
         self._backend_overrides = backend_overrides or {}
         self._patch_storage()

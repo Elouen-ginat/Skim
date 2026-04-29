@@ -178,6 +178,7 @@ _LAMBDA_RUNTIMES = {
 
 class LambdaDeployConfig(ComputeDeployConfig):
     runtime: str = "python3.11"
+    architecture: Literal["x86_64", "arm64"] = "x86_64"
     timeout: int = Field(
         default=30,
         ge=1,

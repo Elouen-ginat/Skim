@@ -64,8 +64,7 @@ vector = [
     "psycopg[binary]>=3.3",
 ]
 mesh = [
-    # Rust mesh extension — compiled from source via maturin on `uv sync`
-    "skaal-mesh",
+    "skaal-mesh==0.2.0",
 ]
 
 [dependency-groups]
@@ -80,8 +79,6 @@ dev = [
     "maturin>=1.4",
     "build>=1.0",
     "pre-commit>=3.6",
-    # Rust mesh extension — compiled from source via maturin on `uv sync`
-    "skaal-mesh",
 ]
 examples = [
     "dash",
@@ -113,7 +110,10 @@ local = "skaal.channel:wire_local"
 redis = "skaal.channel:wire_redis"
 
 [tool.uv.sources]
-skaal-mesh = { path = "mesh", editable = true }
+# Local checkouts can still resolve the unpublished mesh package when the
+# mesh extra is requested explicitly. CI uses `--no-sources --find-links` to
+# validate the wheel path instead of this source fallback.
+skaal-mesh = { path = "mesh" }
 
 [tool.hatch.build.targets.wheel]
 packages = ["skaal"]

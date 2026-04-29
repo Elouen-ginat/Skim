@@ -200,6 +200,26 @@ def test_build_config_overrides_expands_deletion_protection(tmp_path: Path) -> N
     }
 
 
+def test_enable_mesh_resolves_from_stack_profile(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_pyproject(
+        tmp_path,
+        """
+        [tool.skaal]
+        enable_mesh = false
+
+        [tool.skaal.stacks.mesh]
+        enable_mesh = true
+        """,
+    )
+    monkeypatch.chdir(tmp_path)
+
+    base = SkaalSettings()
+    assert base.enable_mesh is False
+    assert base.for_stack("mesh").enable_mesh is True
+
+
 def test_build_config_overrides_explicit_wins_over_shortcut(tmp_path: Path) -> None:
     """An explicit sqlDeletionProtection<Class> in overrides beats the
     deletion_protection shortcut."""

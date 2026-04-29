@@ -238,6 +238,7 @@ def _build_pulumi_stack(app: Any, plan: "PlanFile", region: str = "us-east-1") -
         "lambdaMemoryMb": {"type": "integer", "default": deploy.memory_mb},
         "lambdaTimeout": {"type": "integer", "default": deploy.timeout},
         "lambdaRuntime": {"type": "string", "default": deploy.runtime},
+        "lambdaArchitecture": {"type": "string", "default": deploy.architecture},
     }
 
     variables: dict[str, Any] = {}
@@ -477,6 +478,7 @@ def _build_pulumi_stack(app: Any, plan: "PlanFile", region: str = "us-east-1") -
     lambda_props: dict[str, Any] = {
         "name": f"${{pulumi.stack}}-{app.name}",
         "runtime": "${lambdaRuntime}",
+        "architectures": ["${lambdaArchitecture}"],
         "handler": "handler.handler",
         "role": "${lambda-role.arn}",
         "code": {"fn::fileArchive": "./lambda_package"},
@@ -611,6 +613,7 @@ def generate_artifacts(
     source_module: str,
     app_var: str = "app",
     region: str = "us-east-1",
+    stack_profile: dict[str, Any] | None = None,
 ) -> list[Path]:
     """Generate Lambda + Pulumi YAML deployment artifacts.
 
@@ -644,6 +647,8 @@ def generate_artifacts(
     generated: list[Path] = []
     backend_imports, backend_overrides = build_wiring_aws(plan)
     wsgi_attribute: str | None = getattr(app, "_wsgi_attribute", None)
+    enable_mesh = bool((stack_profile or {}).get("enable_mesh"))
+    deploy_cfg = LambdaDeployConfig.model_validate(plan.deploy_config)
 
     # ── handler.py ────────────────────────────────────────────────────────────
     handler_path = output_dir / "handler.py"
@@ -671,20 +676,6 @@ def generate_artifacts(
         )
     generated.append(handler_path)
 
-    # ── pyproject.toml ────────────────────────────────────────────────────────
-    # NOTE — skaal-mesh on Lambda:
-    # Lambda function packages (zip) cannot compile Rust at deploy time.
-    # To use the mesh on Lambda you must either:
-    #   a) Switch to Lambda container image deployment and add Rust to the
-    #      Dockerfile (same pattern as local/GCP targets), or
-    #   b) Pre-compile a Linux x86_64 wheel and package it as a Lambda Layer.
-    # In both cases the mesh in-memory state (agent registry, state store,
-    # channels) is ephemeral per invocation — no state survives across cold
-    # starts. Use it only for within-request coordination.
-    project_root = output_dir.parent
-    mesh_src_dir = project_root / "mesh"
-    has_mesh = mesh_src_dir.is_dir() and (mesh_src_dir / "Cargo.toml").exists()
-
     handler_extra_deps: list[str] = []
     for spec in plan.storage.values():
         for dep in get_handler(spec).extra_deps:
@@ -695,9 +686,7 @@ def generate_artifacts(
     base_deps = ["skaal[aws]"]
     if wsgi_attribute:
         base_deps.append("mangum>=0.17")
-    if has_mesh:
-        # Included so requirements are explicit, but requires a Lambda Layer
-        # with the compiled skaal_mesh extension for the target platform.
+    if enable_mesh:
         base_deps.append("skaal-mesh")
     deps = list(dict.fromkeys(base_deps + handler_extra_deps + user_pkgs))
     pyproject_path = output_dir / "pyproject.toml"
@@ -710,7 +699,16 @@ def generate_artifacts(
     generated.append(pulumi_yaml_path)
 
     # ── skaal-meta.json ───────────────────────────────────────────────────────
-    meta_path = write_meta(output_dir, target="aws", source_module=source_module, app_name=app.name)
+    meta_path = write_meta(
+        output_dir,
+        target="aws",
+        source_module=source_module,
+        app_name=app.name,
+        extra_fields={
+            "lambda_architecture": deploy_cfg.architecture,
+            "lambda_runtime": deploy_cfg.runtime,
+        },
+    )
     generated.append(meta_path)
 
     return generated

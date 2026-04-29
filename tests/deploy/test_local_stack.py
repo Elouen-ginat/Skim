@@ -5,6 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock
 
+import pytest
+
 from skaal.components import APIGateway, Proxy, Route
 from skaal.deploy.local import _build_pulumi_stack, generate_artifacts
 from skaal.plan import PlanFile, StorageSpec
@@ -58,10 +60,17 @@ def test_local_stack_emits_core_resources_and_storage_envs(tmp_path: Path):
     assert app_resource["type"] == "docker:Container"
     assert app_resource["properties"]["image"] == "${localImageRef}"
     assert app_resource["properties"]["ports"] == [{"internal": 8000, "external": 8123}]
-    assert {"name": "${skaal-net.name}", "aliases": ["app"]} in app_resource["properties"][
-        "networksAdvanced"
-    ]
-    assert "SKAAL_REDIS_URL_CACHE=redis://redis:6379" in app_resource["properties"]["envs"]
+    if "networksAdvanced" in app_resource["properties"]:
+        assert {"name": "${skaal-net.name}", "aliases": ["app"]} in app_resource["properties"][
+            "networksAdvanced"
+        ]
+        assert "SKAAL_REDIS_URL_CACHE=redis://redis:6379" in app_resource["properties"]["envs"]
+    else:
+        assert app_resource["properties"]["networkMode"] == "${skaal-net.name}"
+        assert (
+            "SKAAL_REDIS_URL_CACHE=redis://skaal-test-app-redis:6379"
+            in app_resource["properties"]["envs"]
+        )
     assert "${redis}" in app_resource["options"]["dependsOn"]
     assert "${app-image}" not in app_resource["options"]["dependsOn"]
     assert {"containerPath": "/app/data", "volumeName": "${skaal-data.name}"} in app_resource[
@@ -137,3 +146,64 @@ def test_generate_artifacts_writes_dockerignore(tmp_path: Path):
         ".pulumi/\n.pulumi-state/\n__pycache__/\n.pytest_cache/\n"
     )
     assert '"resources"' in local_spec_path.read_text(encoding="utf-8")
+
+
+def test_local_stack_omits_provider_waits_for_healthchecks_on_windows(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    plan = PlanFile(
+        app_name="test-app",
+        storage={
+            "example.Cache": StorageSpec(
+                variable_name="cache",
+                backend="memorystore-redis",
+                kind="kv",
+            )
+        },
+        deploy_config={"port": 8123},
+    )
+
+    monkeypatch.setattr("skaal.deploy.local.platform.system", lambda: "Windows")
+
+    stack = _build_pulumi_stack(
+        _make_app(),
+        plan,
+        output_dir=tmp_path / "artifacts",
+        source_module="examples.counter",
+    )
+
+    redis_props = stack["resources"]["redis"]["properties"]
+    assert "healthcheck" in redis_props
+    assert "wait" not in redis_props
+    assert "waitTimeout" not in redis_props
+    assert redis_props["networkMode"] == "${skaal-net.name}"
+    assert "networksAdvanced" not in redis_props
+
+
+def test_local_stack_uses_container_names_for_service_hosts_on_windows(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    plan = PlanFile(
+        app_name="test-app",
+        storage={
+            "example.Cache": StorageSpec(
+                variable_name="cache",
+                backend="memorystore-redis",
+                kind="kv",
+            )
+        },
+        deploy_config={"port": 8123},
+    )
+
+    monkeypatch.setattr("skaal.deploy.local.platform.system", lambda: "Windows")
+
+    stack = _build_pulumi_stack(
+        _make_app(),
+        plan,
+        output_dir=tmp_path / "artifacts",
+        source_module="examples.counter",
+    )
+
+    app_props = stack["resources"]["app"]["properties"]
+    assert app_props["networkMode"] == "${skaal-net.name}"
+    assert "SKAAL_REDIS_URL_CACHE=redis://skaal-test-app-redis:6379" in app_props["envs"]

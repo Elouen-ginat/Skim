@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import platform
 import re
 import shutil
 from pathlib import Path
@@ -35,6 +36,117 @@ _LOCAL_GITIGNORE = (
 _LOCAL_DOCKERIGNORE = ".pulumi/\n.pulumi-state/\n__pycache__/\n.pytest_cache/\n"
 
 
+def _mesh_docker_stages(build_in_docker: bool) -> tuple[str, str]:
+    """Return (build_stage_block, install_step_block) for the Dockerfile template.
+
+    When *build_in_docker* is True, the build stage compiles the skaal-mesh Rust
+    extension from ``_mesh_src/`` (which is copied into the build context by
+    :func:`_copy_mesh_source`).  The install step installs the resulting wheel and
+    then removes both the source tree and the temporary wheel directory so they do
+    not bloat the final image.
+    """
+    if not build_in_docker:
+        return "", ""
+    build_stage = (
+        "FROM rust:1-slim-bookworm AS mesh-builder\n"
+        "RUN apt-get update && apt-get install -y --no-install-recommends"
+        " python3-dev python3-pip && rm -rf /var/lib/apt/lists/*\n"
+        "RUN pip install --break-system-packages --quiet maturin\n"
+        "COPY _mesh_src/ /build/\n"
+        "WORKDIR /build\n"
+        "RUN --mount=type=cache,target=/usr/local/cargo/registry \\\n"
+        "    maturin build --manifest-path mesh/Cargo.toml --release --out /dist\n"
+    )
+    install_step = (
+        "\n# Install compiled skaal-mesh extension into the uv-managed venv.\n"
+        "COPY --from=mesh-builder /dist/ /tmp/mesh_wheels/\n"
+        "RUN uv pip install --no-cache-dir /tmp/mesh_wheels/*.whl"
+        " && rm -rf /app/_mesh_src /tmp/mesh_wheels\n"
+    )
+    return build_stage, install_step
+
+
+def _source_uses_mesh(source_module: str, project_root: Path) -> bool:
+    """Return True if any .py file reachable from *source_module* imports skaal.mesh.
+
+    Finds the deepest existing directory that contains the source module and
+    scans every ``.py`` file within it for ``skaal.mesh`` or ``skaal_mesh``.
+    This is used as an auto-detection fallback so users don't need to set
+    ``enable_mesh = true`` in ``[tool.skaal]`` manually.
+    """
+    parts = source_module.split(".")
+    scan_dir: Path | None = None
+    for depth in range(len(parts), 0, -1):
+        candidate = project_root.joinpath(*parts[:depth])
+        if candidate.is_dir():
+            scan_dir = candidate
+            break
+    if scan_dir is None:
+        return False
+    for py_file in scan_dir.rglob("*.py"):
+        try:
+            content = py_file.read_text(encoding="utf-8", errors="ignore")
+            if "skaal.mesh" in content or "skaal_mesh" in content:
+                return True
+        except OSError:
+            pass
+    return False
+
+
+def _copy_mesh_source(project_root: Path, output_dir: Path) -> None:
+    """Copy the mesh Rust crate into ``_mesh_src/`` inside the Docker build context.
+
+    Copies the workspace ``Cargo.toml`` / ``Cargo.lock`` and the ``mesh/``
+    sub-crate (excluding compiled artifacts) so that the multi-stage Dockerfile
+    can build the extension inside Docker.
+    """
+    dst = output_dir / "_mesh_src"
+    if dst.exists():
+        shutil.rmtree(dst)
+    dst.mkdir()
+    for fname in ("Cargo.toml", "Cargo.lock"):
+        src = project_root / fname
+        if src.exists():
+            shutil.copy2(src, dst / fname)
+    shutil.copytree(
+        project_root / "mesh",
+        dst / "mesh",
+        ignore=shutil.ignore_patterns("target", "__pycache__", "*.pyc"),
+    )
+
+
+def _local_mesh_wheel_pattern() -> re.Pattern[str]:
+    machine = platform.machine().lower()
+    if machine in {"arm64", "aarch64"}:
+        arch = "aarch64"
+    else:
+        arch = "x86_64"
+    return re.compile(rf"^skaal_mesh-.*-manylinux[^-]*_{arch}\.whl$")
+
+
+def _bundle_local_mesh_wheel(project_root: Path, output_dir: Path) -> str | None:
+    wheel_pattern = _local_mesh_wheel_pattern()
+    candidate_dirs = [project_root / "target" / "wheels", project_root / "mesh" / "dist"]
+
+    for wheel_dir in candidate_dirs:
+        if not wheel_dir.is_dir():
+            continue
+        matches = sorted(
+            path
+            for path in wheel_dir.iterdir()
+            if path.is_file() and wheel_pattern.match(path.name)
+        )
+        if not matches:
+            continue
+        bundled_dir = output_dir / "_mesh_wheels"
+        bundled_dir.mkdir(exist_ok=True)
+        wheel_path = matches[-1]
+        shutil.copy2(wheel_path, bundled_dir / wheel_path.name)
+        return f"skaal-mesh @ file:///app/_mesh_wheels/{wheel_path.name}"
+
+    return None
+
+
 def _resource_slug(name: str, *, max_len: int = 40) -> str:
     slug = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
     if not slug:
@@ -46,6 +158,24 @@ def _resource_slug(name: str, *, max_len: int = 40) -> str:
 
 def local_image_name(app_name: str) -> str:
     return f"skaal-{_resource_slug(app_name)}:local"
+
+
+def _use_health_waits() -> bool:
+    return platform.system() != "Windows"
+
+
+def _use_primary_network_mode() -> bool:
+    return platform.system() == "Windows"
+
+
+def _container_name(app_slug: str, logical_name: str) -> str:
+    return f"skaal-{app_slug}-{logical_name}"
+
+
+def _service_host(app_slug: str, service_name: str) -> str:
+    if _use_primary_network_mode():
+        return _container_name(app_slug, service_name)
+    return service_name
 
 
 def _gateway_component(plan: "PlanFile") -> Any | None:
@@ -198,7 +328,7 @@ def _app_command(is_wsgi: bool) -> list[str]:
     return command
 
 
-def _app_envs(plan: "PlanFile") -> tuple[list[str], list[str]]:
+def _app_envs(plan: "PlanFile", *, app_slug: str) -> tuple[list[str], list[str]]:
     envs: dict[str, str] = {}
     service_dependencies: list[str] = []
 
@@ -208,7 +338,13 @@ def _app_envs(plan: "PlanFile") -> tuple[list[str], list[str]]:
 
         if handler.env_prefix and handler.local_env_value:
             env_var = f"{handler.env_prefix}_{class_name.upper()}"
-            envs[env_var] = handler.local_env_value
+            value = handler.local_env_value
+            if handler.local_service:
+                value = value.replace(
+                    f"://{handler.local_service}:",
+                    f"://{_service_host(app_slug, handler.local_service)}:",
+                )
+            envs[env_var] = value
 
         if handler.local_service and handler.local_service not in service_dependencies:
             service_dependencies.append(handler.local_service)
@@ -249,18 +385,22 @@ def _service_container_resource(
     depends_on: list[str] | None = None,
 ) -> PulumiResource:
     properties: DockerContainerProperties = {
-        "name": f"skaal-{app_slug}-{service_name}",
+        "name": _container_name(app_slug, service_name),
         "image": spec["image"],
-        "networksAdvanced": [_network_attachment(service_name)],
     }
+    if _use_primary_network_mode():
+        properties["networkMode"] = "${skaal-net.name}"
+    else:
+        properties["networksAdvanced"] = [_network_attachment(service_name)]
     if spec.get("command"):
         properties["command"] = list(spec["command"])
     if spec.get("envs"):
         properties["envs"] = list(spec["envs"])
     if spec.get("healthcheck"):
         properties["healthcheck"] = dict(spec["healthcheck"])
-        properties["wait"] = True
-        properties["waitTimeout"] = 120
+        if _use_health_waits():
+            properties["wait"] = True
+            properties["waitTimeout"] = 120
     if spec.get("labels"):
         properties["labels"] = list(spec["labels"])
     if spec.get("ports"):
@@ -291,7 +431,7 @@ def _build_pulumi_stack(
 ) -> PulumiStack:
     deploy = LocalStackDeployConfig.model_validate(plan.deploy_config)
     app_slug = _resource_slug(app.name)
-    app_envs, storage_services = _app_envs(plan)
+    app_envs, storage_services = _app_envs(plan, app_slug=app_slug)
 
     resources: dict[str, PulumiResource] = {
         "skaal-net": {
@@ -341,14 +481,17 @@ def _build_pulumi_stack(
         )
 
     app_properties: DockerContainerProperties = {
-        "name": f"skaal-{app_slug}-app",
+        "name": _container_name(app_slug, "app"),
         "image": "${localImageRef}",
         "command": _app_command(bool(getattr(app, "_wsgi_attribute", None))),
         "envs": app_envs,
-        "networksAdvanced": [_network_attachment("app")],
         "ports": [DockerPortBinding(internal=8000, external=deploy.port)],
         "volumes": _app_volumes(output_dir, source_module, dev),
     }
+    if _use_primary_network_mode():
+        app_properties["networkMode"] = "${skaal-net.name}"
+    else:
+        app_properties["networksAdvanced"] = [_network_attachment("app")]
     if app_labels:
         app_properties["labels"] = app_labels
 
@@ -374,6 +517,7 @@ def generate_artifacts(
     source_module: str,
     app_var: str = "app",
     dev: bool = False,
+    stack_profile: dict[str, Any] | None = None,
 ) -> list[Path]:
     """Generate local Docker deployment artifacts backed by Pulumi YAML."""
     output_dir = Path(output_dir)
@@ -386,6 +530,9 @@ def generate_artifacts(
     backend_imports, backend_overrides = build_wiring(plan, local=True)
     wsgi_attribute: str | None = getattr(app, "_wsgi_attribute", None)
     is_wsgi = bool(wsgi_attribute)
+    enable_mesh = bool((stack_profile or {}).get("enable_mesh")) or _source_uses_mesh(
+        source_module, project_root
+    )
 
     main_path = output_dir / "main.py"
     if wsgi_attribute:
@@ -419,27 +566,27 @@ def generate_artifacts(
     if dev and skaal_src_dir.is_dir() and skaal_root_pyproject.exists():
         skaal_bundle_dir.mkdir(exist_ok=True)
         shutil.copytree(skaal_src_dir, skaal_bundle_dir / "skaal", dirs_exist_ok=True)
-        raw = skaal_root_pyproject.read_text(encoding="utf-8")
-        raw = raw.replace('path = "mesh"', 'path = "../mesh"')
-        (skaal_bundle_dir / "pyproject.toml").write_text(raw, encoding="utf-8")
+        shutil.copy2(skaal_root_pyproject, skaal_bundle_dir / "pyproject.toml")
         for extra in ("LICENSE", "README.md"):
             src = project_root / extra
             if src.exists():
                 shutil.copy2(src, skaal_bundle_dir / extra)
         generated.append(skaal_bundle_dir)
 
-    mesh_bundle_dir = output_dir / "mesh"
-    mesh_src_dir = project_root / "mesh"
-    has_mesh = mesh_src_dir.is_dir() and (mesh_src_dir / "Cargo.toml").exists()
-    if has_mesh:
-        shutil.copytree(mesh_src_dir, mesh_bundle_dir, dirs_exist_ok=True)
-        generated.append(mesh_bundle_dir)
-
     infra_deps = ["skaal", "gunicorn>=22.0", "apscheduler>=3.10"]
     if not is_wsgi:
         infra_deps += ["uvicorn[standard]>=0.29", "starlette>=0.36"]
-    if has_mesh:
-        infra_deps.append("skaal-mesh")
+    build_mesh_in_docker = False
+    if enable_mesh:
+        mesh_dep = _bundle_local_mesh_wheel(project_root, output_dir) if dev else None
+        if mesh_dep:
+            infra_deps.append(mesh_dep)
+        elif dev and (project_root / "mesh" / "Cargo.toml").exists():
+            build_mesh_in_docker = True
+            _copy_mesh_source(project_root, output_dir)
+            generated.append(output_dir / "_mesh_src")
+        else:
+            infra_deps.append("skaal-mesh")
     seen_deps: set[str] = set()
     for spec in plan.storage.values():
         for dep in get_handler(spec, local=True).extra_deps:
@@ -451,8 +598,6 @@ def generate_artifacts(
     uv_sources: dict[str, str] = {}
     if dev and skaal_src_dir.is_dir():
         uv_sources["skaal"] = "./_skaal"
-    if has_mesh:
-        uv_sources["skaal-mesh"] = "./mesh"
     pyproject_path = output_dir / "pyproject.toml"
     pyproject_path.write_text(
         to_pyproject_toml(app.name, deps, uv_sources=uv_sources or None), encoding="utf-8"
@@ -460,9 +605,16 @@ def generate_artifacts(
     generated.append(pyproject_path)
 
     gunicorn_worker = "" if is_wsgi else ', "-k", "uvicorn.workers.UvicornWorker"'
+    mesh_build_stage, mesh_install_step = _mesh_docker_stages(build_mesh_in_docker)
     dockerfile_path = output_dir / "Dockerfile"
     dockerfile_path.write_text(
-        render("local/Dockerfile", gunicorn_worker=gunicorn_worker), encoding="utf-8"
+        render(
+            "local/Dockerfile",
+            gunicorn_worker=gunicorn_worker,
+            mesh_build_stage=mesh_build_stage,
+            mesh_install_step=mesh_install_step,
+        ),
+        encoding="utf-8",
     )
     generated.append(dockerfile_path)
 
@@ -472,7 +624,8 @@ def generate_artifacts(
         shutil.copytree(src_pkg_dir, dst_pkg_dir, dirs_exist_ok=True)
         generated.append(dst_pkg_dir)
 
-    kong_config = build_kong_config(app, plan)
+    kong_app_service = _service_host(_resource_slug(app.name), "app")
+    kong_config = build_kong_config(app, plan, app_service_name=kong_app_service)
     if kong_config is not None:
         kong_path = output_dir / "kong.yml"
         kong_path.write_text(kong_config, encoding="utf-8")

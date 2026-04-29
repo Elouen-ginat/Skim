@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 import os
 import re
+import subprocess
+import time
 from pathlib import Path
 from typing import Any
 
@@ -116,6 +118,7 @@ def _container_kwargs(
         "name": props.get("name"),
         "command": props.get("command"),
         "envs": props.get("envs"),
+        "network_mode": _resolve_value(props.get("networkMode"), resources, config),
         "restart": props.get("restart"),
         "wait": props.get("wait"),
         "wait_timeout": props.get("waitTimeout"),
@@ -157,6 +160,26 @@ def _container_kwargs(
     return {key: value for key, value in kwargs.items() if value is not None}
 
 
+def _docker_network_id(name: str) -> str | None:
+    """Return the full Docker network ID for *name*, or ``None`` if it does not exist."""
+    result = subprocess.run(
+        ["docker", "network", "inspect", name, "--format", "{{.Id}}"],
+        capture_output=True,
+        text=True,
+    )
+    return result.stdout.strip() or None if result.returncode == 0 else None
+
+
+def _docker_volume_name(name: str) -> str | None:
+    """Return the Docker volume name if it exists, or ``None`` otherwise."""
+    result = subprocess.run(
+        ["docker", "volume", "inspect", name, "--format", "{{.Name}}"],
+        capture_output=True,
+        text=True,
+    )
+    return result.stdout.strip() or None if result.returncode == 0 else None
+
+
 def _local_program(spec: dict[str, Any]):
     def program() -> None:
         config = pulumi.Config()
@@ -168,15 +191,29 @@ def _local_program(spec: dict[str, Any]):
             opts = _resource_options(resource.get("options"), resources)
 
             if resource_type == "docker:Network":
+                network_name = props.get("name")
+                existing_id = _docker_network_id(network_name) if network_name else None
+                if existing_id:
+                    opts = pulumi.ResourceOptions.merge(
+                        opts or pulumi.ResourceOptions(),
+                        pulumi.ResourceOptions(import_=existing_id),
+                    )
                 resources[logical_name] = docker.Network(
                     logical_name,
-                    name=props.get("name"),
+                    name=network_name,
                     opts=opts,
                 )
             elif resource_type == "docker:Volume":
+                volume_name = props.get("name")
+                existing_name = _docker_volume_name(volume_name) if volume_name else None
+                if existing_name:
+                    opts = pulumi.ResourceOptions.merge(
+                        opts or pulumi.ResourceOptions(),
+                        pulumi.ResourceOptions(import_=existing_name),
+                    )
                 resources[logical_name] = docker.Volume(
                     logical_name,
-                    name=props.get("name"),
+                    name=volume_name,
                     opts=opts,
                 )
             elif resource_type == "docker:Container":
@@ -216,6 +253,37 @@ def _select_stack(artifacts_dir: Path, stack: str) -> tuple[auto.Stack, dict[str
     return stack_ref, spec
 
 
+def _up_with_retry(
+    stack_ref: auto.Stack,
+    *,
+    max_retries: int = 3,
+    retry_delay: float = 5.0,
+) -> None:
+    """Run ``pulumi up``, retrying on transient Docker daemon i/o timeouts.
+
+    Docker Desktop on Windows can return ``i/o timeout`` when the image-list
+    API is called immediately after a build.  Waiting a few seconds and
+    retrying is sufficient in practice.
+    """
+    last_exc: Exception | None = None
+    for attempt in range(max_retries):
+        try:
+            stack_ref.up(on_output=typer.echo)
+            return
+        except Exception as exc:  # noqa: BLE001
+            if "i/o timeout" not in str(exc):
+                raise
+            last_exc = exc
+            if attempt < max_retries - 1:
+                typer.echo(
+                    f"Docker daemon timeout (attempt {attempt + 1}/{max_retries}),"
+                    f" retrying in {retry_delay:.0f}s…"
+                )
+                time.sleep(retry_delay)
+    if last_exc is not None:
+        raise last_exc
+
+
 def deploy_local_stack(
     artifacts_dir: Path,
     *,
@@ -226,15 +294,19 @@ def deploy_local_stack(
 ) -> str:
     del yes
     typer.echo("==> Building local app image ...")
-    image_ref = _build_local_image(artifacts_dir, _local_image_name(app_name))
+    image_name = _local_image_name(app_name)
+    image_id = _build_local_image(artifacts_dir, image_name)
 
     stack_ref, _ = _create_or_select_stack(artifacts_dir, stack)
-    stack_ref.set_config("localImageRef", auto.ConfigValue(value=image_ref))
+    # Prefer the image ID (sha256:…) over the mutable tag so Pulumi can inspect
+    # by ID directly rather than scanning the full image list — this avoids
+    # i/o timeout errors from Docker Desktop on Windows.
+    stack_ref.set_config("localImageRef", auto.ConfigValue(value=image_id or image_name))
     for key, value in (config_overrides or {}).items():
         stack_ref.set_config(key, auto.ConfigValue(value=str(value)))
 
     typer.echo("==> Starting local Docker stack (pulumi up via Automation API) ...")
-    stack_ref.up(on_output=typer.echo)
+    _up_with_retry(stack_ref)
     return str(stack_ref.outputs()["appUrl"].value)
 
 

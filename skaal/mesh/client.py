@@ -37,8 +37,8 @@ except ImportError:
 def _require_rust() -> None:
     if not _RUST_AVAILABLE:
         raise RuntimeError(
-            "skaal_mesh extension not found.  Build it with:\n\n"
-            "    maturin develop --manifest-path mesh/Cargo.toml\n"
+            'skaal_mesh extension not found. Install the published mesh wheel with `pip install "skaal[mesh]"`.\n'
+            "If you are editing the Rust crate locally, run `make build-dev` first.\n"
         )
 
 

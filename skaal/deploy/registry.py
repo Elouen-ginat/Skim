@@ -60,6 +60,7 @@ class AWSLambdaTarget:
             source_module=source_module,
             app_var=app_var,
             region=region or self.default_region,
+            stack_profile=stack_profile,
         )
 
     def package_and_push(
@@ -89,8 +90,16 @@ class AWSLambdaTarget:
         if config_overrides:
             _pulumi_config_set(artifacts_dir, config_overrides)
 
+        meta = read_meta(artifacts_dir)
+
         typer.echo("==> Packaging Lambda ...")
-        _package_aws(artifacts_dir, project_root, source_module)
+        _package_aws(
+            artifacts_dir,
+            project_root,
+            source_module,
+            lambda_architecture=meta.get("lambda_architecture", "x86_64"),
+            lambda_runtime=meta.get("lambda_runtime", "python3.11"),
+        )
 
         typer.echo("==> Deploying (pulumi up) ...")
         _pulumi_up(artifacts_dir, yes=yes)
@@ -228,6 +237,7 @@ class LocalDockerTarget:
             source_module=source_module,
             app_var=app_var,
             dev=dev,
+            stack_profile=stack_profile,
         )
 
     def package_and_push(

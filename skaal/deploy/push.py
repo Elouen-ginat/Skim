@@ -22,6 +22,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
 from typing import Any
 
@@ -39,13 +40,21 @@ def _uv_or_pip() -> list[str]:
 META_FILE = "skaal-meta.json"
 
 
-def write_meta(output_dir: Path, target: str, source_module: str, app_name: str) -> Path:
+def write_meta(
+    output_dir: Path,
+    target: str,
+    source_module: str,
+    app_name: str,
+    extra_fields: dict[str, Any] | None = None,
+) -> Path:
     """Write ``skaal-meta.json`` into *output_dir*; return the path."""
     meta: dict[str, str] = {
         "target": target,
         "source_module": source_module,
         "app_name": app_name,
     }
+    if extra_fields:
+        meta.update(extra_fields)
     path = output_dir / META_FILE
     path.write_text(json.dumps(meta, indent=2))
     return path
@@ -96,14 +105,44 @@ def _pulumi_env() -> dict[str, str]:
 # ── AWS helpers ───────────────────────────────────────────────────────────────
 
 
-def _package_aws(artifacts_dir: Path, project_root: Path, source_module: str) -> None:
+def _artifact_dependencies(artifacts_dir: Path) -> list[str]:
+    pyproject_path = artifacts_dir / "pyproject.toml"
+    data = tomllib.loads(pyproject_path.read_text(encoding="utf-8"))
+    project = data.get("project", {})
+    dependencies = project.get("dependencies", [])
+    return [str(dep) for dep in dependencies]
+
+
+def _lambda_platform(lambda_architecture: str) -> str:
+    arch = lambda_architecture.lower()
+    if arch == "arm64":
+        return "manylinux2014_aarch64"
+    return "manylinux2014_x86_64"
+
+
+def _lambda_python_tags(lambda_runtime: str) -> tuple[str, str]:
+    if not lambda_runtime.startswith("python3."):
+        return "311", "cp311"
+    version = lambda_runtime.removeprefix("python")
+    major_minor = version.replace(".", "")
+    return major_minor, f"cp{major_minor}"
+
+
+def _package_aws(
+    artifacts_dir: Path,
+    project_root: Path,
+    source_module: str,
+    *,
+    lambda_architecture: str = "x86_64",
+    lambda_runtime: str = "python3.11",
+) -> None:
     """
     Build ``lambda_package/`` inside *artifacts_dir*.
 
-    Steps (all Python, no shell):
+     Steps (all Python, no shell):
       1. Delete and recreate ``lambda_package/``.
-      2. Install deps from ``pyproject.toml`` using ``uv pip install``
-         (falls back to ``pip`` if uv is not in PATH).
+        2. Install runtime deps from ``pyproject.toml`` into the target dir.
+            ``skaal-mesh`` is installed with a Lambda-compatible manylinux wheel.
       3. Copy ``handler.py`` into the package root.
       4. Copy the top-level source package (e.g. ``examples/``) from the
          project root so Lambda can import the user's app.
@@ -113,13 +152,42 @@ def _package_aws(artifacts_dir: Path, project_root: Path, source_module: str) ->
         shutil.rmtree(pkg_dir)
     pkg_dir.mkdir()
 
-    # Install deps from pyproject.toml into the Lambda package directory.
-    installer = _uv_or_pip()
-    target_flag = "--target" if installer[0] == "uv" else "-t"
-    _run(
-        [*installer, ".", target_flag, str(pkg_dir), "--quiet"],
-        cwd=artifacts_dir,
-    )
+    dependencies = _artifact_dependencies(artifacts_dir)
+    mesh_deps = [dep for dep in dependencies if dep.startswith("skaal-mesh")]
+    base_deps = [dep for dep in dependencies if dep not in mesh_deps]
+
+    if base_deps:
+        _run(
+            [sys.executable, "-m", "pip", "install", *base_deps, "-t", str(pkg_dir), "--quiet"],
+            cwd=artifacts_dir,
+        )
+
+    if mesh_deps:
+        python_version, abi = _lambda_python_tags(lambda_runtime)
+        platform = _lambda_platform(lambda_architecture)
+        _run(
+            [
+                sys.executable,
+                "-m",
+                "pip",
+                "install",
+                *mesh_deps,
+                "-t",
+                str(pkg_dir),
+                "--quiet",
+                "--platform",
+                platform,
+                "--only-binary=:all:",
+                "--implementation",
+                "cp",
+                "--python-version",
+                python_version,
+                "--abi",
+                abi,
+                "--no-deps",
+            ],
+            cwd=artifacts_dir,
+        )
 
     # Entry point.
     shutil.copy2(artifacts_dir / "handler.py", pkg_dir / "handler.py")

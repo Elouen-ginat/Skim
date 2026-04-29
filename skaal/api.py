@@ -411,6 +411,8 @@ def _build_stack_profile(cfg: SkaalSettings) -> dict[str, Any]:
     truthiness of the dict to decide whether to emit stack-specific config.
     """
     profile: dict[str, Any] = {}
+    if cfg.enable_mesh:
+        profile["enable_mesh"] = True
     if cfg.env:
         profile["env"] = dict(cfg.env)
     if cfg.invokers:

@@ -497,6 +497,7 @@ def generate_artifacts(
     wsgi_attribute: str | None = getattr(app, "_wsgi_attribute", None)
     is_wsgi = bool(wsgi_attribute)
     project_root = output_dir.parent
+    enable_mesh = bool((stack_profile or {}).get("enable_mesh"))
 
     # ── main.py ───────────────────────────────────────────────────────────────
     main_path = output_dir / "main.py"
@@ -524,16 +525,6 @@ def generate_artifacts(
         )
     generated.append(main_path)
 
-    # ── mesh bundle ───────────────────────────────────────────────────────────
-    # Copy Rust mesh source so `uv sync` can compile it inside the Cloud Run
-    # container without needing the project root available at build time.
-    mesh_src_dir = project_root / "mesh"
-    has_mesh = mesh_src_dir.is_dir() and (mesh_src_dir / "Cargo.toml").exists()
-    if has_mesh:
-        mesh_bundle_dir = output_dir / "mesh"
-        shutil.copytree(mesh_src_dir, mesh_bundle_dir, dirs_exist_ok=True)
-        generated.append(mesh_bundle_dir)
-
     # ── source package ────────────────────────────────────────────────────────
     top_pkg = source_module.split(".")[0]
     src_pkg_dir = project_root / top_pkg
@@ -560,7 +551,7 @@ def generate_artifacts(
         infra_deps.append("gunicorn>=22.0")
     else:
         infra_deps += ["uvicorn[standard]>=0.29", "starlette>=0.36"]
-    if has_mesh:
+    if enable_mesh:
         infra_deps.append("skaal-mesh")
     seen_deps: set[str] = set()
     for spec in plan.storage.values():
@@ -570,11 +561,8 @@ def generate_artifacts(
                 infra_deps.append(dep)
     user_pkgs = collect_user_packages(source_module)
     deps = list(dict.fromkeys(infra_deps + user_pkgs))
-    uv_sources: dict[str, str] = {"skaal-mesh": "./mesh"} if has_mesh else {}
     pyproject_path = output_dir / "pyproject.toml"
-    pyproject_path.write_text(
-        to_pyproject_toml(app.name, deps, uv_sources=uv_sources or None), encoding="utf-8"
-    )
+    pyproject_path.write_text(to_pyproject_toml(app.name, deps), encoding="utf-8")
     generated.append(pyproject_path)
 
     # ── Pulumi.yaml ───────────────────────────────────────────────────────────

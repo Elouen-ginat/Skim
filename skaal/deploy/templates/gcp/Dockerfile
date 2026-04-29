@@ -9,25 +9,11 @@ WORKDIR /app
 
 RUN pip install --no-cache-dir uv
 
-# Copy all artifact files first so the mesh/ presence check works correctly.
+# Copy all artifact files into the image.
 COPY . .
 
-# If a Rust mesh extension is bundled, install the Rust toolchain so uv can
-# compile it. The apt cache is mounted to avoid re-downloading packages.
-RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
-    --mount=type=cache,target=/var/lib/apt,sharing=locked \
-    if [ -d "mesh" ]; then \
-        apt-get update && apt-get install -y --no-install-recommends curl build-essential \
-        && curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile minimal; \
-    fi
-
-ENV PATH="/root/.cargo/bin:$${PATH}"
-
-# Install runtime dependencies. uv automatically compiles any local Rust
-# extension declared in pyproject.toml via [tool.uv.sources].
+# Install runtime dependencies.
 RUN --mount=type=cache,target=/root/.cache/uv \
-    --mount=type=cache,target=/root/.cargo/registry \
-    --mount=type=cache,target=/root/.cargo/git \
     uv sync --no-dev
 
 ENV PYTHONPATH=/app

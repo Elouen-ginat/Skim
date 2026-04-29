@@ -56,6 +56,7 @@ class DockerContainerProperties(TypedDict, total=False):
     image: str
     labels: list[DockerLabel]
     name: str
+    networkMode: str
     networksAdvanced: list[DockerNetworkAttachment]
     ports: list[DockerPortBinding]
     restart: str
