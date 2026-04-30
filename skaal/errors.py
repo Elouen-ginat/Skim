@@ -15,6 +15,8 @@ from __future__ import annotations
 class SkaalError(Exception):
     """Base class for every Skaal-originating exception."""
 
+    exit_code: int = 1
+
 
 # ── Backend / storage-layer errors ────────────────────────────────────────────
 
@@ -56,8 +58,23 @@ class SkaalPluginError(SkaalError):
     """A plugin registered via entry_points could not be loaded."""
 
 
+class PlanError(SkaalError):
+    """Plan generation failed."""
+
+
+class BuildError(SkaalError):
+    """Artifact generation failed."""
+
+
+class CatalogError(SkaalConfigError):
+    """Catalog resolution or validation failed."""
+
+
 __all__ = [
     "SkaalBackendError",
+    "BuildError",
+    "CatalogError",
+    "PlanError",
     "SkaalConfigError",
     "SkaalConflict",
     "SkaalError",

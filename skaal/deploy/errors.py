@@ -3,13 +3,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
+from skaal.errors import SkaalError
 from skaal.types import TargetName
 
 DeployPhase = Literal["preview", "up", "destroy", "package", "image"]
 
 
 @dataclass(slots=True)
-class DeployError(Exception):
+class DeployError(SkaalError):
     target: TargetName
     phase: DeployPhase
     message: str

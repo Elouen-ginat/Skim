@@ -5,6 +5,7 @@ Write it once. Scale it with a word.
 """
 
 from skaal import api, types
+from skaal._logging import ensure_null_handler as _ensure_null_handler
 from skaal.agent import Agent, agent
 from skaal.app import App
 from skaal.channel import Channel
@@ -41,6 +42,8 @@ from skaal.types import (
     RetryPolicy,
 )
 from skaal.vector import VectorStore
+
+_ensure_null_handler()
 
 __all__ = [
     # Python API namespace (run/plan/build/deploy/...)

@@ -1,7 +1,10 @@
 """Entry point for the `skaal` CLI."""
 
+from typing import Optional
+
 import typer
 
+from skaal.cli._logging import LogFormat, configure_cli_logging
 from skaal.cli.build_cmd import app as build_app
 from skaal.cli.catalog_cmd import app as catalog_app
 from skaal.cli.deploy_cmd import app as deploy_app
@@ -29,6 +32,31 @@ app.add_typer(diff_app, name="diff")
 app.add_typer(infra_app, name="infra")
 app.add_typer(migrate_app, name="migrate")
 app.add_typer(stacks_app, name="stacks")
+
+
+@app.callback()
+def _root(
+    verbose: int = typer.Option(
+        0,
+        "--verbose",
+        "-v",
+        count=True,
+        help="Increase log verbosity. -v=INFO, -vv=DEBUG.",
+    ),
+    quiet: bool = typer.Option(
+        False,
+        "--quiet",
+        "-q",
+        help="Suppress INFO logs. Errors still print.",
+    ),
+    log_format: Optional[LogFormat] = typer.Option(
+        None,
+        "--log-format",
+        help="text or json. Env: SKAAL_LOG_FORMAT.",
+        case_sensitive=False,
+    ),
+) -> None:
+    configure_cli_logging(verbose=verbose, quiet=quiet, fmt=log_format)
 
 
 if __name__ == "__main__":
