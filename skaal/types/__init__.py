@@ -52,6 +52,13 @@ from skaal.types.deploy import (
     TargetName,
 )
 from skaal.types.invoke import BeforeInvoke, InvokeContext, StreamFn
+from skaal.types.observability import (
+    EngineTelemetrySnapshot,
+    HeaderMap,
+    ReadinessState,
+    TelemetryConfig,
+    TelemetryExporter,
+)
 from skaal.types.schema import apply_migrations, migrate_from
 from skaal.types.storage import Page, SecondaryIndex
 
@@ -92,6 +99,11 @@ __all__ = [
     "StackOutputs",
     "StackProfile",
     "TargetName",
+    "TelemetryConfig",
+    "TelemetryExporter",
+    "EngineTelemetrySnapshot",
+    "ReadinessState",
+    "HeaderMap",
     # invoke
     "BeforeInvoke",
     "InvokeContext",

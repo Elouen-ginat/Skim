@@ -32,12 +32,15 @@ class SagaExecutor:
         saga: Saga,
         functions: dict[str, Any],
         store: Any | None = None,
+        metrics: dict[str, int] | None = None,
     ) -> None:
         self.saga = saga
         self.functions = functions
         self.store = store
+        self._metrics = metrics if metrics is not None else {"active_tasks": 0, "failures": 0}
 
     async def run(self, **kwargs: Any) -> dict[str, Any]:
+        self._metrics["active_tasks"] = self._metrics.get("active_tasks", 0) + 1
         saga_id = f"{self.saga.name}:{uuid.uuid4()}"
         progress: list[dict[str, Any]] = []
         state: dict[str, Any] = {
@@ -72,7 +75,10 @@ class SagaExecutor:
                 )
                 await self._persist(saga_id, state)
         except SkaalError:
+            self._metrics["failures"] = self._metrics.get("failures", 0) + 1
             raise
+        finally:
+            self._metrics["active_tasks"] = max(0, self._metrics.get("active_tasks", 1) - 1)
 
         state["status"] = "completed"
         state["finished_at"] = time.time()
@@ -128,6 +134,8 @@ class SagaEngine:
     def __init__(self, saga: Saga) -> None:
         self.saga = saga
         self._executor: SagaExecutor | None = None
+        self._running = False
+        self._metrics: dict[str, int] = {"active_tasks": 0, "failures": 0}
 
     async def start(self, context: Any) -> None:
         functions: dict[str, Any] = getattr(context, "functions", {}) or {}
@@ -138,16 +146,25 @@ class SagaEngine:
             if "saga" in name.lower() and "state" in name.lower():
                 store = backend
                 break
-        self._executor = SagaExecutor(self.saga, functions, store)
+        self._executor = SagaExecutor(self.saga, functions, store, self._metrics)
         # Expose on the runtime context so user code can ``await runtime.sagas["place_order"].run(...)``
         sagas: dict[str, SagaExecutor] = getattr(context, "sagas", None) or {}
         sagas[self.saga.name] = self._executor
         setattr(context, "sagas", sagas)
+        self._running = True
 
     async def stop(self) -> None:
         self._executor = None
+        self._running = False
 
     def executor(self) -> SagaExecutor:
         if self._executor is None:
             raise SkaalError("saga engine is not started")
         return self._executor
+
+    def snapshot_telemetry(self) -> dict[str, int | bool]:
+        return {
+            "running": self._running,
+            "failures": self._metrics.get("failures", 0),
+            "active_tasks": self._metrics.get("active_tasks", 0),
+        }

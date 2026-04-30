@@ -27,8 +27,8 @@ Legend:
 ## Observability and ops
 
 - 🟡 **Logging**. Substantially improved since the original "5 hits" audit. `skaal/_logging.py` and `skaal/cli/_logging.py` provide a real logger setup with `TextLogFormatter` and `JsonLogFormatter`; ~120 log calls now exist across the package. Backends remain mostly silent on errors — that's the residual gap.
-- ❌ **No metrics or tracing.** No OpenTelemetry, Prometheus, StatsD, or structlog integration. `skaal/components.py:20` *declares* a "prometheus" component type but the runtime emits nothing.
-- 🟡 **Health endpoints**. `GET /health` exists (`runtime/local.py:353, 491, 598, 796, 852`) and returns `{"status": "ok", "app": <name>}`. `/ready` (liveness vs. readiness) and `/metrics` are still missing — the latter blocks Prometheus scraping for k8s/Nomad.
+- ❌ **No telemetry pipeline.** No OpenTelemetry instrumentation, no OTLP export to SigNoz, and no tracing/metrics integration. `skaal/components.py:20` *declares* a "prometheus" component type but the runtime emits nothing.
+- 🟡 **Health endpoints**. `GET /health` exists (`runtime/local.py:353, 491, 598, 796, 852`) and returns `{"status": "ok", "app": <name>}`. `/ready` (liveness vs. readiness) is still missing, and there is still no OpenTelemetry export path for runtime/request telemetry.
 - ❌ **No ops runbook, no upgrade/compat policy, no production deploy guide.** `docs/design/` has 13 ADRs; there is no `RUNBOOK.md`, `UPGRADE.md`, `CHANGELOG.md`, or `DEPLOYMENT.md`.
 
 ## Security
@@ -45,8 +45,10 @@ Legend:
 
 The two highest-impact items still on this list:
 
+Tracked together in [ADR 017](./design/017-production-runtime-baseline-implementation-plan.md).
+
 1. **Auth on `@app.function` endpoints** + a wired `APIGateway.auth` consumer in deploy targets. Today the runtime is "internal use only" by accident.
-2. **`/ready` + `/metrics`** with at least Prometheus exposition for the request path and engine queues.
+2. **`/ready` + typed OpenTelemetry export** to SigNoz for the request path and engine lifecycle, with the config surfaces defined in `skaal.types` instead of `Any`-shaped dict plumbing.
 
 Everything else is a strong-alpha project's normal hardening tail: backend retry, secrets injection, real-cloud test, runbooks, license decision.
 

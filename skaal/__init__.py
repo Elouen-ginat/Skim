@@ -43,11 +43,14 @@ from skaal.types import (
     BlobObject,
     Bulkhead,
     CircuitBreaker,
+    EngineTelemetrySnapshot,
     InvokeContext,
     Page,
     RateLimitPolicy,
+    ReadinessState,
     RetryPolicy,
     SecondaryIndex,
+    TelemetryConfig,
 )
 from skaal.vector import VectorStore
 
@@ -105,10 +108,13 @@ __all__ = [
     # Resilience types
     "Bulkhead",
     "CircuitBreaker",
+    "EngineTelemetrySnapshot",
     "InvokeContext",
     "RateLimitPolicy",
+    "ReadinessState",
     "RetryPolicy",
     "SecondaryIndex",
+    "TelemetryConfig",
     # Type namespace
     "types",
 ]

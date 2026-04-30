@@ -3,8 +3,14 @@ from __future__ import annotations
 from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Any, Protocol, TypeAlias, TypeVar
 
+from skaal.types.observability import HeaderMap
+
 T = TypeVar("T")
 T_co = TypeVar("T_co", covariant=True)
+
+
+class AuthClaims(Protocol):
+    def get(self, key: str, default: Any | None = None) -> Any: ...
 
 
 class InvokeContext(Protocol):
@@ -14,6 +20,11 @@ class InvokeContext(Protocol):
     kwargs: dict[str, Any]
     is_stream: bool
     attempt: int
+    headers: HeaderMap
+    auth_claims: AuthClaims | None
+    auth_subject: str | None
+    trace_id: str | None
+    span_id: str | None
 
 
 BeforeInvoke: TypeAlias = Callable[[InvokeContext], Awaitable[None]]

@@ -55,12 +55,13 @@ def handler(event, context):
     # ── Normal HTTP invocation via API Gateway ────────────────────────────────
     method = event.get("requestContext", {}).get("http", {}).get("method", "POST")
     path = event.get("rawPath", "/")
+    headers = event.get("headers") or {}
     raw_body = event.get("body") or ""
     if event.get("isBase64Encoded"):
         body = base64.b64decode(raw_body)
     else:
         body = raw_body.encode() if isinstance(raw_body, str) else raw_body
-    result, status = asyncio.run(_runtime._dispatch(method, path, body))
+    result, status = asyncio.run(_runtime._dispatch(method, path, body, headers=headers))
     return {
         "statusCode": status,
         "headers": {"Content-Type": "application/json"},

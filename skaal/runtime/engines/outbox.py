@@ -23,6 +23,9 @@ class OutboxEngine:
         self.poll_interval = poll_interval
         self._task: asyncio.Task[None] | None = None
         self._stopping = asyncio.Event()
+        self._running = False
+        self._failures = 0
+        self._queue_depth = 0
 
     async def start(self, context: Any) -> None:
         # Install a send helper on the outbox so user code has a one-liner:
@@ -30,6 +33,7 @@ class OutboxEngine:
         if not hasattr(self.outbox, "write"):
             setattr(self.outbox, "write", self._write_factory())
         self._task = asyncio.create_task(self._relay_loop(), name=f"outbox:{self._outbox_name()}")
+        self._running = True
 
     async def stop(self) -> None:
         self._stopping.set()
@@ -40,6 +44,7 @@ class OutboxEngine:
             except (asyncio.CancelledError, Exception):  # noqa: BLE001
                 pass
             self._task = None
+        self._running = False
 
     # ── Writer + relay ───────────────────────────────────────────────────────
 
@@ -70,7 +75,11 @@ class OutboxEngine:
                 try:
                     pending = await store_backend.scan("outbox:")
                 except Exception:  # noqa: BLE001
+                    self._failures += 1
                     pending = []
+                self._queue_depth = sum(
+                    1 for _, row in pending if isinstance(row, dict) and not row.get("delivered")
+                )
                 delivered_any = False
                 for key, row in sorted(pending):
                     if not isinstance(row, dict) or row.get("delivered"):
@@ -84,6 +93,7 @@ class OutboxEngine:
                             continue
                     except Exception:  # noqa: BLE001
                         # Retry on next tick — at-least-once delivery.
+                        self._failures += 1
                         continue
 
                     # Mark delivered.  For at-least-once the safest thing is to
@@ -96,6 +106,7 @@ class OutboxEngine:
                             row["delivered"] = True
                             await store_backend.set(key, row)
                     except Exception:  # noqa: BLE001
+                        self._failures += 1
                         continue
                     delivered_any = True
                 if not delivered_any:
@@ -105,6 +116,13 @@ class OutboxEngine:
                         continue
         except asyncio.CancelledError:
             return
+
+    def snapshot_telemetry(self) -> dict[str, int | bool]:
+        return {
+            "running": self._running,
+            "failures": self._failures,
+            "queue_depth": self._queue_depth,
+        }
 
     def _outbox_name(self) -> str:
         return getattr(self.outbox.storage, "__name__", "outbox")

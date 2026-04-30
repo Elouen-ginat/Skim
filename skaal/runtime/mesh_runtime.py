@@ -24,7 +24,14 @@ import inspect
 import json
 import logging
 import traceback
-from typing import Any, cast
+from collections.abc import Mapping
+from typing import TYPE_CHECKING, Any, cast
+
+if TYPE_CHECKING:
+    import httpx
+
+    from skaal.runtime.telemetry import RuntimeTelemetry
+    from skaal.types import ReadinessState, TelemetryConfig
 
 _MAX_BODY_SIZE = 10 * 1024 * 1024
 log = logging.getLogger("skaal.runtime")
@@ -58,7 +65,13 @@ class MeshRuntime:
         plan_json: str = "",
         node_id: str | None = None,
         backend_overrides: dict[str, Any] | None = None,
+        telemetry: "TelemetryConfig | None" = None,
+        telemetry_runtime: "RuntimeTelemetry | None" = None,
+        auth_http_client: "httpx.AsyncClient | None" = None,
     ) -> None:
+        from skaal.runtime.auth import JwtVerifier, resolve_gateway_auth
+        from skaal.runtime.telemetry import RuntimeTelemetry, resolve_telemetry_config
+
         try:
             import skaal_mesh
         except ImportError as exc:
@@ -78,6 +91,10 @@ class MeshRuntime:
         self._mesh = cast(Any, skaal_mesh).SkaalMesh(app.name, plan_json)
         self._backends: dict[str, Any] = {}
         self._backend_overrides = backend_overrides or {}
+        self._started = False
+        self._startup_lock: Any | None = None
+        self._startup_error: str | None = None
+        self._readiness_state: ReadinessState = "starting"
         self._patch_storage()
         self._patch_channels()
         self._function_cache = self._collect_functions()
@@ -93,6 +110,15 @@ class MeshRuntime:
                 invoker = wrap_handler(fn, fallback_lookup=self._function_cache.get)
                 _shared_invokers[id(fn)] = invoker
             self._invokers[name] = invoker
+        self._auth_config = resolve_gateway_auth(app)
+        self._auth_verifier = (
+            JwtVerifier(self._auth_config, http_client=auth_http_client)
+            if self._auth_config is not None
+            else None
+        )
+        resolved_telemetry = resolve_telemetry_config(app, telemetry)
+        self._telemetry = telemetry_runtime or RuntimeTelemetry(app.name, resolved_telemetry)
+        self._telemetry.bind_runtime(self)
         self.app._bind_runtime(self)
 
     # ── Setup (mirrors LocalRuntime) ──────────────────────────────────────────
@@ -176,7 +202,84 @@ class MeshRuntime:
         target = path[len(_SKAAL_INVOKE_PREFIX) :]
         return target or None
 
-    async def invoke(self, function_name: str, kwargs: dict[str, Any]) -> Any:
+    @property
+    def readiness_state(self) -> ReadinessState:
+        return self._readiness_state
+
+    async def ensure_started(self) -> None:
+        import asyncio
+
+        if self._started:
+            return
+        if self._startup_lock is None:
+            self._startup_lock = asyncio.Lock()
+
+        async with self._startup_lock:
+            if self._started:
+                return
+            self._readiness_state = "starting"
+            self._startup_error = None
+            try:
+                if self._auth_verifier is not None and not self._auth_verifier.ready:
+                    await self._auth_verifier.initialize()
+                await self._start_engines()
+            except Exception as exc:
+                self._startup_error = str(exc)
+                self._readiness_state = "degraded"
+                raise
+            self._started = True
+            self._readiness_state = "ready"
+
+    def _readiness_payload(self) -> dict[str, Any]:
+        auth_ready = self._auth_verifier.ready if self._auth_verifier is not None else True
+        checks = {
+            "engines_started": self._started,
+            "auth": auth_ready,
+            "telemetry": self._telemetry.status(),
+        }
+        if self._startup_error is not None:
+            checks["error"] = self._startup_error
+        return {
+            "status": self._readiness_state,
+            "app": self.app.name,
+            "checks": checks,
+            "mesh": json.loads(self._mesh.health_snapshot()),
+        }
+
+    async def _authenticate_request(
+        self, headers: Mapping[str, str]
+    ) -> tuple[dict[str, Any] | None, str | None]:
+        from skaal.runtime.auth import RuntimeAuthFailure
+
+        if self._auth_verifier is None:
+            self._telemetry.record_auth_result("skipped")
+            return None, None
+
+        try:
+            claims = await self._auth_verifier.verify_headers(headers)
+        except RuntimeAuthFailure:
+            self._telemetry.record_auth_result("rejected")
+            raise
+
+        if claims is None:
+            self._telemetry.record_auth_result("skipped")
+            return None, None
+
+        subject = claims.get("sub")
+        self._telemetry.record_auth_result("accepted")
+        return claims, subject if isinstance(subject, str) else None
+
+    async def invoke(
+        self,
+        function_name: str,
+        kwargs: dict[str, Any],
+        *,
+        headers: Mapping[str, str] | None = None,
+        auth_claims: Mapping[str, Any] | None = None,
+        auth_subject: str | None = None,
+        trace_id: str | None = None,
+        span_id: str | None = None,
+    ) -> Any:
         invoker = self._invokers.get(function_name)
         if invoker is None:
             raise KeyError(
@@ -189,10 +292,25 @@ class MeshRuntime:
                 payload,
                 is_stream=False,
                 attempt=attempt,
+                headers=headers,
+                auth_claims=auth_claims,
+                auth_subject=auth_subject,
+                trace_id=trace_id,
+                span_id=span_id,
             ),
         )
 
-    def invoke_stream(self, function_name: str, kwargs: dict[str, Any]) -> Any:
+    def invoke_stream(
+        self,
+        function_name: str,
+        kwargs: dict[str, Any],
+        *,
+        headers: Mapping[str, str] | None = None,
+        auth_claims: Mapping[str, Any] | None = None,
+        auth_subject: str | None = None,
+        trace_id: str | None = None,
+        span_id: str | None = None,
+    ) -> Any:
         invoker = self._invokers.get(function_name)
         if invoker is None:
             raise KeyError(
@@ -205,67 +323,129 @@ class MeshRuntime:
                 payload,
                 is_stream=True,
                 attempt=attempt,
+                headers=headers,
+                auth_claims=auth_claims,
+                auth_subject=auth_subject,
+                trace_id=trace_id,
+                span_id=span_id,
             ),
         )
 
     # ── Mesh-aware dispatch ───────────────────────────────────────────────────
 
-    async def _dispatch(self, method: str, path: str, body: bytes) -> tuple[Any, int]:
+    async def _dispatch(
+        self,
+        method: str,
+        path: str,
+        body: bytes,
+        headers: Mapping[str, str] | None = None,
+    ) -> tuple[Any, int]:
+        from skaal.runtime.auth import RuntimeAuthFailure
+
         funcs = self._function_cache
+        request_headers = dict(headers or {})
+        request_span = self._telemetry.request_started(method, path, request_headers)
+        status = 500
+        telemetry_error: Exception | None = None
 
-        if method == "GET" and path in ("/", ""):
-            public = sorted(self._public_functions())
-            return {
-                "app": self.app.name,
-                "endpoints": [
-                    {"path": f"{_SKAAL_INVOKE_PREFIX}{n}", "function": n} for n in public
-                ],
-                "storage": list(self._backends.keys()),
-                "mesh": json.loads(self._mesh.health_snapshot()),
-            }, 200
+        try:
+            if method == "GET" and path in ("/", ""):
+                public = sorted(self._public_functions())
+                status = 200
+                return {
+                    "app": self.app.name,
+                    "endpoints": [
+                        {"path": f"{_SKAAL_INVOKE_PREFIX}{n}", "function": n} for n in public
+                    ],
+                    "storage": list(self._backends.keys()),
+                    "mesh": json.loads(self._mesh.health_snapshot()),
+                }, status
 
-        if method == "GET" and path == "/health":
-            return {
-                "status": "ok",
-                "app": self.app.name,
-                "mesh": json.loads(self._mesh.health_snapshot()),
-            }, 200
+            if method == "GET" and path == "/health":
+                status = 200
+                return {
+                    "status": "ok",
+                    "app": self.app.name,
+                    "mesh": json.loads(self._mesh.health_snapshot()),
+                }, status
 
-        if method == "POST":
-            fn_name = self._invocation_target(path)
-            if fn_name is None:
-                return {"error": f"No function route for {path!r}"}, 404
-            if fn_name not in funcs:
-                return {"error": f"No function {fn_name!r}. Available: {sorted(funcs)}"}, 404
+            if method == "GET" and path == "/ready":
+                payload = self._readiness_payload()
+                status = 200 if self._readiness_state == "ready" else 503
+                return payload, status
 
-            fn = funcs[fn_name]
-            kwargs: dict[str, Any] = {}
-            if body:
+            if method == "POST":
                 try:
-                    kwargs = json.loads(body)
-                    if not isinstance(kwargs, dict):
-                        return {"error": "Request body must be a JSON object"}, 400
-                except json.JSONDecodeError as exc:
-                    return {"error": f"Invalid JSON: {exc}"}, 400
+                    await self.ensure_started()
+                except Exception:
+                    status = 503
+                    return self._readiness_payload(), status
 
-            invoker = self._invokers.get(fn_name)
-            try:
-                if invoker is not None:
-                    result = await self.invoke(fn_name, kwargs)
-                else:
-                    result = await fn(**kwargs) if inspect.iscoroutinefunction(fn) else fn(**kwargs)
-                return result, 200
-            except TypeError as exc:
-                return {"error": f"Bad arguments for {fn_name!r}: {exc}"}, 422
-            except Exception as exc:  # noqa: BLE001
-                return {"error": str(exc), "traceback": traceback.format_exc()}, 500
+                fn_name = self._invocation_target(path)
+                if fn_name is None:
+                    status = 404
+                    return {"error": f"No function route for {path!r}"}, status
+                if fn_name not in funcs:
+                    status = 404
+                    return {"error": f"No function {fn_name!r}. Available: {sorted(funcs)}"}, status
 
-        return {"error": f"Method {method} not allowed"}, 405
+                try:
+                    auth_claims, auth_subject = await self._authenticate_request(request_headers)
+                except RuntimeAuthFailure as exc:
+                    status = exc.status_code
+                    return {"error": exc.message}, status
+
+                fn = funcs[fn_name]
+                kwargs: dict[str, Any] = {}
+                if body:
+                    try:
+                        kwargs = json.loads(body)
+                        if not isinstance(kwargs, dict):
+                            status = 400
+                            return {"error": "Request body must be a JSON object"}, status
+                    except json.JSONDecodeError as exc:
+                        status = 400
+                        return {"error": f"Invalid JSON: {exc}"}, status
+
+                invoker = self._invokers.get(fn_name)
+                try:
+                    if invoker is not None:
+                        result = await self.invoke(
+                            fn_name,
+                            kwargs,
+                            headers=request_headers,
+                            auth_claims=auth_claims,
+                            auth_subject=auth_subject,
+                            trace_id=request_span.trace_id,
+                            span_id=request_span.span_id,
+                        )
+                    else:
+                        result = (
+                            await fn(**kwargs) if inspect.iscoroutinefunction(fn) else fn(**kwargs)
+                        )
+                    status = 200
+                    return result, status
+                except TypeError as exc:
+                    status = 422
+                    return {"error": f"Bad arguments for {fn_name!r}: {exc}"}, status
+                except Exception as exc:  # noqa: BLE001
+                    telemetry_error = exc
+                    status = 500
+                    return {"error": str(exc), "traceback": traceback.format_exc()}, status
+
+            status = 405
+            return {"error": f"Method {method} not allowed"}, status
+        finally:
+            self._telemetry.request_finished(
+                request_span,
+                status_code=status,
+                error=telemetry_error,
+            )
 
     # ── Serve (mirrors LocalRuntime._serve_skaal) ─────────────────────────────
 
     async def serve(self) -> None:
-        await self._start_engines()
+        await self.ensure_started()
         try:
             await self._serve_skaal()
         finally:
@@ -274,6 +454,8 @@ class MeshRuntime:
     async def _start_engines(self) -> None:
         from skaal.runtime.engines import start_engines_for
 
+        if self._engines:
+            return
         self._engines = await start_engines_for(self.app, self)
 
     @property
@@ -295,9 +477,13 @@ class MeshRuntime:
             with contextlib.suppress(Exception):
                 await engine.stop()
         self._engines = []
+        self._started = False
+        self._readiness_state = "stopped"
         for backend in self._backends.values():
             with contextlib.suppress(Exception):
                 await backend.close()
+        with contextlib.suppress(Exception):
+            self._telemetry.shutdown()
         self.app._unbind_runtime(self)
 
     async def _serve_skaal(self) -> None:
@@ -322,13 +508,19 @@ class MeshRuntime:
 
         async def _handle(request: StarletteRequest) -> JSONResponse:
             body = await request.body()
-            result, status = await self._dispatch(request.method, request.url.path, body)
+            result, status = await self._dispatch(
+                request.method,
+                request.url.path,
+                body,
+                headers=dict(request.headers.items()),
+            )
             return JSONResponse(result, status_code=status)
 
         asgi_app = Starlette(
             routes=[
                 Route("/", _handle, methods=["GET"]),
                 Route("/health", _handle, methods=["GET"]),
+                Route("/ready", _handle, methods=["GET"]),
                 Route("/{path:path}", _handle, methods=["GET", "POST"]),
             ]
         )

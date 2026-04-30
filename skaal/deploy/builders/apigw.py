@@ -51,11 +51,15 @@ def add_aws_apigw_resources(
         "protocolType": "HTTP",
     }
     cors_origins = gw_comp.config.get("cors_origins") if gw_comp else None
+    auth_header = "Authorization"
+    if gw_comp:
+        auth_cfg = gw_comp.config.get("auth") or {}
+        auth_header = str(auth_cfg.get("header") or "Authorization")
     if cors_origins:
         api_props["corsConfiguration"] = {
             "allowOrigins": cors_origins,
             "allowMethods": ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
-            "allowHeaders": ["Content-Type", "Authorization"],
+            "allowHeaders": sorted({"Content-Type", "Authorization", auth_header}),
         }
     resources["api"] = {"type": "aws:apigatewayv2:Api", "properties": api_props}
 
@@ -81,7 +85,7 @@ def add_aws_apigw_resources(
     authorizer_ref: str | None = None
     if gw_comp:
         auth_cfg = gw_comp.config.get("auth") or {}
-        if auth_cfg.get("provider") == "jwt":
+        if auth_cfg.get("provider") == "jwt" and auth_cfg.get("required", True):
             jwt_conf: dict[str, Any] = {"issuer": auth_cfg.get("issuer", "")}
             audience = auth_cfg.get("audience")
             if audience:
@@ -91,7 +95,7 @@ def add_aws_apigw_resources(
                 "properties": {
                     "apiId": "${api.id}",
                     "authorizerType": "JWT",
-                    "identitySources": ["$request.header.Authorization"],
+                    "identitySources": [f"$request.header.{auth_header}"],
                     "jwtConfiguration": jwt_conf,
                     "name": f"{app.name}-jwt",
                 },
@@ -195,7 +199,7 @@ def _build_openapi_spec(
                 )
             parts.append('      responses:\n        "200":\n          description: "Success"\n')
 
-    if auth and auth.get("provider") == "jwt":
+    if auth and auth.get("provider") == "jwt" and auth.get("required", True):
         issuer = auth.get("issuer") or ""
         audience = auth.get("audience") or ""
         parts.append(

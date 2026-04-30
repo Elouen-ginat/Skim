@@ -154,16 +154,19 @@ def build_kong_config(
 
     if cors_origins:
         origins = ", ".join(f'"{origin}"' for origin in cors_origins)
+        auth_header = "Authorization"
+        if auth:
+            auth_header = str(auth.get("header") or "Authorization")
         lines += [
             "  - name: cors",
             "    config:",
             f"      origins: [{origins}]",
             "      methods: [GET, POST, PUT, DELETE, PATCH, OPTIONS]",
-            "      headers: [Content-Type, Authorization]",
+            f"      headers: [Content-Type, Authorization, {auth_header}]",
             "      preflight_continue: false",
         ]
 
-    if auth and auth.get("provider") == "jwt":
+    if auth and auth.get("provider") == "jwt" and auth.get("required", True):
         lines += [
             "  - name: jwt",
             "    config:",

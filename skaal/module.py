@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import weakref
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping
 from types import SimpleNamespace
 
 # TYPE_CHECKING import to avoid circular deps at runtime
@@ -871,12 +871,22 @@ class Module:
         *,
         is_stream: bool,
         attempt: int,
+        headers: Mapping[str, str] | None = None,
+        auth_claims: Mapping[str, Any] | None = None,
+        auth_subject: str | None = None,
+        trace_id: str | None = None,
+        span_id: str | None = None,
     ) -> dict[str, Any]:
         ctx = SimpleNamespace(
             function_name=function_name,
             kwargs=dict(kwargs),
             is_stream=is_stream,
             attempt=attempt,
+            headers=dict(headers or {}),
+            auth_claims=dict(auth_claims or {}) or None,
+            auth_subject=auth_subject,
+            trace_id=trace_id,
+            span_id=span_id,
         )
         for hook in self._before_invoke:
             await hook(ctx)

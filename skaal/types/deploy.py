@@ -43,6 +43,8 @@ class AuthConfig(TypedDict, total=False):
     provider: Literal["jwt"]
     issuer: str
     audience: str
+    header: str
+    required: bool
 
 
 class RateLimitConfig(TypedDict, total=False):
