@@ -13,17 +13,15 @@ import inspect
 from typing import Any
 
 from skaal.patterns import Projection
+from skaal.runtime.engines.base import BackgroundTaskEngine
 
 
-class ProjectionEngine:
+class ProjectionEngine(BackgroundTaskEngine):
     """Background worker for a single :class:`skaal.patterns.Projection`."""
 
     def __init__(self, projection: Projection[Any, Any]) -> None:
+        super().__init__()
         self.projection = projection
-        self._task: asyncio.Task[None] | None = None
-        self._stopping = asyncio.Event()
-        self._running = False
-        self._failures = 0
 
     async def start(self, context: Any) -> None:
         handler_name = self.projection.handler
@@ -34,10 +32,10 @@ class ProjectionEngine:
             # tests may spin up an engine without a handler registered.
             handler = _missing_handler(handler_name)
 
-        self._task = asyncio.create_task(
-            self._run(handler), name=f"projection:{self.projection.handler}"
+        await self._start_background(
+            lambda: self._run(handler),
+            name=f"projection:{self.projection.handler}",
         )
-        self._running = True
 
     async def _run(self, handler: Any) -> None:
         group = f"projection:{self.projection.handler}"
@@ -65,20 +63,6 @@ class ProjectionEngine:
                     pass
         except asyncio.CancelledError:
             return
-
-    async def stop(self) -> None:
-        self._stopping.set()
-        if self._task is not None:
-            self._task.cancel()
-            try:
-                await self._task
-            except (asyncio.CancelledError, Exception):  # noqa: BLE001
-                pass
-            self._task = None
-        self._running = False
-
-    def snapshot_telemetry(self) -> dict[str, int | bool]:
-        return {"running": self._running, "failures": self._failures}
 
 
 def _missing_handler(name: str) -> Any:

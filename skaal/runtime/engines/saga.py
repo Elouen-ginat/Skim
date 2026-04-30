@@ -18,10 +18,27 @@ import asyncio
 import inspect
 import time
 import uuid
-from typing import Any
+from collections.abc import Mapping
+from typing import Any, TypedDict, cast
+
+from langgraph.graph import END, START, StateGraph
 
 from skaal.errors import SkaalError
 from skaal.patterns import Saga
+
+
+class SagaState(TypedDict, total=False):
+    saga_id: str
+    name: str
+    status: str
+    started_at: float
+    finished_at: float
+    progress: list[dict[str, Any]]
+    input: dict[str, Any]
+    failed_step: str
+    error: str
+    step_index: int
+    compensation_index: int
 
 
 class SagaExecutor:
@@ -38,12 +55,29 @@ class SagaExecutor:
         self.functions = functions
         self.store = store
         self._metrics = metrics if metrics is not None else {"active_tasks": 0, "failures": 0}
+        workflow = StateGraph(SagaState)
+        workflow.add_node("step", self._run_step_node)
+        workflow.add_node("compensate", self._run_compensation_node)
+        workflow.add_node("finish", self._finish_node)
+        workflow.add_edge(START, "step")
+        workflow.add_conditional_edges(
+            "step",
+            self._route_after_step,
+            {"step": "step", "compensate": "compensate", "finish": "finish"},
+        )
+        workflow.add_conditional_edges(
+            "compensate",
+            self._route_after_compensation,
+            {"compensate": "compensate", "finish": "finish"},
+        )
+        workflow.add_edge("finish", END)
+        self._workflow = workflow.compile()
 
     async def run(self, **kwargs: Any) -> dict[str, Any]:
         self._metrics["active_tasks"] = self._metrics.get("active_tasks", 0) + 1
         saga_id = f"{self.saga.name}:{uuid.uuid4()}"
         progress: list[dict[str, Any]] = []
-        state: dict[str, Any] = {
+        state: SagaState = {
             "saga_id": saga_id,
             "name": self.saga.name,
             "status": "running",
@@ -54,36 +88,21 @@ class SagaExecutor:
         await self._persist(saga_id, state)
 
         try:
-            for step in self.saga.steps:
-                fn = self._lookup(step.function)
-                call = self._invoke(fn, step.timeout_ms, kwargs)
-                try:
-                    result = await call
-                except Exception as exc:  # noqa: BLE001
-                    state["status"] = "compensating"
-                    state["failed_step"] = step.function
-                    state["error"] = repr(exc)
-                    await self._persist(saga_id, state)
-                    await self._compensate(progress, kwargs)
-                    state["status"] = "failed"
-                    await self._persist(saga_id, state)
-                    raise SkaalError(
-                        f"saga {self.saga.name!r} failed at {step.function!r}: {exc}"
-                    ) from exc
-                progress.append(
-                    {"step": step.function, "compensate": step.compensate, "result": result}
-                )
-                await self._persist(saga_id, state)
-        except SkaalError:
+            state["step_index"] = 0
+            state["compensation_index"] = -1
+            final_state = await self._workflow.ainvoke(state)
+        except Exception:
             self._metrics["failures"] = self._metrics.get("failures", 0) + 1
             raise
         finally:
             self._metrics["active_tasks"] = max(0, self._metrics.get("active_tasks", 1) - 1)
 
-        state["status"] = "completed"
-        state["finished_at"] = time.time()
-        await self._persist(saga_id, state)
-        return state
+        if final_state.get("status") == "failed":
+            self._metrics["failures"] = self._metrics.get("failures", 0) + 1
+            raise SkaalError(
+                f"saga {self.saga.name!r} failed at {final_state.get('failed_step')!r}: {final_state.get('error')}"
+            )
+        return final_state
 
     # ── Internal helpers ──────────────────────────────────────────────────────
 
@@ -103,26 +122,79 @@ class SagaExecutor:
             return await _call()
         return await asyncio.wait_for(_call(), timeout=timeout_ms / 1000.0)
 
-    async def _compensate(self, progress: list[dict[str, Any]], kwargs: dict[str, Any]) -> None:
-        for record in reversed(progress):
-            fn = self.functions.get(record["compensate"])
-            if fn is None:
-                continue
-            try:
-                if inspect.iscoroutinefunction(fn):
-                    await fn(**kwargs)
-                else:
-                    fn(**kwargs)
-            except Exception:  # noqa: BLE001
-                # Compensations are best-effort; a failure here is logged
-                # via the persisted state — don't abort the rest of the rollback.
-                continue
+    async def _run_step_node(self, state: SagaState) -> SagaState:
+        step_index = int(state.get("step_index", 0))
+        if step_index >= len(self.saga.steps):
+            state["status"] = "completed"
+            state["finished_at"] = time.time()
+            await self._persist(cast(str, state["saga_id"]), state)
+            return state
 
-    async def _persist(self, saga_id: str, state: dict[str, Any]) -> None:
+        step = self.saga.steps[step_index]
+        fn = self._lookup(step.function)
+        try:
+            result = await self._invoke(fn, step.timeout_ms, cast(dict[str, Any], state["input"]))
+        except Exception as exc:  # noqa: BLE001
+            state["status"] = "compensating"
+            state["failed_step"] = step.function
+            state["error"] = repr(exc)
+            state["compensation_index"] = len(cast(list[dict[str, Any]], state["progress"])) - 1
+            await self._persist(cast(str, state["saga_id"]), state)
+            return state
+
+        cast(list[dict[str, Any]], state["progress"]).append(
+            {"step": step.function, "compensate": step.compensate, "result": result}
+        )
+        state["step_index"] = step_index + 1
+        if int(state["step_index"]) >= len(self.saga.steps):
+            state["status"] = "completed"
+            state["finished_at"] = time.time()
+        await self._persist(cast(str, state["saga_id"]), state)
+        return state
+
+    async def _run_compensation_node(self, state: SagaState) -> SagaState:
+        compensation_index = int(state.get("compensation_index", -1))
+        progress = cast(list[dict[str, Any]], state["progress"])
+        if compensation_index >= 0:
+            record = progress[compensation_index]
+            fn = self.functions.get(record["compensate"])
+            if fn is not None:
+                try:
+                    if inspect.iscoroutinefunction(fn):
+                        await fn(**cast(dict[str, Any], state["input"]))
+                    else:
+                        fn(**cast(dict[str, Any], state["input"]))
+                except Exception:  # noqa: BLE001
+                    pass
+            state["compensation_index"] = compensation_index - 1
+
+        if int(state.get("compensation_index", -1)) < 0:
+            state["status"] = "failed"
+            state["finished_at"] = time.time()
+        await self._persist(cast(str, state["saga_id"]), state)
+        return state
+
+    @staticmethod
+    async def _finish_node(state: SagaState) -> SagaState:
+        return state
+
+    def _route_after_step(self, state: SagaState) -> str:
+        if state.get("status") == "compensating":
+            return "compensate"
+        if state.get("status") == "completed":
+            return "finish"
+        return "step"
+
+    def _route_after_compensation(self, state: SagaState) -> str:
+        if int(state.get("compensation_index", -1)) >= 0:
+            return "compensate"
+        return "finish"
+
+    async def _persist(self, saga_id: str, state: Mapping[str, Any]) -> None:
         if self.store is None:
             return
         try:
-            await self.store.set(saga_id, state)
+            await self.store.set(saga_id, dict(state))
         except Exception:  # noqa: BLE001
             # Persistence is best-effort — saga still runs without it.
             pass

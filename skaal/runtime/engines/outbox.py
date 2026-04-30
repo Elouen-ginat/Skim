@@ -13,18 +13,16 @@ import time
 from typing import Any
 
 from skaal.patterns import Outbox
+from skaal.runtime.engines.base import BackgroundTaskEngine
 
 
-class OutboxEngine:
+class OutboxEngine(BackgroundTaskEngine):
     """Background relay that publishes pending outbox rows to a channel."""
 
     def __init__(self, outbox: Outbox[Any], poll_interval: float = 0.05) -> None:
+        super().__init__()
         self.outbox = outbox
         self.poll_interval = poll_interval
-        self._task: asyncio.Task[None] | None = None
-        self._stopping = asyncio.Event()
-        self._running = False
-        self._failures = 0
         self._queue_depth = 0
 
     async def start(self, context: Any) -> None:
@@ -32,19 +30,7 @@ class OutboxEngine:
         #     await orders_outbox.write(key, payload)
         if not hasattr(self.outbox, "write"):
             setattr(self.outbox, "write", self._write_factory())
-        self._task = asyncio.create_task(self._relay_loop(), name=f"outbox:{self._outbox_name()}")
-        self._running = True
-
-    async def stop(self) -> None:
-        self._stopping.set()
-        if self._task is not None:
-            self._task.cancel()
-            try:
-                await self._task
-            except (asyncio.CancelledError, Exception):  # noqa: BLE001
-                pass
-            self._task = None
-        self._running = False
+        await self._start_background(self._relay_loop, name=f"outbox:{self._outbox_name()}")
 
     # ── Writer + relay ───────────────────────────────────────────────────────
 
@@ -118,11 +104,7 @@ class OutboxEngine:
             return
 
     def snapshot_telemetry(self) -> dict[str, int | bool]:
-        return {
-            "running": self._running,
-            "failures": self._failures,
-            "queue_depth": self._queue_depth,
-        }
+        return {**super().snapshot_telemetry(), "queue_depth": self._queue_depth}
 
     def _outbox_name(self) -> str:
         return getattr(self.outbox.storage, "__name__", "outbox")
