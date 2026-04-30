@@ -99,8 +99,10 @@ class MeshRuntime:
 
     def _patch_storage(self) -> None:
         from skaal.backends.chroma_backend import ChromaVectorBackend
+        from skaal.backends.file_blob_backend import FileBlobBackend
         from skaal.backends.local_backend import LocalMap
         from skaal.backends.sqlite_backend import SqliteBackend
+        from skaal.blob import BlobStore, is_blob_model
         from skaal.relational import is_relational_model, wire_relational_model
         from skaal.storage import Store
         from skaal.vector import VectorStore, is_vector_model
@@ -123,6 +125,12 @@ class MeshRuntime:
                 backend = backend or ChromaVectorBackend("skaal_chroma", namespace=qname)
                 self._backends[qname] = backend
                 cast(type[VectorStore[Any]], obj).wire(backend)
+                continue
+
+            if is_blob_model(obj):
+                backend = backend or FileBlobBackend(".skaal/blobs", namespace=qname)
+                self._backends[qname] = backend
+                cast(type[BlobStore], obj).wire(backend)
                 continue
 
             if issubclass(obj, Store):

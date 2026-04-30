@@ -77,9 +77,11 @@ LOCAL_SERVICE_SPECS: dict[str, LocalServiceSpec] = {
 LOCAL_FALLBACK: dict[tuple[str, str], str] = {
     ("dynamodb", "kv"): "local-map",
     ("firestore", "kv"): "local-map",
+    ("gcs", "blob"): "local-blob",
     ("cloud-sql-postgres", "kv"): "local-redis",
     ("cloud-sql-postgres", "relational"): "sqlite",
     ("cloud-sql-pgvector", "vector"): "chroma-local",
     ("memorystore-redis", "kv"): "local-redis",
     ("rds-pgvector", "vector"): "chroma-local",
+    ("s3", "blob"): "local-blob",
 }

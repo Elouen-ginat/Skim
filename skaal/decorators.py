@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Any, Callable, TypeVar
+from typing import Any, Callable, TypeVar, cast
 
+from skaal.blob import BlobStore, validate_blob_model
 from skaal.types import (
     AccessPattern,
     Compute,
@@ -65,6 +66,7 @@ def storage(
             cls,
             "__skaal_storage__",
             {
+                "kind": "kv",
                 "read_latency": _rl,
                 "write_latency": _wl,
                 "durability": Durability(durability) if isinstance(durability, str) else durability,
@@ -89,6 +91,47 @@ def storage(
             },
         )
         return cls
+
+    return decorator
+
+
+def blob(
+    *,
+    read_latency: Latency | str | None = None,
+    write_latency: Latency | str | None = None,
+    durability: Durability | str = Durability.PERSISTENT,
+    size_hint: str | None = None,
+    access_pattern: AccessPattern | str = AccessPattern.BULK_READ,
+    write_throughput: Throughput | str | None = None,
+    residency: str | None = None,
+    retention: str | None = None,
+    auto_optimize: bool = False,
+    decommission_policy: DecommissionPolicy | None = None,
+    collocate_with: str | None = None,
+) -> Callable[[C], C]:
+    """Declare infrastructure constraints for a blob storage class."""
+
+    outer = storage(
+        read_latency=read_latency,
+        write_latency=write_latency,
+        durability=durability,
+        size_hint=size_hint,
+        access_pattern=access_pattern,
+        write_throughput=write_throughput,
+        residency=residency,
+        retention=retention,
+        auto_optimize=auto_optimize,
+        decommission_policy=decommission_policy,
+        collocate_with=collocate_with,
+    )
+
+    def decorator(cls: C) -> C:
+        if not isinstance(cls, type) or not issubclass(cls, BlobStore):
+            raise TypeError("@app.blob requires a skaal.BlobStore subclass.")
+        validate_blob_model(cls)
+        annotated = outer(cls)
+        getattr(annotated, "__skaal_storage__", {})["kind"] = "blob"
+        return cast(C, annotated)
 
     return decorator
 

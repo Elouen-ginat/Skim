@@ -36,6 +36,12 @@ FALLBACK_WIRE: dict[str, BackendHandler] = {
         class_name="LocalMap",
         module="local_backend",
     ),
+    "local-blob": BackendHandler(
+        class_name="FileBlobBackend",
+        module="file_blob_backend",
+        path_default="/app/data/blobs",
+        uses_namespace=True,
+    ),
     "chroma-local": BackendHandler(
         class_name="ChromaVectorBackend",
         module="chroma_backend",

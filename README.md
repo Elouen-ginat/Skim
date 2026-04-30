@@ -40,7 +40,28 @@ skaal run --app myapp:app
 
 Skaal treats `@app.function()` as compute plus resilience, not as your public router. Mount FastAPI, Starlette, or Litestar with `app.mount_asgi(...)`, then call Skaal compute through `await app.invoke(...)` or `app.invoke_stream(...)` from your handlers.
 
-See `docs/http.md` for the supported pattern. The runnable examples are `examples.todo_api:app` for CRUD and `examples.fastapi_streaming:app` for SSE.
+See `docs/http.md` for the supported pattern. The runnable examples are `examples.todo_api:app` for CRUD, `examples.fastapi_streaming:app` for SSE, and `examples.file_upload_api:app` for FastAPI file uploads backed by the blob tier.
+
+## Blob Storage
+
+Skaal includes a first-class blob/object storage surface for file workloads. Declare a `BlobStore` with `@app.blob(...)`, then use `put_bytes`, `put_file`, `get_bytes`, `download_file`, `stat`, and `list_page`.
+
+```python
+from skaal import App, BlobStore
+
+app = App("uploads")
+
+
+@app.blob(read_latency="< 500ms", durability="durable")
+class Uploads(BlobStore):
+    pass
+
+
+async def save_avatar(filename: str, payload: bytes) -> None:
+    await Uploads.put_bytes(f"avatars/{filename}", payload, content_type="image/png")
+```
+
+Use `catalogs/local.toml` for local filesystem-backed blobs, `catalogs/aws.toml` for S3, and `catalogs/gcp.toml` for GCS.
 
 ## Cloud Deployment
 

@@ -24,6 +24,12 @@ _DYNAMODB_ACTIONS = [
     "dynamodb:Scan",
     "dynamodb:Query",
 ]
+_S3_ACTIONS = [
+    "s3:GetObject",
+    "s3:PutObject",
+    "s3:DeleteObject",
+    "s3:ListBucket",
+]
 
 
 def build_pulumi_stack(app: AppLike, plan: "PlanFile", region: str = "us-east-1") -> PulumiStack:
@@ -40,9 +46,12 @@ def build_pulumi_stack(app: AppLike, plan: "PlanFile", region: str = "us-east-1"
     resources: dict[str, Any] = {}
     env_vars: dict[str, str] = {}
     table_outputs: dict[str, str] = {}
+    bucket_outputs: dict[str, str] = {}
     db_outputs: dict[str, str] = {}
     has_dynamodb = any(spec.backend == "dynamodb" for spec in plan.storage.values())
+    has_s3 = any(spec.backend == "s3" for spec in plan.storage.values())
     needs_vpc = any(get_handler(spec).requires_vpc for spec in plan.storage.values())
+    s3_bucket_keys: list[str] = []
 
     if needs_vpc:
         variables["defaultVpcId"] = {
@@ -82,6 +91,21 @@ def build_pulumi_stack(app: AppLike, plan: "PlanFile", region: str = "us-east-1"
         handler = get_handler(spec)
         env_var = f"{handler.env_prefix}_{class_name.upper()}" if handler.env_prefix else ""
         slug = resource_slug(class_name)
+
+        if spec.backend == "s3":
+            resource_key = f"{slug}-bucket"
+            bucket_name = f"${{pulumi.stack}}-{slug}"
+            resources[resource_key] = {
+                "type": "aws:s3:BucketV2",
+                "properties": {
+                    "bucket": bucket_name,
+                    "tags": {"skaal-app": app.name, "skaal-storage": qualified_name},
+                },
+            }
+            env_vars[env_var] = bucket_name
+            bucket_outputs[class_name.lower()] = bucket_name
+            s3_bucket_keys.append(resource_key)
+            continue
 
         if spec.backend == "dynamodb":
             resource_key = f"{slug}-table"
@@ -245,6 +269,31 @@ def build_pulumi_stack(app: AppLike, plan: "PlanFile", region: str = "us-east-1"
         }
         lambda_depends_on.append("${lambda-dynamodb-attach}")
 
+    if has_s3:
+        bucket_resources: list[str] = []
+        for bucket_key in s3_bucket_keys:
+            bucket_resources.append(f"${{{bucket_key}.arn}}")
+            bucket_resources.append(f"${{{bucket_key}.arn}}/*")
+        resources["s3-policy"] = {
+            "type": "aws:iam:Policy",
+            "properties": {
+                "name": f"${{pulumi.stack}}-{app.name}-s3",
+                "policy": {
+                    "fn::toJSON": {
+                        "Version": "2012-10-17",
+                        "Statement": [
+                            {"Effect": "Allow", "Action": _S3_ACTIONS, "Resource": bucket_resources}
+                        ],
+                    }
+                },
+            },
+        }
+        resources["lambda-s3-attach"] = {
+            "type": "aws:iam:RolePolicyAttachment",
+            "properties": {"role": "${lambda-role.name}", "policyArn": "${s3-policy.arn}"},
+        }
+        lambda_depends_on.append("${lambda-s3-attach}")
+
     if needs_vpc:
         resources["lambda-vpc-access-attach"] = {
             "type": "aws:iam:RolePolicyAttachment",
@@ -361,6 +410,7 @@ def build_pulumi_stack(app: AppLike, plan: "PlanFile", region: str = "us-east-1"
     outputs: dict[str, str] = {
         "apiUrl": "${default-stage.invokeUrl}",
         "lambdaArn": "${lambda-fn.arn}",
+        **{f"bucket{k.capitalize()}": value for k, value in bucket_outputs.items()},
         **{f"table{k.capitalize()}": value for k, value in table_outputs.items()},
         **{f"dbEndpoint{k.capitalize()}": value for k, value in db_outputs.items()},
     }

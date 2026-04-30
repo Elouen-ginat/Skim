@@ -100,12 +100,15 @@ skaal = "skaal.cli.main:app"
 [project.entry-points."skaal.backends"]
 local = "skaal.backends.local_backend:LocalMap"
 sqlite = "skaal.backends.sqlite_backend:SqliteBackend"
+local-blob = "skaal.backends.file_blob_backend:FileBlobBackend"
 redis = "skaal.backends.redis_backend:RedisBackend"
 postgres = "skaal.backends.postgres_backend:PostgresBackend"
 chroma = "skaal.backends.chroma_backend:ChromaVectorBackend"
 pgvector = "skaal.backends.pgvector_backend:PgVectorBackend"
 dynamodb = "skaal.backends.dynamodb_backend:DynamoBackend"
 firestore = "skaal.backends.firestore_backend:FirestoreBackend"
+s3 = "skaal.backends.s3_blob_backend:S3BlobBackend"
+gcs = "skaal.backends.gcs_blob_backend:GCSBlobBackend"
 
 [project.entry-points."skaal.channels"]
 local = "skaal.channel:wire_local"

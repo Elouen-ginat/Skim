@@ -7,8 +7,9 @@ from collections.abc import AsyncIterator
 from types import SimpleNamespace
 
 # TYPE_CHECKING import to avoid circular deps at runtime
-from typing import TYPE_CHECKING, Any, Callable, TypeVar, overload
+from typing import TYPE_CHECKING, Any, Callable, TypeVar, cast, overload
 
+from skaal.blob import BlobStore
 from skaal.types import (
     AccessPattern,
     BeforeInvoke,
@@ -198,6 +199,86 @@ class Module:
             annotated = outer(cls)
             self._storage[cls.__name__] = annotated
             return annotated
+
+        if cls_to_decorate is None:
+            return decorator
+        return decorator(cls_to_decorate)
+
+    @overload
+    def blob(
+        self,
+        cls_to_decorate: C,
+        *,
+        read_latency: Latency | str | None = ...,
+        write_latency: Latency | str | None = ...,
+        durability: Durability | str = ...,
+        size_hint: str | None = ...,
+        access_pattern: AccessPattern | str = ...,
+        write_throughput: Throughput | str | None = ...,
+        residency: str | None = ...,
+        retention: str | None = ...,
+        auto_optimize: bool = ...,
+        decommission_policy: DecommissionPolicy | None = ...,
+        collocate_with: str | None = ...,
+    ) -> C: ...
+
+    @overload
+    def blob(
+        self,
+        cls_to_decorate: None = ...,
+        *,
+        read_latency: Latency | str | None = ...,
+        write_latency: Latency | str | None = ...,
+        durability: Durability | str = ...,
+        size_hint: str | None = ...,
+        access_pattern: AccessPattern | str = ...,
+        write_throughput: Throughput | str | None = ...,
+        residency: str | None = ...,
+        retention: str | None = ...,
+        auto_optimize: bool = ...,
+        decommission_policy: DecommissionPolicy | None = ...,
+        collocate_with: str | None = ...,
+    ) -> Callable[[C], C]: ...
+
+    def blob(
+        self,
+        cls_to_decorate: C | None = None,
+        *,
+        read_latency: Latency | str | None = None,
+        write_latency: Latency | str | None = None,
+        durability: Durability | str = Durability.PERSISTENT,
+        size_hint: str | None = None,
+        access_pattern: AccessPattern | str = AccessPattern.BULK_READ,
+        write_throughput: Throughput | str | None = None,
+        residency: str | None = None,
+        retention: str | None = None,
+        auto_optimize: bool = False,
+        decommission_policy: DecommissionPolicy | None = None,
+        collocate_with: str | None = None,
+    ) -> C | Callable[[C], C]:
+        """Register a blob storage class with infrastructure constraints."""
+        from skaal.decorators import blob as _blob_dec
+
+        outer = _blob_dec(
+            read_latency=read_latency,
+            write_latency=write_latency,
+            durability=durability,
+            size_hint=size_hint,
+            access_pattern=access_pattern,
+            write_throughput=write_throughput,
+            residency=residency,
+            retention=retention,
+            auto_optimize=auto_optimize,
+            decommission_policy=decommission_policy,
+            collocate_with=collocate_with,
+        )
+
+        def decorator(cls: C) -> C:
+            if not isinstance(cls, type) or not issubclass(cls, BlobStore):
+                raise TypeError("@app.blob requires a skaal.BlobStore subclass.")
+            annotated = outer(cls)
+            self._storage[cls.__name__] = annotated
+            return cast(C, annotated)
 
         if cls_to_decorate is None:
             return decorator

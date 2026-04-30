@@ -95,10 +95,17 @@ read_latency  = { min = 50, max = 500, unit = "ms" }
 write_latency = { min = 100, max = 2000, unit = "ms" }
 durability    = ["durable"]
 max_size_gb   = 0
-storage_kinds = ["kv"]
-access_patterns = ["append-only", "bulk-read"]
+storage_kinds = ["blob"]
+access_patterns = ["append-only", "bulk-read", "worm"]
 cost_per_gb_month = 0.020
 regions = ["all"]
+
+[storage.gcs.wire]
+class_name      = "GCSBlobBackend"
+module          = "gcs_blob_backend"
+env_prefix      = "SKAAL_GCS_BUCKET"
+uses_namespace  = true
+extra_deps      = ["google-cloud-storage>=2.16"]
 
 [storage.firestore.wire]
 class_name  = "FirestoreBackend"

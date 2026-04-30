@@ -91,7 +91,9 @@ class LocalRuntime:
     def _patch_storage(self) -> None:
         """Wire all registered storage classes with appropriate backends."""
         from skaal.backends.chroma_backend import ChromaVectorBackend
+        from skaal.backends.file_blob_backend import FileBlobBackend
         from skaal.backends.sqlite_backend import SqliteBackend
+        from skaal.blob import BlobStore, is_blob_model
         from skaal.relational import is_relational_model, wire_relational_model
         from skaal.storage import Store
         from skaal.vector import VectorStore, is_vector_model
@@ -114,6 +116,12 @@ class LocalRuntime:
                 backend = backend or ChromaVectorBackend(Path("skaal_chroma"), namespace=qname)
                 self._backends[qname] = backend
                 cast(type[VectorStore[Any]], obj).wire(backend)
+                continue
+
+            if is_blob_model(obj):
+                backend = backend or FileBlobBackend(Path(".skaal") / "blobs", namespace=qname)
+                self._backends[qname] = backend
+                cast(type[BlobStore], obj).wire(backend)
                 continue
 
             if issubclass(obj, Store):

@@ -252,7 +252,17 @@ class TestPluginRegistry:
         """Every built-in backend name is resolvable via the plugin registry."""
         from skaal.plugins import get_backend
 
-        for name in ("local", "sqlite", "redis", "postgres", "dynamodb", "firestore"):
+        for name in (
+            "local",
+            "local-blob",
+            "sqlite",
+            "redis",
+            "postgres",
+            "dynamodb",
+            "firestore",
+            "s3",
+            "gcs",
+        ):
             assert get_backend(name) is not None
 
     def test_in_process_registration_overrides_entry_point(self) -> None:

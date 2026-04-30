@@ -18,7 +18,7 @@ If the next implementation pass is one PR, these are the items that buy the most
 
 ADR 014 removed public HTTP routing/streaming from the "what Skaal should build next" list, and ADR 015 landed the first `Store[T]` pagination/index pass (`list_page`, `scan_page`, `query_index`, `SecondaryIndex`). The next coherent pass is now the remaining storage/runtime capability work.
 
-1. **Blob / object storage tier** — there is no `@app.blob` and no S3/GCS backend, so any user with files drops the framework entirely. P0. ([§B.2](#b2-kv-store-and-storage-tiers))
+1. **Blob / object storage tier** — there is no `@app.blob` and no S3/GCS backend, so any user with files drops the framework entirely. P0. ([§B.2](#b2-kv-store-and-storage-tiers), [ADR 016](./design/016-blob-storage-tier-implementation-plan.md))
 2. **Agent persistent-state save/load** — `__skaal_persistent_fields__` is collected but the runtime never loads or persists it; "fields marked @persistent survive restarts" in the docstring is currently false. P0 correctness gap. ([§B.7](#b7-agents))
 3. **`skaal init` / project scaffolding + `skaal dev` watch mode** — no zero-config first-run; no hot-reload. P0 for adoption. ([§A.1](#a1-cli-zero-config-and-dev-loop))
 4. **Solver-failure error messages with closest-match suggestions** — today an unsatisfiable plan surfaces as a Z3 stack trace. P0 for first-time users. ([§A.4](#a4-error-messages-and-validation))
@@ -207,7 +207,7 @@ Update: ADR 015 landed a first coherent `Store[T]` surface for cursor pagination
 | Pagination / cursor on `Store[T]`          | `Store.list_page(...)` and `scan_page(...)` now exist, but the bundled backends still materialize pages rather than using native cursor primitives. | P1 |
 | Secondary indexes on `Store[T]`            | `SecondaryIndex(...)` and `Store.query_index(...)` now exist, but the bundled backends still evaluate declared indexes generically rather than provisioning native DB indexes. | P1 |
 | Per-row TTL (`@storage(retention=...)`)    | `retention` is parsed and consumed by the solver for catalog matching (`solver/storage.py:78`) but no backend implements per-row expiry — the SQLite/Postgres/Local KV backends have no TTL fields. | **P0** for session stores |
-| Blob / object tier                         | No `@app.blob`, no S3 / GCS backend in `skaal/backends/` or `pyproject.toml` plugin entry points.           | **P0** |
+| Blob / object tier                         | No `@app.blob`, no S3 / GCS backend in `skaal/backends/` or `pyproject.toml` plugin entry points. Tracked in [ADR 016](./design/016-blob-storage-tier-implementation-plan.md). | **P0** |
 | Cache layer (Redis-as-cache, not KV store) | Redis backend is a KV store; no TTL on `set`, no eviction policy plumbed.                                   | P1     |
 | Cross-tier transactions                    | `Store.update()` is atomic within KV; relational session is atomic; no cross-tier primitive. Outbox covers the channel→storage case. | P1 |
 | Multi-region replication                   | Solver and deploy are per-region. None.                                                                     | P2     |

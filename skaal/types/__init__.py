@@ -4,6 +4,7 @@ Re-exports everything so existing code using ``from skaal.types import X``
 continues to work without change.
 """
 
+from skaal.types.blob import BlobObject
 from skaal.types.compute import (
     Bulkhead,
     CircuitBreaker,
@@ -63,6 +64,8 @@ __all__ = [
     "Latency",
     "Persistent",
     "Throughput",
+    # blob
+    "BlobObject",
     # deploy
     "AppLike",
     "AuthConfig",

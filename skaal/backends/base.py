@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import builtins
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
+from skaal.types import BlobObject
 from skaal.types.storage import Page
 
 
@@ -92,5 +94,48 @@ class StorageBackend(Protocol):
     async def close(self) -> None:
         """Release any resources held by this backend."""
         ...
+
+    def __repr__(self) -> str: ...
+
+
+@runtime_checkable
+class BlobBackend(Protocol):
+    async def put_bytes(
+        self,
+        key: str,
+        data: bytes,
+        *,
+        content_type: str | None = None,
+        metadata: dict[str, str] | None = None,
+    ) -> BlobObject: ...
+
+    async def put_file(
+        self,
+        key: str,
+        source: str | Path,
+        *,
+        content_type: str | None = None,
+        metadata: dict[str, str] | None = None,
+    ) -> BlobObject: ...
+
+    async def get_bytes(self, key: str) -> bytes: ...
+
+    async def download_file(self, key: str, destination: str | Path) -> Path: ...
+
+    async def stat(self, key: str) -> BlobObject | None: ...
+
+    async def exists(self, key: str) -> bool: ...
+
+    async def delete(self, key: str) -> None: ...
+
+    async def list_page(
+        self,
+        prefix: str = "",
+        *,
+        limit: int,
+        cursor: str | None,
+    ) -> Page[BlobObject]: ...
+
+    async def close(self) -> None: ...
 
     def __repr__(self) -> str: ...

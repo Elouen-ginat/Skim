@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 from skaal.deploy.backends import DefaultExternalProvisioner, get_handler
 from skaal.deploy.builders.apigw import add_gcp_api_gateway
+from skaal.deploy.builders.common import resource_slug
 from skaal.deploy.config import (
     CloudRunDeployConfig,
     CloudSQLDeployConfig,
@@ -68,6 +69,7 @@ def build_pulumi_stack(
             },
         }
     }
+    bucket_outputs: dict[str, str] = {}
 
     container_envs: list[dict[str, str]] = []
     for qualified_name, spec in plan.storage.items():
@@ -75,7 +77,20 @@ def build_pulumi_stack(
         handler = get_handler(spec)
         env_var = f"{handler.env_prefix}_{class_name.upper()}"
 
-        if spec.backend == "firestore":
+        if spec.backend == "gcs":
+            resource_key = f"{class_name.lower()}-bucket"
+            bucket_name = f"${{pulumi.stack}}-{resource_slug(app.name)}-{resource_slug(class_name)}"
+            resources[resource_key] = {
+                "type": "gcp:storage:Bucket",
+                "properties": {
+                    "name": bucket_name,
+                    "location": "${gcp:region}",
+                    "uniformBucketLevelAccess": True,
+                },
+            }
+            container_envs.append({"name": env_var, "value": bucket_name})
+            bucket_outputs[class_name.lower()] = bucket_name
+        elif spec.backend == "firestore":
             collection = f"{app.name}-{class_name.lower()}"
             container_envs.append({"name": env_var, "value": collection})
         elif spec.backend in ("cloud-sql-postgres", "cloud-sql-pgvector"):
@@ -236,6 +251,7 @@ def build_pulumi_stack(
     outputs: dict[str, Any] = {
         "serviceUrl": "${cloud-run-service.statuses[0].url}",
         "imageRepository": "${repo.name}",
+        **{f"bucket{k.capitalize()}": value for k, value in bucket_outputs.items()},
     }
     add_gcp_api_gateway(app, plan, resources, outputs)
 

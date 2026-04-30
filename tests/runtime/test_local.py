@@ -7,7 +7,9 @@ import json
 import pytest
 
 from skaal import App
+from skaal.backends.file_blob_backend import FileBlobBackend
 from skaal.backends.local_backend import LocalMap
+from skaal.blob import BlobStore
 from skaal.runtime.local import LocalRuntime
 from skaal.storage import Store
 
@@ -125,6 +127,25 @@ async def test_runtime_storage_persists_across_calls():
     assert status == 200
     assert data["counts"]["a"] == 2
     assert data["counts"]["b"] == 1
+
+
+@pytest.mark.asyncio
+async def test_local_runtime_wires_blob_store(tmp_path):
+    app = App("blob-runtime")
+
+    @app.blob(read_latency="< 50ms", durability="durable")
+    class Uploads(BlobStore):
+        pass
+
+    runtime = LocalRuntime(
+        app,
+        backend_overrides={"Uploads": FileBlobBackend(tmp_path / "runtime-blobs")},
+    )
+
+    assert isinstance(runtime._backends["blob-runtime.Uploads"], FileBlobBackend)
+
+    await Uploads.put_bytes("notes/one.txt", b"hello")
+    assert await Uploads.get_bytes("notes/one.txt") == b"hello"
 
 
 @pytest.mark.asyncio

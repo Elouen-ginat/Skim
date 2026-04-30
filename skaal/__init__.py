@@ -8,6 +8,7 @@ from skaal import api, types
 from skaal._logging import ensure_null_handler as _ensure_null_handler
 from skaal.agent import Agent, agent
 from skaal.app import App
+from skaal.blob import BlobStore
 from skaal.channel import Channel
 from skaal.components import (
     APIGateway,
@@ -21,6 +22,7 @@ from skaal.components import (
     ScheduleTrigger,
 )
 from skaal.decorators import (
+    blob,
     compute,
     handler,
     relational,
@@ -38,6 +40,7 @@ from skaal.storage import Store
 from skaal.sync import run as sync_run
 from skaal.types import (
     BeforeInvoke,
+    BlobObject,
     Bulkhead,
     CircuitBreaker,
     InvokeContext,
@@ -58,11 +61,13 @@ __all__ = [
     "Module",
     "ModuleExport",
     "Store",
+    "BlobStore",
     "VectorStore",
     "Agent",
     "Channel",
     "sync_run",
     # Decorators
+    "blob",
     "agent",
     "compute",
     "handler",
@@ -94,6 +99,7 @@ __all__ = [
     "Every",
     "Schedule",
     "ScheduleContext",
+    "BlobObject",
     "BeforeInvoke",
     "Page",
     # Resilience types

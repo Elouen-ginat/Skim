@@ -26,6 +26,7 @@ In-process registration is also supported (useful for tests and notebooks)::
 
 from __future__ import annotations
 
+from importlib import import_module
 from importlib.metadata import entry_points
 from pathlib import Path
 from typing import Any, Callable
@@ -41,6 +42,31 @@ _catalogs: dict[str, Path] = {}
 # ── Cache of entry-point results (populated lazily, flushable for tests) ──────
 
 _ep_cache: dict[str, dict[str, Any]] = {}
+
+_BUILTIN_BACKENDS: dict[str, str] = {
+    "local": "skaal.backends.local_backend:LocalMap",
+    "local-blob": "skaal.backends.file_blob_backend:FileBlobBackend",
+    "sqlite": "skaal.backends.sqlite_backend:SqliteBackend",
+    "redis": "skaal.backends.redis_backend:RedisBackend",
+    "postgres": "skaal.backends.postgres_backend:PostgresBackend",
+    "chroma": "skaal.backends.chroma_backend:ChromaVectorBackend",
+    "pgvector": "skaal.backends.pgvector_backend:PgVectorBackend",
+    "dynamodb": "skaal.backends.dynamodb_backend:DynamoBackend",
+    "firestore": "skaal.backends.firestore_backend:FirestoreBackend",
+    "s3": "skaal.backends.s3_blob_backend:S3BlobBackend",
+    "gcs": "skaal.backends.gcs_blob_backend:GCSBlobBackend",
+}
+
+
+def _load_builtin(group: str) -> dict[str, Any]:
+    if group != "skaal.backends":
+        return {}
+    resolved: dict[str, Any] = {}
+    for name, target in _BUILTIN_BACKENDS.items():
+        module_name, _, attr_name = target.partition(":")
+        module = import_module(module_name)
+        resolved[name] = getattr(module, attr_name)
+    return resolved
 
 
 def _load_group(group: str) -> dict[str, Any]:
@@ -91,6 +117,9 @@ def get_backend(name: str) -> Any:
     discovered = _load_group("skaal.backends")
     if name in discovered:
         return discovered[name]
+    builtins = _load_builtin("skaal.backends")
+    if name in builtins:
+        return builtins[name]
     available = sorted(set(_backends) | set(discovered))
     raise SkaalPluginError(
         f"Unknown storage backend {name!r}. Registered: {available or '(none)'}."
@@ -101,6 +130,7 @@ def iter_backends() -> dict[str, Any]:
     """Return every registered backend name→factory, entry points + in-process."""
     merged: dict[str, Any] = {}
     merged.update(_load_group("skaal.backends"))
+    merged.update(_load_builtin("skaal.backends"))
     merged.update(_backends)  # in-process overrides
     return merged
 
