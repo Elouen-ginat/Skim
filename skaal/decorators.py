@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from enum import Enum
 from typing import Any, Callable, TypeVar, cast
 
 from skaal.blob import BlobStore, validate_blob_model
@@ -22,6 +23,58 @@ from skaal.types.compute import Bulkhead, CircuitBreaker, RateLimitPolicy, Retry
 
 F = TypeVar("F", bound=Callable[..., Any])
 C = TypeVar("C", bound=type)
+E = TypeVar("E", bound=Enum)
+
+
+def _coerce_enum(value: E | str | None, enum_type: type[E]) -> E | None:
+    if value is None or isinstance(value, enum_type):
+        return value
+    return enum_type(value)
+
+
+def _apply_metadata(target: C, attribute: str, metadata: Any) -> C:
+    setattr(target, attribute, metadata)
+    return target
+
+
+def _apply_callable_metadata(target: F, attribute: str, metadata: Any) -> F:
+    setattr(target, attribute, metadata)
+    return target
+
+
+def _build_storage_metadata(
+    *,
+    kind: str,
+    read_latency: Latency | str | None,
+    write_latency: Latency | str | None,
+    durability: Durability | str,
+    size_hint: str | None,
+    access_pattern: AccessPattern | str,
+    write_throughput: Throughput | str | None,
+    residency: str | None,
+    retention: str | None,
+    auto_optimize: bool,
+    decommission_policy: DecommissionPolicy | None,
+    collocate_with: str | None,
+    schema: dict[str, Any],
+    indexes: list[SecondaryIndex] | None = None,
+) -> dict[str, Any]:
+    return {
+        "kind": kind,
+        "read_latency": _coerce_enum(read_latency, Latency),
+        "write_latency": _coerce_enum(write_latency, Latency),
+        "durability": _coerce_enum(durability, Durability),
+        "size_hint": size_hint,
+        "access_pattern": _coerce_enum(access_pattern, AccessPattern),
+        "write_throughput": _coerce_enum(write_throughput, Throughput),
+        "residency": residency,
+        "retention": retention,
+        "auto_optimize": auto_optimize,
+        "decommission_policy": decommission_policy,
+        "collocate_with": collocate_with,
+        "indexes": list(indexes or []),
+        "schema": schema,
+    }
 
 
 def storage(
@@ -42,18 +95,6 @@ def storage(
     """Declare infrastructure constraints for a storage variable or Store class."""
 
     def decorator(cls: C) -> C:
-        _rl: Latency | None
-        if isinstance(read_latency, str):
-            _rl = Latency(read_latency)
-        else:
-            _rl = read_latency
-
-        _wl: Latency | None
-        if isinstance(write_latency, str):
-            _wl = Latency(write_latency)
-        else:
-            _wl = write_latency
-
         # Collect schema hints from Store subclasses
         try:
             from skaal.storage import _schema_hints
@@ -62,35 +103,26 @@ def storage(
         except Exception:  # noqa: BLE001
             schema = {}
 
-        setattr(
+        return _apply_metadata(
             cls,
             "__skaal_storage__",
-            {
-                "kind": "kv",
-                "read_latency": _rl,
-                "write_latency": _wl,
-                "durability": Durability(durability) if isinstance(durability, str) else durability,
-                "size_hint": size_hint,
-                "access_pattern": (
-                    AccessPattern(access_pattern)
-                    if isinstance(access_pattern, str)
-                    else access_pattern
-                ),
-                "write_throughput": (
-                    Throughput(write_throughput)
-                    if isinstance(write_throughput, str)
-                    else write_throughput
-                ),
-                "residency": residency,
-                "retention": retention,
-                "auto_optimize": auto_optimize,
-                "decommission_policy": decommission_policy,
-                "collocate_with": collocate_with,
-                "indexes": list(indexes or []),
-                "schema": schema,  # empty dict for plain classes
-            },
+            _build_storage_metadata(
+                kind="kv",
+                read_latency=read_latency,
+                write_latency=write_latency,
+                durability=durability,
+                size_hint=size_hint,
+                access_pattern=access_pattern,
+                write_throughput=write_throughput,
+                residency=residency,
+                retention=retention,
+                auto_optimize=auto_optimize,
+                decommission_policy=decommission_policy,
+                collocate_with=collocate_with,
+                indexes=indexes,
+                schema=schema,
+            ),
         )
-        return cls
 
     return decorator
 
@@ -154,45 +186,27 @@ def relational(
         from skaal.relational import _schema_hints, validate_relational_model
 
         validate_relational_model(cls)
-
-        _rl: Latency | None
-        if isinstance(read_latency, str):
-            _rl = Latency(read_latency)
-        else:
-            _rl = read_latency
-
-        _wl: Latency | None
-        if isinstance(write_latency, str):
-            _wl = Latency(write_latency)
-        else:
-            _wl = write_latency
-
         schema = _schema_hints(cls)
 
-        setattr(
+        return _apply_metadata(
             cls,
             "__skaal_storage__",
-            {
-                "kind": "relational",
-                "read_latency": _rl,
-                "write_latency": _wl,
-                "durability": Durability(durability) if isinstance(durability, str) else durability,
-                "size_hint": size_hint,
-                "access_pattern": AccessPattern.TRANSACTIONAL,
-                "write_throughput": (
-                    Throughput(write_throughput)
-                    if isinstance(write_throughput, str)
-                    else write_throughput
-                ),
-                "residency": residency,
-                "retention": None,
-                "auto_optimize": auto_optimize,
-                "decommission_policy": decommission_policy,
-                "collocate_with": collocate_with,
-                "schema": schema,
-            },
+            _build_storage_metadata(
+                kind="relational",
+                read_latency=read_latency,
+                write_latency=write_latency,
+                durability=durability,
+                size_hint=size_hint,
+                access_pattern=AccessPattern.TRANSACTIONAL,
+                write_throughput=write_throughput,
+                residency=residency,
+                retention=None,
+                auto_optimize=auto_optimize,
+                decommission_policy=decommission_policy,
+                collocate_with=collocate_with,
+                schema=schema,
+            ),
         )
-        return cls
 
     return decorator
 
@@ -222,46 +236,29 @@ def vector(
         if dim <= 0:
             raise ValueError("@app.vector requires dim > 0.")
 
-        _rl: Latency | None
-        if isinstance(read_latency, str):
-            _rl = Latency(read_latency)
-        else:
-            _rl = read_latency
-
-        _wl: Latency | None
-        if isinstance(write_latency, str):
-            _wl = Latency(write_latency)
-        else:
-            _wl = write_latency
-
         setattr(cls, "__skaal_vector_dimensions__", dim)
         setattr(cls, "__skaal_vector_metric__", normalized_metric)
         schema = _schema_hints(cls)
 
-        setattr(
+        return _apply_metadata(
             cls,
             "__skaal_storage__",
-            {
-                "kind": "vector",
-                "read_latency": _rl,
-                "write_latency": _wl,
-                "durability": Durability(durability) if isinstance(durability, str) else durability,
-                "size_hint": size_hint,
-                "access_pattern": AccessPattern.BULK_READ,
-                "write_throughput": (
-                    Throughput(write_throughput)
-                    if isinstance(write_throughput, str)
-                    else write_throughput
-                ),
-                "residency": residency,
-                "retention": None,
-                "auto_optimize": auto_optimize,
-                "decommission_policy": decommission_policy,
-                "collocate_with": collocate_with,
-                "schema": schema,
-            },
+            _build_storage_metadata(
+                kind="vector",
+                read_latency=read_latency,
+                write_latency=write_latency,
+                durability=durability,
+                size_hint=size_hint,
+                access_pattern=AccessPattern.BULK_READ,
+                write_throughput=write_throughput,
+                residency=residency,
+                retention=None,
+                auto_optimize=auto_optimize,
+                decommission_policy=decommission_policy,
+                collocate_with=collocate_with,
+                schema=schema,
+            ),
         )
-        return cls
 
     return decorator
 
@@ -286,15 +283,13 @@ def compute(
     """
 
     def decorator(fn: F) -> F:
-        setattr(
+        return _apply_callable_metadata(
             fn,
             "__skaal_compute__",
             Compute(
                 latency=latency,
                 throughput=throughput,
-                compute_type=ComputeType(compute_type)
-                if isinstance(compute_type, str)
-                else compute_type,
+                compute_type=_coerce_enum(compute_type, ComputeType) or ComputeType.CPU,
                 memory=memory,
                 schedule=schedule,
                 collocate_with=collocate_with,
@@ -304,7 +299,6 @@ def compute(
                 bulkhead=bulkhead,
             ),
         )
-        return fn
 
     return decorator
 
@@ -317,15 +311,14 @@ def scale(
     """Declare scaling policy for a function."""
 
     def decorator(fn: F) -> F:
-        setattr(
+        return _apply_callable_metadata(
             fn,
             "__skaal_scale__",
             Scale(
                 instances=instances,
-                strategy=ScaleStrategy(strategy) if isinstance(strategy, str) else strategy,
+                strategy=_coerce_enum(strategy, ScaleStrategy) or ScaleStrategy.ROUND_ROBIN,
             ),
         )
-        return fn
 
     return decorator
 
@@ -337,21 +330,17 @@ def shared(
     """Mark a variable or Channel as distributed across all instances."""
 
     def decorator(fn: F) -> F:
-        setattr(
+        return _apply_callable_metadata(
             fn,
             "__skaal_shared__",
             {
-                "consistency": (
-                    Consistency(consistency) if isinstance(consistency, str) else consistency
-                ),
+                "consistency": _coerce_enum(consistency, Consistency) or Consistency.EVENTUAL,
             },
         )
-        return fn
 
     return decorator
 
 
 def handler(fn: F) -> F:
     """Mark a method on an Agent as a message handler."""
-    setattr(fn, "__skaal_handler__", True)
-    return fn
+    return _apply_callable_metadata(fn, "__skaal_handler__", True)
