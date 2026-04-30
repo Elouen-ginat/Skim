@@ -1,20 +1,20 @@
 """DeployTarget Protocol — the formal interface for all deploy targets.
 
-Every deploy target (AWS Lambda, GCP Cloud Run, local Docker + Pulumi, and any
-future targets) must satisfy this Protocol.  The concrete adapters live in
-:mod:`skaal.deploy.registry`; the generator modules (:mod:`skaal.deploy.aws`,
-:mod:`skaal.deploy.gcp`, :mod:`skaal.deploy.local`) are the implementation
-backends wrapped by those adapters.
+Every deploy target must satisfy this Protocol. Concrete implementations are
+assembled in :mod:`skaal.deploy.targets.registry`, while target-specific
+artifact generation lives under :mod:`skaal.deploy.targets`.
 
 Consistent with the :class:`~skaal.backends.base.StorageBackend` Protocol in
-``backends/base.py`` — ``@runtime_checkable`` so that ``isinstance`` checks
-work in tests.
+``backends/base.py`` — ``@runtime_checkable`` so that ``isinstance`` checks work
+in tests.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
+
+from skaal.types import AppLike, ConfigOverrides, StackOutputs, StackProfile
 
 if TYPE_CHECKING:
     from skaal.plan import PlanFile
@@ -24,16 +24,12 @@ if TYPE_CHECKING:
 class DeployTarget(Protocol):
     """Protocol that every deploy target adapter must satisfy.
 
-    Concrete implementations live in :mod:`skaal.deploy.registry`:
-    :class:`~skaal.deploy.registry.AWSLambdaTarget`,
-    :class:`~skaal.deploy.registry.GCPCloudRunTarget`,
-    :class:`~skaal.deploy.registry.LocalDockerTarget`.
+    Concrete implementations live in the deploy target registry.
 
     Adding a new target
     -------------------
-    1. Implement this protocol in a new class in ``registry.py``.
-    2. Add the class (and any aliases) to ``_TARGET_REGISTRY``.
-    That is all — no changes needed in ``build_cmd.py`` or ``push.py``.
+    1. Assemble a target strategy in ``targets/registry.py``.
+    2. Register it under the desired names.
     """
 
     name: str
@@ -45,7 +41,7 @@ class DeployTarget(Protocol):
 
     def generate_artifacts(
         self,
-        app: Any,
+        app: AppLike,
         plan: "PlanFile",
         output_dir: Path,
         source_module: str,
@@ -53,7 +49,7 @@ class DeployTarget(Protocol):
         *,
         region: str | None = None,
         dev: bool = False,
-        stack_profile: dict[str, Any] | None = None,
+        stack_profile: StackProfile | None = None,
     ) -> list[Path]:
         """Generate all deployment artifacts into *output_dir*.
 
@@ -90,8 +86,8 @@ class DeployTarget(Protocol):
         project_root: Path,
         source_module: str,
         app_name: str,
-        config_overrides: dict[str, str] | None = None,
-    ) -> dict[str, str]:
+        config_overrides: ConfigOverrides | None = None,
+    ) -> StackOutputs:
         """Package and deploy the artifacts; return Pulumi stack outputs.
 
         Args:

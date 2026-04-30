@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from unittest import mock
 
-from skaal.deploy.push import _package_aws
+from skaal.deploy.packaging.lambda_pkg import package_lambda
 
 
 def test_package_aws_uses_platform_specific_mesh_wheel(tmp_path: Path) -> None:
@@ -28,8 +28,8 @@ dependencies = [
     src_pkg.mkdir()
     (src_pkg / "__init__.py").write_text("", encoding="utf-8")
 
-    with mock.patch("skaal.deploy.push._run") as fake_run:
-        _package_aws(
+    with mock.patch("skaal.deploy.packaging.lambda_pkg.run_pip") as fake_run:
+        package_lambda(
             artifacts_dir,
             tmp_path,
             "examples.counter",

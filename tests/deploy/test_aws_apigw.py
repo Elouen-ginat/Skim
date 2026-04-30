@@ -6,8 +6,9 @@ from unittest.mock import MagicMock
 
 from skaal.app import App
 from skaal.components import APIGateway, AuthConfig, Proxy, Route
-from skaal.deploy._backends import build_wiring_aws
-from skaal.deploy.aws import _add_apigw_resources, _apigw_path, _build_pulumi_stack
+from skaal.deploy.backends.wiring import build_wiring_aws
+from skaal.deploy.builders.apigw import add_aws_apigw_resources, aws_apigw_path
+from skaal.deploy.builders.aws import build_pulumi_stack
 from skaal.plan import ComponentSpec, PlanFile, StorageSpec
 from skaal.solver.components import encode_component
 from skaal.types import RateLimitPolicy
@@ -16,19 +17,19 @@ from skaal.types import RateLimitPolicy
 
 
 def test_apigw_path_wildcard():
-    assert _apigw_path("/api/*") == "/api/{proxy+}"
+    assert aws_apigw_path("/api/*") == "/api/{proxy+}"
 
 
 def test_apigw_path_root_wildcard():
-    assert _apigw_path("/*") == "/{proxy+}"
+    assert aws_apigw_path("/*") == "/{proxy+}"
 
 
 def test_apigw_path_exact():
-    assert _apigw_path("/health") == "/health"
+    assert aws_apigw_path("/health") == "/health"
 
 
 def test_apigw_path_bare_star():
-    assert _apigw_path("*") == "/{proxy+}"
+    assert aws_apigw_path("*") == "/{proxy+}"
 
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
@@ -58,7 +59,7 @@ def test_default_route_no_component():
     plan = _make_plan()
     app = _make_app()
     resources: dict = {}
-    _add_apigw_resources(app, plan, resources, {})
+    add_aws_apigw_resources(app, plan, resources, {})
 
     assert "default-route" in resources
     assert resources["default-route"]["properties"]["routeKey"] == "$default"
@@ -75,7 +76,7 @@ def test_mount_routes_when_no_component():
     plan = _make_plan()
     app = _make_app(mounts={"auth": "/auth", "api": "/v1"})
     resources: dict = {}
-    _add_apigw_resources(app, plan, resources, {})
+    add_aws_apigw_resources(app, plan, resources, {})
 
     route_keys = {
         r["properties"]["routeKey"]
@@ -103,7 +104,7 @@ def test_proxy_explicit_routes():
     plan = _make_plan(edge=spec)
     app = _make_app()
     resources: dict = {}
-    _add_apigw_resources(app, plan, resources, {})
+    add_aws_apigw_resources(app, plan, resources, {})
 
     route_keys = {
         r["properties"]["routeKey"]
@@ -134,7 +135,7 @@ def test_api_gateway_jwt_authorizer():
     plan = _make_plan(public=spec)
     app = _make_app()
     resources: dict = {}
-    _add_apigw_resources(app, plan, resources, {})
+    add_aws_apigw_resources(app, plan, resources, {})
 
     assert "jwt-authorizer" in resources
     auth_res = resources["jwt-authorizer"]
@@ -163,7 +164,7 @@ def test_api_gateway_cors():
     plan = _make_plan(public=spec)
     app = _make_app()
     resources: dict = {}
-    _add_apigw_resources(app, plan, resources, {})
+    add_aws_apigw_resources(app, plan, resources, {})
 
     assert "corsConfiguration" in resources["api"]["properties"]
     cors = resources["api"]["properties"]["corsConfiguration"]
@@ -184,7 +185,7 @@ def test_api_gateway_rate_limit():
     plan = _make_plan(public=spec)
     app = _make_app()
     resources: dict = {}
-    _add_apigw_resources(app, plan, resources, {})
+    add_aws_apigw_resources(app, plan, resources, {})
 
     stage = resources["default-stage"]
     assert "defaultRouteSettings" in stage["properties"]
@@ -203,7 +204,7 @@ def test_stage_depends_on_routes():
     plan = _make_plan(edge=spec)
     app = _make_app()
     resources: dict = {}
-    _add_apigw_resources(app, plan, resources, {})
+    add_aws_apigw_resources(app, plan, resources, {})
 
     depends = resources["default-stage"]["options"]["dependsOn"]
     route_keys = {k for k in resources if k.startswith("route-")}
@@ -281,7 +282,7 @@ def test_aws_pulumi_stack_provisions_rds_and_lambda_vpc() -> None:
         },
     )
 
-    stack = _build_pulumi_stack(app, plan, region="us-east-1")
+    stack = build_pulumi_stack(app, plan, region="us-east-1")
 
     assert stack["variables"]["defaultVpcId"]["fn::invoke"]["function"] == "aws:ec2:getVpc"
     assert stack["variables"]["defaultSubnetIds"]["fn::invoke"]["return"] == "ids"

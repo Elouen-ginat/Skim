@@ -193,7 +193,7 @@ def test_build_delegates_to_target(
             assert plan.app_name == plan_file.app_name
             return expected_paths
 
-    monkeypatch.setattr("skaal.deploy.registry.get_target", lambda name: _FakeTarget())
+    monkeypatch.setattr("skaal.deploy.get_target", lambda name: _FakeTarget())
 
     generated = api.build(app=simple_app, output_dir=tmp_project / "artifacts")
     assert generated == expected_paths
@@ -383,7 +383,7 @@ def test_deploy_forwards_to_package_and_push(tmp_path: Path) -> None:
         '{"target": "aws", "source_module": "examples.app", "app_name": "demo"}'
     )
 
-    with mock.patch("skaal.deploy.push.package_and_push") as fake:
+    with mock.patch("skaal.deploy.package_and_push") as fake:
         fake.return_value = {"apiUrl": "https://example.com"}
         result = api.deploy(
             artifacts,
@@ -408,7 +408,7 @@ def test_destroy_forwards_to_destroy_stack(tmp_path: Path) -> None:
         '{"target": "local", "source_module": "examples.app", "app_name": "demo"}'
     )
 
-    with mock.patch("skaal.deploy.push.destroy_stack") as fake:
+    with mock.patch("skaal.deploy.destroy_stack") as fake:
         api.destroy(
             artifacts,
             stack=None,

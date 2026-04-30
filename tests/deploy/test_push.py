@@ -2,140 +2,178 @@
 
 from __future__ import annotations
 
-import subprocess
 from pathlib import Path
+from unittest.mock import MagicMock
 
-from skaal.deploy import push
+from skaal.deploy.packaging.gcp_push import build_and_push_image
+from skaal.deploy.packaging.local import build_local_image
+from skaal.deploy.pulumi import DeploymentContext, RunnerPlan
+from skaal.deploy.pulumi.automation import read_stack_spec, workspace_options, write_stack_spec
+from skaal.deploy.pulumi.env import pulumi_env
+from skaal.deploy.pulumi.runner import AutomationRunner
 
 
 def test_pulumi_env_injects_blank_pulumi_passphrase(monkeypatch):
     monkeypatch.delenv("PULUMI_CONFIG_PASSPHRASE", raising=False)
-    env = push._pulumi_env()
+    env = pulumi_env()
     assert env["PULUMI_CONFIG_PASSPHRASE"] == ""
 
 
 def test_pulumi_env_preserves_existing_pulumi_passphrase(monkeypatch):
     monkeypatch.setenv("PULUMI_CONFIG_PASSPHRASE", "secret")
-    env = push._pulumi_env()
+    env = pulumi_env()
     assert env["PULUMI_CONFIG_PASSPHRASE"] == "secret"
 
 
-def test_pulumi_login_local_uses_file_backend_uri(monkeypatch, tmp_path: Path):
-    state_dir = tmp_path / ".pulumi-state"
-    calls: list[tuple[list[str], Path | None, bool, bool]] = []
+def test_write_stack_spec_round_trips(tmp_path: Path):
+    spec = {
+        "name": "skaal-demo",
+        "runtime": "yaml",
+        "config": {"localImageRef": {"type": "string", "default": "skaal-demo:local"}},
+        "resources": {},
+        "outputs": {"appUrl": "http://localhost:8000"},
+    }
 
-    def fake_run(
-        cmd: list[str],
-        cwd: Path | None = None,
-        capture: bool = False,
-        check: bool = True,
-    ):
-        calls.append((cmd, cwd, capture, check))
-        return subprocess.CompletedProcess(cmd, 0)
+    path = write_stack_spec(tmp_path, spec)
 
-    monkeypatch.setattr(push, "_run", fake_run)
-    backend_url = push._pulumi_login_local(state_dir)
-
-    assert state_dir.is_dir()
-    expected_url = f"file://{state_dir.resolve().as_posix()}"
-    assert backend_url == expected_url
-    assert calls == [(["pulumi", "login", expected_url], None, False, True)]
+    assert path.name == "skaal-stack.json"
+    assert read_stack_spec(tmp_path) == spec
 
 
-def test_pulumi_stack_select_inits_missing_stack(monkeypatch, tmp_path: Path):
-    calls: list[tuple[list[str], Path | None, bool, bool]] = []
+def test_workspace_options_creates_state_dir(tmp_path: Path):
+    spec = {
+        "name": "skaal-demo",
+        "runtime": "yaml",
+        "config": {},
+        "resources": {},
+        "outputs": {},
+    }
 
-    def fake_run(
-        cmd: list[str],
-        cwd: Path | None = None,
-        capture: bool = False,
-        check: bool = True,
-    ):
-        calls.append((cmd, cwd, capture, check))
-        if cmd[:3] == ["pulumi", "stack", "select"]:
-            return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="missing")
-        return subprocess.CompletedProcess(cmd, 0)
+    options = workspace_options(tmp_path, spec)
 
-    monkeypatch.setattr(push, "_run", fake_run)
-
-    push._pulumi_stack_select_or_init(tmp_path, "local")
-
-    assert calls == [
-        (["pulumi", "stack", "select", "local"], tmp_path, True, False),
-        (["pulumi", "stack", "init", "local"], tmp_path, False, True),
-    ]
+    assert (tmp_path / ".pulumi-state").is_dir()
+    assert options.work_dir == str(tmp_path)
 
 
-def test_pulumi_destroy_passes_yes(monkeypatch, tmp_path: Path):
-    calls: list[tuple[list[str], Path | None, bool, bool]] = []
+def test_build_local_image_uses_docker_builder(monkeypatch, tmp_path: Path):
+    calls: list[tuple[Path, str]] = []
 
-    def fake_run(
-        cmd: list[str],
-        cwd: Path | None = None,
-        capture: bool = False,
-        check: bool = True,
-    ):
-        calls.append((cmd, cwd, capture, check))
-        return subprocess.CompletedProcess(cmd, 0)
+    def fake_build_image(*, context_dir: Path, tag: str):
+        calls.append((context_dir, tag))
+        return "sha256:test-image"
 
-    monkeypatch.setattr(push, "_run", fake_run)
+    monkeypatch.setattr("skaal.deploy.packaging.local.build_image", fake_build_image)
 
-    push._pulumi_destroy(tmp_path, yes=True)
-
-    assert calls == [(["pulumi", "destroy", "--yes"], tmp_path, False, True)]
-
-
-def test_build_local_image_builds_and_inspects(monkeypatch, tmp_path: Path):
-    calls: list[tuple[list[str], Path | None, bool]] = []
-
-    def fake_run(
-        cmd: list[str],
-        cwd: Path | None = None,
-        capture: bool = False,
-        check: bool = True,
-    ):
-        calls.append((cmd, cwd, capture))
-        stdout = "sha256:test-image\n" if cmd[:3] == ["docker", "image", "inspect"] else None
-        return subprocess.CompletedProcess(cmd, 0, stdout=stdout)
-
-    monkeypatch.setattr(push, "_run", fake_run)
-
-    image_ref = push._build_local_image(tmp_path, "skaal-test:local")
+    image_ref = build_local_image(tmp_path, "skaal-test:local")
 
     assert image_ref == "sha256:test-image"
+    assert calls == [(tmp_path.resolve(), "skaal-test:local")]
+
+
+def test_gcp_push_uses_google_auth_and_docker_builder(monkeypatch, tmp_path: Path):
+    calls: list[tuple[str, object]] = []
+
+    class _FakeCredentials:
+        token: str | None = None
+
+        def refresh(self, request) -> None:
+            calls.append(("refresh", request))
+            self.token = "test-token"
+
+    monkeypatch.setattr(
+        "skaal.deploy.packaging.gcp_push.google.auth.default",
+        lambda *, scopes: (_FakeCredentials(), "demo-project"),
+    )
+    monkeypatch.setattr("skaal.deploy.packaging.gcp_push.Request", lambda: "request")
+    monkeypatch.setattr(
+        "skaal.deploy.packaging.gcp_push.login_registry",
+        lambda **kwargs: calls.append(("login", kwargs)),
+    )
+    monkeypatch.setattr(
+        "skaal.deploy.packaging.gcp_push.build_image",
+        lambda **kwargs: calls.append(("build", kwargs)) or "sha256:test-image",
+    )
+    monkeypatch.setattr(
+        "skaal.deploy.packaging.gcp_push.push_image",
+        lambda **kwargs: calls.append(("push", kwargs)),
+    )
+
+    build_and_push_image(tmp_path, "demo-project", "us-central1", "repo-name", "demo-app")
+
     assert calls == [
-        (["docker", "build", "-t", "skaal-test:local", str(tmp_path.resolve())], tmp_path, False),
+        ("refresh", "request"),
         (
-            ["docker", "image", "inspect", "skaal-test:local", "--format", "{{.Id}}"],
-            tmp_path,
-            True,
+            "login",
+            {
+                "registry": "us-central1-docker.pkg.dev",
+                "username": "oauth2accesstoken",
+                "password": "test-token",
+            },
+        ),
+        (
+            "build",
+            {
+                "context_dir": tmp_path.resolve(),
+                "tag": "us-central1-docker.pkg.dev/demo-project/repo-name/demo-app:latest",
+            },
+        ),
+        (
+            "push",
+            {
+                "repository": "us-central1-docker.pkg.dev/demo-project/repo-name/demo-app",
+                "tag": "latest",
+            },
         ),
     ]
 
 
-def test_run_surfaces_clear_message_for_missing_pulumi(monkeypatch):
-    def fake_run(*args, **kwargs):
-        raise FileNotFoundError("missing")
+def test_automation_runner_applies_package_config(monkeypatch):
+    stack_ref = MagicMock()
+    stack_ref.outputs.return_value = {"appUrl": MagicMock(value="http://localhost:8000")}
 
-    monkeypatch.setattr(push.subprocess, "run", fake_run)
+    monkeypatch.setattr(
+        "skaal.deploy.pulumi.runner.read_stack_spec",
+        lambda artifacts_dir: {
+            "name": "skaal-test",
+            "runtime": "yaml",
+            "config": {},
+            "resources": {},
+            "outputs": {"appUrl": "http://localhost:8000"},
+        },
+    )
+    monkeypatch.setattr(
+        "skaal.deploy.pulumi.runner.workspace_options",
+        lambda artifacts_dir, spec: MagicMock(),
+    )
+    monkeypatch.setattr(
+        "skaal.deploy.pulumi.runner.auto.create_or_select_stack",
+        lambda **kwargs: stack_ref,
+    )
 
-    try:
-        push._pulumi_stack_select_or_init(Path("artifacts"), "local")
-    except FileNotFoundError as exc:
-        assert "Pulumi CLI was not found on PATH" in str(exc)
-    else:
-        raise AssertionError("Expected FileNotFoundError")
+    runner = AutomationRunner()
+    outputs = runner.deploy(
+        RunnerPlan(
+            context=DeploymentContext(
+                target="local",
+                artifacts_dir=Path("artifacts"),
+                stack="local",
+                region=None,
+                gcp_project=None,
+                yes=True,
+                project_root=Path("."),
+                source_module="examples.counter",
+                app_name="Test App",
+            ),
+            config={"customConfig": "enabled"},
+            package=lambda context: {"localImageRef": "sha256:local-image"},
+            output_keys=("appUrl",),
+        )
+    )
 
-
-def test_run_surfaces_clear_message_for_missing_external_tool(monkeypatch):
-    def fake_run(*args, **kwargs):
-        raise FileNotFoundError("missing")
-
-    monkeypatch.setattr(push.subprocess, "run", fake_run)
-
-    try:
-        push._run(["docker", "build", "."])
-    except FileNotFoundError as exc:
-        assert "Required executable was not found on PATH: docker" in str(exc)
-    else:
-        raise AssertionError("Expected FileNotFoundError")
+    assert outputs == {"appUrl": "http://localhost:8000"}
+    applied = {(call.args[0], call.args[1].value) for call in stack_ref.set_config.call_args_list}
+    assert applied == {
+        ("customConfig", "enabled"),
+        ("localImageRef", "sha256:local-image"),
+    }
+    stack_ref.up.assert_called_once()

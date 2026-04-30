@@ -43,6 +43,7 @@ from typing import TYPE_CHECKING, Any, Iterable, Literal, Union
 
 from skaal.plan import PLAN_FILE_NAME, ComputeSpec, PlanFile, StorageSpec
 from skaal.settings import SkaalSettings
+from skaal.types import StackProfile
 
 if TYPE_CHECKING:
     from skaal.app import App
@@ -367,7 +368,7 @@ def build(
         ValueError:        If the plan references an unknown deploy target or
                            has no source module and *app* was not provided.
     """
-    from skaal.deploy.registry import get_target
+    from skaal.deploy import get_target
 
     cfg = SkaalSettings().for_stack(stack)
     resolved_out = Path(output_dir) if output_dir is not None else cfg.out
@@ -404,13 +405,13 @@ def build(
     )
 
 
-def _build_stack_profile(cfg: SkaalSettings) -> dict[str, Any]:
+def _build_stack_profile(cfg: SkaalSettings) -> StackProfile:
     """Extract the stack-profile fields that build generators consume.
 
     Returns only the non-empty fields so tests and generators can use the
     truthiness of the dict to decide whether to emit stack-specific config.
     """
-    profile: dict[str, Any] = {}
+    profile: StackProfile = {}
     if cfg.enable_mesh:
         profile["enable_mesh"] = True
     if cfg.env:
@@ -447,7 +448,8 @@ def deploy(
         ValueError:        If the target is unknown or required settings (e.g.
                            ``gcp_project`` for GCP) are missing.
     """
-    from skaal.deploy.push import package_and_push, read_meta
+    from skaal.deploy import package_and_push
+    from skaal.deploy.pulumi.meta import read_meta
 
     base = SkaalSettings()
     resolved_dir = Path(artifacts_dir).resolve()
@@ -516,7 +518,8 @@ def destroy(
                            ``skaal-meta.json``.
         ValueError:        If the target is unknown.
     """
-    from skaal.deploy.push import destroy_stack, read_meta
+    from skaal.deploy import destroy_stack
+    from skaal.deploy.pulumi.meta import read_meta
 
     base = SkaalSettings()
     resolved_dir = Path(artifacts_dir).resolve()

@@ -1,13 +1,48 @@
-"""Skaal deploy module — generates and pushes deployment artifacts.
+"""Skaal deploy facade."""
 
-Public API:
-- :func:`get_target` — look up a :class:`~skaal.deploy.target.DeployTarget`
-  by name (e.g. ``"aws"``, ``"gcp"``, ``"local"``).
-- :func:`package_and_push` — package and deploy artifacts produced by
-  ``skaal build``.
-"""
+from __future__ import annotations
 
-from skaal.deploy.push import package_and_push
-from skaal.deploy.registry import get_target
+from pathlib import Path
 
-__all__ = ["get_target", "package_and_push"]
+from skaal.deploy.pulumi.meta import read_meta
+from skaal.types import ConfigOverrides, StackOutputs
+
+from .targets.registry import get_target
+
+
+def package_and_push(
+    artifacts_dir: Path,
+    *,
+    stack: str = "dev",
+    region: str | None = None,
+    gcp_project: str | None = None,
+    yes: bool = True,
+    config_overrides: ConfigOverrides | None = None,
+) -> StackOutputs:
+    artifacts_dir = Path(artifacts_dir).resolve()
+    meta = read_meta(artifacts_dir)
+    return get_target(meta["target"]).package_and_push(
+        artifacts_dir,
+        stack=stack,
+        region=region,
+        gcp_project=gcp_project,
+        yes=yes,
+        project_root=artifacts_dir.parent,
+        source_module=meta["source_module"],
+        app_name=meta["app_name"],
+        config_overrides=config_overrides,
+    )
+
+
+def destroy_stack(
+    artifacts_dir: Path,
+    *,
+    stack: str = "dev",
+    yes: bool = True,
+) -> None:
+    artifacts_dir = Path(artifacts_dir).resolve()
+    meta = read_meta(artifacts_dir)
+    get_target(meta["target"]).destroy_stack(artifacts_dir, stack=stack, yes=yes)
+
+
+__all__ = ["destroy_stack", "get_target", "package_and_push"]

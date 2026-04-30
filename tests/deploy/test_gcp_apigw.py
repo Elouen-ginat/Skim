@@ -5,7 +5,7 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 from skaal.components import APIGateway, AuthConfig, Proxy, Route
-from skaal.deploy.gcp import _add_gcp_api_gateway, _gcp_openapi_path
+from skaal.deploy.builders.apigw import add_gcp_api_gateway, gcp_openapi_path
 from skaal.plan import PlanFile
 from skaal.solver.components import encode_component
 
@@ -13,15 +13,15 @@ from skaal.solver.components import encode_component
 
 
 def test_gcp_openapi_path_wildcard():
-    assert _gcp_openapi_path("/api/*") == "/api/{proxy}"
+    assert gcp_openapi_path("/api/*") == "/api/{proxy}"
 
 
 def test_gcp_openapi_path_root_wildcard():
-    assert _gcp_openapi_path("/*") == "/{proxy}"
+    assert gcp_openapi_path("/*") == "/{proxy}"
 
 
 def test_gcp_openapi_path_exact():
-    assert _gcp_openapi_path("/health") == "/health"
+    assert gcp_openapi_path("/health") == "/health"
 
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
@@ -46,7 +46,7 @@ def test_no_gateway_resources_when_no_component():
     app = _make_app()
     resources: dict = {}
     outputs: dict = {}
-    _add_gcp_api_gateway(app, plan, resources, outputs)
+    add_gcp_api_gateway(app, plan, resources, outputs)
 
     assert resources == {}
     assert outputs == {}
@@ -62,7 +62,7 @@ def test_proxy_emits_api_gateway_resources():
     app = _make_app()
     resources: dict = {}
     outputs: dict = {}
-    _add_gcp_api_gateway(app, plan, resources, outputs)
+    add_gcp_api_gateway(app, plan, resources, outputs)
 
     assert "api-gateway-api" in resources
     assert "api-gateway-config" in resources
@@ -77,7 +77,7 @@ def test_gateway_api_config_has_openapi_doc():
     app = _make_app()
     resources: dict = {}
     outputs: dict = {}
-    _add_gcp_api_gateway(app, plan, resources, outputs)
+    add_gcp_api_gateway(app, plan, resources, outputs)
 
     cfg = resources["api-gateway-config"]
     assert cfg["type"] == "gcp:apigateway:ApiConfig"
@@ -97,7 +97,7 @@ def test_openapi_includes_cloud_run_url_ref():
     app = _make_app()
     resources: dict = {}
     outputs: dict = {}
-    _add_gcp_api_gateway(app, plan, resources, outputs)
+    add_gcp_api_gateway(app, plan, resources, outputs)
 
     parts = resources["api-gateway-config"]["properties"]["openapiDocuments"][0]["document"][
         "contents"
@@ -124,7 +124,7 @@ def test_openapi_jwt_security_definition():
     app = _make_app()
     resources: dict = {}
     outputs: dict = {}
-    _add_gcp_api_gateway(app, plan, resources, outputs)
+    add_gcp_api_gateway(app, plan, resources, outputs)
 
     parts = resources["api-gateway-config"]["properties"]["openapiDocuments"][0]["document"][
         "contents"
@@ -145,7 +145,7 @@ def test_mount_routes_fallback():
     app = _make_app(mounts={"auth": "/auth"})
     resources: dict = {}
     outputs: dict = {}
-    _add_gcp_api_gateway(app, plan, resources, outputs)
+    add_gcp_api_gateway(app, plan, resources, outputs)
 
     parts = resources["api-gateway-config"]["properties"]["openapiDocuments"][0]["document"][
         "contents"
@@ -164,6 +164,6 @@ def test_api_gateway_config_depends_on_cloud_run():
     app = _make_app()
     resources: dict = {}
     outputs: dict = {}
-    _add_gcp_api_gateway(app, plan, resources, outputs)
+    add_gcp_api_gateway(app, plan, resources, outputs)
 
     assert "${cloud-run-service}" in resources["api-gateway-config"]["options"]["dependsOn"]

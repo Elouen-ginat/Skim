@@ -6,9 +6,9 @@ import json
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from skaal.deploy.aws import generate_artifacts as generate_aws_artifacts
-from skaal.deploy.gcp import generate_artifacts as generate_gcp_artifacts
-from skaal.deploy.local import generate_artifacts as generate_local_artifacts
+from skaal.deploy.targets.aws import generate_artifacts as generate_aws_artifacts
+from skaal.deploy.targets.gcp import generate_artifacts as generate_gcp_artifacts
+from skaal.deploy.targets.local import generate_artifacts as generate_local_artifacts
 from skaal.plan import PlanFile
 
 
@@ -103,6 +103,7 @@ def test_generated_dockerfiles_do_not_require_rust_toolchain(tmp_path: Path) -> 
     assert "rustup" not in local_dockerfile
     assert "build-essential" not in local_dockerfile
     assert "cargo" not in local_dockerfile
+    assert "--mount=type=cache" not in local_dockerfile
 
     gcp_output_dir = tmp_path / "gcp-artifacts"
     generate_gcp_artifacts(
@@ -160,6 +161,7 @@ def test_local_dev_uses_docker_build_stage_when_no_linux_wheel(tmp_path: Path) -
     assert "maturin build" in dockerfile
     assert "COPY --from=mesh-builder" in dockerfile
     assert "pip install" in dockerfile
+    assert "--mount=type=cache" not in dockerfile
 
 
 def test_local_dev_artifacts_bundle_linux_mesh_wheel_when_available(tmp_path: Path) -> None:

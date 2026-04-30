@@ -74,9 +74,9 @@ def deploy(
     AWS  — installs deps, packages handler.py + source, runs pulumi up.
     GCP  — runs pulumi up (infra), builds + pushes Docker image, runs pulumi up.
 
-    Prerequisites:
-      AWS: AWS credentials configured, Pulumi CLI installed.
-      GCP: gcloud authenticated, Docker installed, Pulumi CLI installed.
+        Prerequisites:
+            AWS: AWS credentials configured.
+            GCP: Application Default Credentials configured and a reachable Docker daemon.
     """
     from skaal import api
 

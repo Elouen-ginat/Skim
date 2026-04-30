@@ -8,6 +8,7 @@ from textwrap import dedent
 import pytest
 
 from skaal.settings import SkaalSettings, StackProfile
+from skaal.types import StackProfile as DeployStackProfile
 
 
 def _write_pyproject(tmp_path: Path, body: str) -> None:
@@ -296,12 +297,12 @@ def test_gcp_pulumi_stack_applies_profile() -> None:
     """env / invokers / labels from the profile land in the right places
     inside the generated Pulumi stack dict."""
     from skaal.app import App
-    from skaal.deploy.gcp import _build_pulumi_stack
+    from skaal.deploy.builders.gcp import build_pulumi_stack
     from skaal.plan import PlanFile
 
     app = App(name="demo")
     plan = PlanFile(app_name="demo", deploy_target="gcp")
-    profile = {
+    profile: DeployStackProfile = {
         "env": {"FEATURE_X": "on", "FEATURE_Y": "off"},
         "invokers": [
             "serviceAccount:alice@example.com",
@@ -310,7 +311,7 @@ def test_gcp_pulumi_stack_applies_profile() -> None:
         "labels": {"env": "prd", "team": "infra"},
     }
 
-    stack = _build_pulumi_stack(app, plan, region="europe-west1", stack_profile=profile)
+    stack = build_pulumi_stack(app, plan, region="europe-west1", stack_profile=profile)
     resources = stack["resources"]
 
     envs = resources["cloud-run-service"]["properties"]["template"]["spec"]["containers"][0]["envs"]
@@ -329,13 +330,13 @@ def test_gcp_pulumi_stack_applies_profile() -> None:
 def test_gcp_pulumi_stack_defaults_to_public_invoker() -> None:
     """With no invokers profile key, the invoker resource stays public."""
     from skaal.app import App
-    from skaal.deploy.gcp import _build_pulumi_stack
+    from skaal.deploy.builders.gcp import build_pulumi_stack
     from skaal.plan import PlanFile
 
     app = App(name="demo")
     plan = PlanFile(app_name="demo", deploy_target="gcp")
 
-    stack = _build_pulumi_stack(app, plan, region="us-central1")
+    stack = build_pulumi_stack(app, plan, region="us-central1")
     assert stack["resources"]["invoker"]["properties"]["member"] == "allUsers"
     assert "invoker-1" not in stack["resources"]
 

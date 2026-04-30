@@ -8,7 +8,8 @@ from unittest.mock import MagicMock
 import pytest
 
 from skaal.components import APIGateway, Proxy, Route
-from skaal.deploy.local import _build_pulumi_stack, generate_artifacts
+from skaal.deploy.builders.local import build_pulumi_stack
+from skaal.deploy.targets.local import generate_artifacts
 from skaal.plan import PlanFile, StorageSpec
 from skaal.solver.components import encode_component
 
@@ -37,7 +38,7 @@ def test_local_stack_emits_core_resources_and_storage_envs(tmp_path: Path):
         deploy_config={"port": 8123},
     )
 
-    stack = _build_pulumi_stack(
+    stack = build_pulumi_stack(
         _make_app(),
         plan,
         output_dir=tmp_path / "artifacts",
@@ -83,7 +84,7 @@ def test_local_stack_proxy_adds_traefik_and_labels(tmp_path: Path):
     spec = encode_component("edge", proxy, {}, target="local")
     plan = PlanFile(app_name="test-app", components={"edge": spec})
 
-    stack = _build_pulumi_stack(
+    stack = build_pulumi_stack(
         _make_app(),
         plan,
         output_dir=tmp_path / "artifacts",
@@ -105,7 +106,7 @@ def test_local_stack_api_gateway_adds_kong_mount(tmp_path: Path):
     spec = encode_component("public", gateway, {}, target="local")
     output_dir = tmp_path / "artifacts"
 
-    stack = _build_pulumi_stack(
+    stack = build_pulumi_stack(
         _make_app(),
         PlanFile(app_name="test-app", components={"public": spec}),
         output_dir=output_dir,
@@ -139,7 +140,7 @@ def test_generate_artifacts_writes_dockerignore(tmp_path: Path):
     )
 
     dockerignore_path = output_dir / ".dockerignore"
-    local_spec_path = output_dir / "skaal-local-stack.json"
+    local_spec_path = output_dir / "skaal-stack.json"
     assert dockerignore_path in generated
     assert local_spec_path in generated
     assert dockerignore_path.read_text(encoding="utf-8") == (
@@ -163,9 +164,9 @@ def test_local_stack_omits_provider_waits_for_healthchecks_on_windows(
         deploy_config={"port": 8123},
     )
 
-    monkeypatch.setattr("skaal.deploy.local.platform.system", lambda: "Windows")
+    monkeypatch.setattr("skaal.deploy.builders.local.platform.system", lambda: "Windows")
 
-    stack = _build_pulumi_stack(
+    stack = build_pulumi_stack(
         _make_app(),
         plan,
         output_dir=tmp_path / "artifacts",
@@ -195,9 +196,9 @@ def test_local_stack_uses_container_names_for_service_hosts_on_windows(
         deploy_config={"port": 8123},
     )
 
-    monkeypatch.setattr("skaal.deploy.local.platform.system", lambda: "Windows")
+    monkeypatch.setattr("skaal.deploy.builders.local.platform.system", lambda: "Windows")
 
-    stack = _build_pulumi_stack(
+    stack = build_pulumi_stack(
         _make_app(),
         plan,
         output_dir=tmp_path / "artifacts",

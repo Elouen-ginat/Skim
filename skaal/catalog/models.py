@@ -87,7 +87,7 @@ class Catalog(BaseModel):
         """
         # Import here to avoid a circular dependency at module level
         # (deploy.config doesn't import catalog, so the dependency is one-way).
-        from skaal.deploy._backends import BackendHandler
+        from skaal.deploy.backends.handler import BackendHandler
         from skaal.deploy.config import (
             compute_deploy_config,
             storage_deploy_config,

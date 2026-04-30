@@ -71,7 +71,7 @@ def build(
             local — Docker + Pulumi (for local testing)
     """
     from skaal import api
-    from skaal.deploy.registry import get_target
+    from skaal.deploy import get_target
     from skaal.plan import PLAN_FILE_NAME
 
     cfg = SkaalSettings().for_stack(stack)

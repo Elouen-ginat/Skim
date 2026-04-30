@@ -2,7 +2,70 @@
 
 from __future__ import annotations
 
-from typing import Any, TypedDict
+from collections.abc import Mapping
+from typing import Any, Literal, NamedTuple, Protocol, Required, TypeAlias, TypedDict
+
+TargetName: TypeAlias = Literal[
+    "aws",
+    "aws-lambda",
+    "gcp",
+    "gcp-cloudrun",
+    "local",
+    "local-docker",
+]
+
+ConfigOverrides: TypeAlias = dict[str, str]
+StackOutputs: TypeAlias = dict[str, str]
+
+
+class StackProfile(TypedDict, total=False):
+    env: dict[str, str]
+    invokers: list[str]
+    labels: dict[str, str]
+    enable_mesh: bool
+
+
+class DeployMeta(TypedDict, total=False):
+    target: Required[TargetName]
+    source_module: Required[str]
+    app_name: Required[str]
+    lambda_architecture: str
+    lambda_runtime: str
+
+
+class RouteSpec(TypedDict, total=False):
+    path: str
+    target: str
+    methods: list[str]
+
+
+class AuthConfig(TypedDict, total=False):
+    provider: Literal["jwt"]
+    issuer: str
+    audience: str
+
+
+class RateLimitConfig(TypedDict, total=False):
+    requests_per_second: float
+    burst: int
+
+
+class GatewayConfig(TypedDict, total=False):
+    routes: list[RouteSpec]
+    auth: AuthConfig
+    rate_limit: RateLimitConfig
+    cors_origins: list[str]
+
+
+class AppLike(Protocol):
+    name: str
+    _mounts: dict[str, str]
+    _wsgi_attribute: str
+
+
+class BackendWiring(NamedTuple):
+    imports: str
+    overrides: str
 
 
 class DockerBuildConfig(TypedDict, total=False):
@@ -82,7 +145,7 @@ class PulumiProviderPlugin(TypedDict):
 
 
 class PulumiPlugins(TypedDict):
-    providers: list[PulumiProviderPlugin]
+    providers: Required[list[PulumiProviderPlugin]]
 
 
 class PulumiResourceOptions(TypedDict, total=False):
@@ -90,15 +153,16 @@ class PulumiResourceOptions(TypedDict, total=False):
 
 
 class PulumiResource(TypedDict, total=False):
+    properties: Required[Mapping[str, Any]]
+    type: Required[str]
     options: PulumiResourceOptions
-    properties: dict[str, Any]
-    type: str
 
 
 class PulumiStack(TypedDict, total=False):
-    config: dict[str, Any]
-    name: str
-    outputs: dict[str, Any]
+    config: Required[dict[str, Any]]
+    name: Required[str]
+    outputs: Required[dict[str, Any]]
     plugins: PulumiPlugins
-    resources: dict[str, PulumiResource]
-    runtime: str
+    resources: Required[dict[str, PulumiResource]]
+    runtime: Required[str]
+    variables: dict[str, Any]
