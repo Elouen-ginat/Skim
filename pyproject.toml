@@ -96,6 +96,7 @@ examples = [
     "dash",
     "fastapi",
     "dash-bootstrap-components>=1.0",
+    "python-multipart>=0.0.5",
 ]
 
 [project.scripts]
@@ -169,3 +170,6 @@ testpaths = ["tests"]
 # catalog     = "catalogs/aws.toml"         # path to catalog TOML
 # stack       = "dev"                       # Pulumi stack name
 # gcp_project = "my-gcp-project"            # GCP only
+
+[tool.skaal.build.modules."examples.07_file_upload_api.app"]
+dependencies = ["python-multipart>=0.0.5"]

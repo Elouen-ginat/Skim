@@ -149,6 +149,29 @@ def test_generate_artifacts_writes_dockerignore(tmp_path: Path):
     assert '"resources"' in local_spec_path.read_text(encoding="utf-8")
 
 
+def test_generate_artifacts_includes_declared_module_build_dependencies(tmp_path: Path):
+    output_dir = tmp_path / "artifacts"
+    (tmp_path / "pyproject.toml").write_text(
+        """
+[tool.skaal.build.modules.\"examples.07_file_upload_api.app\"]
+dependencies = [\"python-multipart>=0.0.5\"]
+""".strip(),
+        encoding="utf-8",
+    )
+    app = _make_app(name="file-upload-api")
+    plan = PlanFile(app_name="file-upload-api", deploy_config={"port": 8000})
+
+    generate_artifacts(
+        app,
+        plan,
+        output_dir=output_dir,
+        source_module="examples.07_file_upload_api.app",
+    )
+
+    pyproject = (output_dir / "pyproject.toml").read_text(encoding="utf-8")
+    assert '"python-multipart>=0.0.5"' in pyproject
+
+
 def test_local_stack_omits_provider_waits_for_healthchecks_on_windows(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):

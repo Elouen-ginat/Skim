@@ -37,6 +37,7 @@ Usage::
 from __future__ import annotations
 
 import base64
+import binascii
 import json
 from typing import (
     TYPE_CHECKING,
@@ -127,9 +128,12 @@ def _encode_cursor(payload: dict[str, Any]) -> str:
 def _decode_cursor(cursor: str | None) -> dict[str, Any]:
     if cursor is None:
         return {}
-    padded = cursor + "=" * (-len(cursor) % 4)
-    raw = base64.urlsafe_b64decode(padded.encode("ascii"))
-    decoded = json.loads(raw.decode("utf-8"))
+    try:
+        padded = cursor + "=" * (-len(cursor) % 4)
+        raw = base64.urlsafe_b64decode(padded.encode("ascii"))
+        decoded = json.loads(raw.decode("utf-8"))
+    except (ValueError, UnicodeDecodeError, json.JSONDecodeError, binascii.Error) as exc:
+        raise ValueError("Invalid cursor") from exc
     if not isinstance(decoded, dict):
         raise ValueError("Invalid cursor")
     return decoded

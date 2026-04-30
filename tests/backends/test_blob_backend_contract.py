@@ -37,6 +37,18 @@ def test_blob_backends_implement_protocol(tmp_path: Path) -> None:
     assert isinstance(GCSBlobBackend("bucket", filesystem=MemoryFileSystem()), BlobBackend)
 
 
+def test_file_blob_backend_preserves_posix_absolute_root() -> None:
+    backend = FileBlobBackend("/app/data/blobs", namespace="Uploads")
+    root_path = backend._root_path.replace("\\", "/")
+    data_path = backend._data_path("uploads/readme.txt").replace("\\", "/")
+    meta_path = backend._meta_path("uploads/readme.txt").replace("\\", "/")
+
+    assert root_path.endswith("/app/data/blobs/Uploads")
+    assert data_path.endswith("/app/data/blobs/Uploads/uploads/readme.txt")
+    assert meta_path.endswith("/app/data/blobs/Uploads/.skaal-meta/uploads/readme.txt.json")
+    assert "/app/app/data/" not in data_path
+
+
 @pytest.mark.asyncio
 async def test_put_get_stat_list_delete(blob_backend: BlobBackend, tmp_path: Path) -> None:
     source = tmp_path / "source.txt"

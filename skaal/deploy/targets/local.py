@@ -190,7 +190,9 @@ def generate_artifacts(
             if dependency not in seen_deps:
                 seen_deps.add(dependency)
                 infra_deps.append(dependency)
-    dependencies = list(dict.fromkeys(infra_deps + collect_user_packages(source_module)))
+    dependencies = list(
+        dict.fromkeys(infra_deps + collect_user_packages(source_module, project_root=project_root))
+    )
     uv_sources: dict[str, str] = {}
     if dev and skaal_src_dir.is_dir():
         uv_sources["skaal"] = "./_skaal"

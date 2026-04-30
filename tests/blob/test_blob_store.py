@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 from pathlib import Path
 
 import pytest
@@ -71,3 +72,27 @@ def test_blob_store_sync_helpers(tmp_path: Path) -> None:
 
     listed = Uploads.sync_list(prefix="reports/")
     assert [item.key for item in listed] == ["reports/q1.txt"]
+
+
+@pytest.mark.asyncio
+async def test_file_upload_example_treats_null_prefix_as_uploads(tmp_path: Path) -> None:
+    module = importlib.import_module("examples.07_file_upload_api.app")
+    module.Uploads.wire(FileBlobBackend(tmp_path / "blob-store", namespace="Uploads"))
+
+    await module.Uploads.put_bytes("uploads/readme.txt", b"hello", content_type="text/plain")
+
+    page = await module.list_files(prefix="null", limit=20, cursor=None)
+
+    assert [item["key"] for item in page["items"]] == ["uploads/readme.txt"]
+
+
+@pytest.mark.asyncio
+async def test_file_upload_example_accepts_partial_key_prefix(tmp_path: Path) -> None:
+    module = importlib.import_module("examples.07_file_upload_api.app")
+    module.Uploads.wire(FileBlobBackend(tmp_path / "blob-store", namespace="Uploads"))
+
+    await module.Uploads.put_bytes("uploads/readme.txt", b"hello", content_type="text/plain")
+
+    page = await module.list_files(prefix="uploads/readme", limit=20, cursor=None)
+
+    assert [item["key"] for item in page["items"]] == ["uploads/readme.txt"]

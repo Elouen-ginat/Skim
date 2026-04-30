@@ -254,3 +254,18 @@ def test_solve_blob_resource_keeps_blob_kind() -> None:
     spec = plan.storage["blob-solver.Uploads"]
     assert spec.kind == "blob"
     assert spec.backend == "s3"
+
+
+def test_solve_local_blob_resource_supports_durable_constraints() -> None:
+    app = App("blob-solver-local")
+
+    @app.storage(kind="blob", read_latency="< 500ms", durability="durable")
+    class Uploads(BlobStore):
+        pass
+
+    catalog = load_catalog(target="local")
+    plan = solve(app, catalog, target="local")
+
+    spec = plan.storage["blob-solver-local.Uploads"]
+    assert spec.kind == "blob"
+    assert spec.backend == "local-blob"

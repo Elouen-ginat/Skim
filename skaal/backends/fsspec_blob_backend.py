@@ -35,7 +35,13 @@ class FsspecBlobBackend:
         return "/".join(parts)
 
     def _normalize_path(self, path: str) -> str:
-        return PurePosixPath(path.replace("\\", "/").lstrip("/")).as_posix()
+        normalized = path.replace("\\", "/")
+        pure_path = PurePosixPath(normalized)
+        parts = [part for part in pure_path.parts if part not in ("", ".")]
+        if normalized.startswith("/"):
+            cleaned = [part for part in parts if part != "/"]
+            return PurePosixPath("/", *cleaned).as_posix()
+        return PurePosixPath(*parts).as_posix()
 
     def _join_path(self, base: str, *parts: str) -> str:
         path = PurePosixPath(self._normalize_path(base))

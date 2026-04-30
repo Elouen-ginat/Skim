@@ -67,7 +67,7 @@ def generate_artifacts(
             if dependency not in handler_extra_deps:
                 handler_extra_deps.append(dependency)
 
-    user_packages = collect_user_packages(source_module)
+    user_packages = collect_user_packages(source_module, project_root=output_dir.parent)
     base_deps = ["skaal[aws]"]
     if wsgi_attribute:
         base_deps.append("mangum>=0.17")

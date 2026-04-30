@@ -91,7 +91,9 @@ def generate_artifacts(
             if dependency not in seen_deps:
                 seen_deps.add(dependency)
                 infra_deps.append(dependency)
-    dependencies = list(dict.fromkeys(infra_deps + collect_user_packages(source_module)))
+    dependencies = list(
+        dict.fromkeys(infra_deps + collect_user_packages(source_module, project_root=project_root))
+    )
 
     pyproject_path = output_dir / "pyproject.toml"
     pyproject_path.write_text(to_pyproject_toml(app.name, dependencies), encoding="utf-8")

@@ -45,6 +45,24 @@ def _object_payload(obj: object) -> dict[str, object]:
     }
 
 
+def _normalize_list_prefix(prefix: str | None) -> str:
+    if prefix is None:
+        return "uploads/"
+    value = prefix.strip()
+    if not value or value.lower() in {"null", "none"}:
+        return "uploads/"
+    return value.lstrip("/")
+
+
+def _normalize_cursor(cursor: str | None) -> str | None:
+    if cursor is None:
+        return None
+    value = cursor.strip()
+    if not value or value.lower() in {"null", "none"}:
+        return None
+    return value
+
+
 @api.post("/files")
 async def upload_file(
     file: UploadFile = File(...),
@@ -66,11 +84,32 @@ async def upload_file(
 
 @api.get("/files")
 async def list_files(
-    prefix: str = Query("", description="Only list keys with this prefix."),
+    prefix: str | None = Query(
+        None,
+        description="Key prefix to list. Defaults to the upload folder.",
+    ),
     limit: int = Query(20, ge=1, le=100),
-    cursor: str | None = Query(None),
+    cursor: str | None = Query(
+        None,
+        description="Opaque token from a previous response. Leave empty for the first page.",
+    ),
 ) -> dict[str, object]:
-    page = await Uploads.list_page(prefix=prefix, limit=limit, cursor=cursor)
+    normalized_prefix = _normalize_list_prefix(prefix)
+    normalized_cursor = _normalize_cursor(cursor)
+    try:
+        page = await Uploads.list_page(
+            prefix=normalized_prefix,
+            limit=limit,
+            cursor=normalized_cursor,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Invalid cursor. Leave it empty for the first page and reuse "
+                "next_cursor from the previous /files response."
+            ),
+        ) from exc
     return {
         "items": [_object_payload(item) for item in page.items],
         "next_cursor": page.next_cursor,
