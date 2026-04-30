@@ -37,6 +37,9 @@ htmlcov/
 *.swp
 *.swo
 
+skaal_chroma/
+skaal_local.db
+
 # OS
 .DS_Store
 Thumbs.db
