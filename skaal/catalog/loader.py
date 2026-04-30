@@ -3,9 +3,8 @@
 Catalog sources, in order of precedence:
 
 1. Explicit path (``--catalog ./my-catalog.toml``)
-2. Short name registered via :func:`skaal.plugins.register_catalog` or the
-   ``skaal.catalogs`` entry-point group (``--catalog aws`` → whatever an
-   addon registers for ``aws``)
+2. Short name registered via the ``skaal.catalogs`` entry-point group
+    (``--catalog aws`` → whatever an addon registers for ``aws``)
 3. Built-in filesystem search (``catalogs/<target>.toml``)
 """
 

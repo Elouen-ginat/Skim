@@ -265,20 +265,6 @@ class TestPluginRegistry:
         ):
             assert get_backend(name) is not None
 
-    def test_in_process_registration_overrides_entry_point(self) -> None:
-        """register_backend() takes precedence over installed entry points."""
-        from skaal.plugins import get_backend, register_backend
-
-        sentinel = object()
-        register_backend("local", sentinel)  # type: ignore[arg-type]
-        try:
-            assert get_backend("local") is sentinel
-        finally:
-            # Restore: register_backend doesn't expose a remove; clear the dict.
-            from skaal.plugins import _backends
-
-            _backends.pop("local", None)
-
     def test_unknown_backend_raises_plugin_error(self) -> None:
         from skaal.errors import SkaalPluginError
         from skaal.plugins import get_backend
