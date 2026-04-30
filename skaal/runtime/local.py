@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import inspect
 import json
+import logging
 import traceback
 from pathlib import Path
 from typing import Any, cast
@@ -11,6 +12,11 @@ from typing import Any, cast
 from skaal.backends.local_backend import LocalMap
 
 _MAX_BODY_SIZE = 10 * 1024 * 1024  # 10 MiB — reject oversized request bodies
+log = logging.getLogger("skaal.runtime")
+
+
+def _format_banner(title: str, lines: list[str]) -> str:
+    return "\n".join(["", title, *lines, ""])
 
 
 def _wire_channel(channel_obj: Any) -> None:
@@ -569,17 +575,16 @@ class LocalRuntime:
         public_fns = [n for n in sorted(funcs) if not hasattr(funcs[n], "__skaal_schedule__")]
         scheduled = self._collect_schedules()
 
-        print(f"\n  Skaal local runtime — {self.app.name}")
-        print(f"  http://{self.host}:{self.port}\n")
+        banner_lines = [f"  http://{self.host}:{self.port}", ""]
         for name in public_fns:
-            print(f"    POST /{name}")
+            banner_lines.append(f"    POST /{name}")
         if scheduled:
-            print()
+            banner_lines.append("")
             for name, fn in sorted(scheduled.items()):
                 meta = fn.__skaal_schedule__
                 trigger = meta["trigger"]
-                print(f"    schedule /{name}  [{trigger!r}]")
-        print()
+                banner_lines.append(f"    schedule /{name}  [{trigger!r}]")
+        log.info(_format_banner(f"  Skaal local runtime — {self.app.name}", banner_lines))
 
         # ── Starlette ASGI app — delegates to existing _dispatch ──────────────
         async def _handle(request: StarletteRequest) -> JSONResponse:
@@ -643,7 +648,7 @@ class LocalRuntime:
                                 if _emit_to is not None and result is not None:
                                     await _emit_to.send(result)
                             except Exception as exc:  # noqa: BLE001
-                                print(f"  [schedule/{_name}] ERROR: {exc}")
+                                log.warning("[schedule/%s] ERROR: %s", _name, exc)
 
                         return _job
 
@@ -651,7 +656,7 @@ class LocalRuntime:
 
                 scheduler.start()
             except ImportError:
-                print(
+                log.warning(
                     "  WARNING: apscheduler not installed — scheduled functions will not run.\n"
                     "           Install with: pip install apscheduler\n"
                 )
@@ -700,7 +705,7 @@ class LocalRuntime:
 
                 from skaal.schedule import Every, ScheduleContext
             except ImportError:
-                print(
+                log.warning(
                     "[skaal/scheduler] WARNING: apscheduler not installed"
                     " — scheduled functions will not run.\n"
                     "                  Install with: pip install apscheduler"
@@ -729,10 +734,7 @@ class LocalRuntime:
                         from datetime import timezone as _tz
 
                         ctx = ScheduleContext(fired_at=__import__("datetime").datetime.now(_tz.utc))
-                        print(
-                            f"[skaal/schedule] {_name} fired at {ctx.fired_at.isoformat()}",
-                            flush=True,
-                        )
+                        log.info("[skaal/schedule] %s fired at %s", _name, ctx.fired_at.isoformat())
                         try:
                             if "ctx" in inspect.signature(_fn).parameters:
                                 result = (
@@ -744,22 +746,16 @@ class LocalRuntime:
                                 result = await _fn() if inspect.iscoroutinefunction(_fn) else _fn()
                             if _emit_to is not None and result is not None:
                                 await _emit_to.send(result)
-                            print(
-                                f"[skaal/schedule] {_name} completed",
-                                flush=True,
-                            )
+                            log.info("[skaal/schedule] %s completed", _name)
                         except Exception as exc:  # noqa: BLE001
-                            print(f"[skaal/schedule] {_name} ERROR: {exc}", flush=True)
+                            log.warning("[skaal/schedule] %s ERROR: %s", _name, exc)
 
                     return _job
 
                 scheduler.add_job(_make_job(), ap_trigger)
 
             scheduler.start()
-            print(
-                f"[skaal/scheduler] started {len(scheduled)} job(s):" f" {list(scheduled)}",
-                flush=True,
-            )
+            log.info("[skaal/scheduler] started %s job(s): %s", len(scheduled), list(scheduled))
             loop.run_forever()
 
         thread = threading.Thread(target=_run, daemon=True, name="skaal-scheduler")
@@ -803,11 +799,17 @@ class LocalRuntime:
         )
 
         attribute = getattr(self.app, "_wsgi_attribute", "wsgi_app")
-        print(f"\n  Skaal local runtime — {self.app.name}  [WSGI: {attribute}]")
-        print(f"  http://{self.host}:{self.port}\n")
-        print("    /health  → Skaal health check")
-        print(f"    /*       → {attribute}  (Dash / Flask)")
-        print()
+        log.info(
+            _format_banner(
+                f"  Skaal local runtime — {self.app.name}  [WSGI: {attribute}]",
+                [
+                    f"  http://{self.host}:{self.port}",
+                    "",
+                    "    /health  → Skaal health check",
+                    f"    /*       → {attribute}  (Dash / Flask)",
+                ],
+            )
+        )
 
         config = uvicorn.Config(
             asgi_app,
@@ -853,11 +855,17 @@ class LocalRuntime:
         )
 
         attribute = getattr(self.app, "_asgi_attribute", "asgi_app")
-        print(f"\n  Skaal local runtime — {self.app.name}  [ASGI: {attribute}]")
-        print(f"  http://{self.host}:{self.port}\n")
-        print("    /health  → Skaal health check")
-        print(f"    /*       → {attribute}  (FastAPI / Starlette)")
-        print()
+        log.info(
+            _format_banner(
+                f"  Skaal local runtime — {self.app.name}  [ASGI: {attribute}]",
+                [
+                    f"  http://{self.host}:{self.port}",
+                    "",
+                    "    /health  → Skaal health check",
+                    f"    /*       → {attribute}  (FastAPI / Starlette)",
+                ],
+            )
+        )
 
         config = uvicorn.Config(wrapped, host=self.host, port=self.port, log_level="info")
         await uvicorn.Server(config).serve()

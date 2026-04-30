@@ -6,7 +6,7 @@ import dataclasses
 import hashlib
 import inspect
 import json
-import warnings
+import logging
 from typing import TYPE_CHECKING, Any
 
 from skaal.plan import ComponentSpec, ComputeSpec, PatternSpec, PlanFile, StorageSpec
@@ -16,6 +16,9 @@ from skaal.solver.targets import catalog_compute_key
 
 if TYPE_CHECKING:
     from skaal.app import App
+
+
+log = logging.getLogger("skaal.solver")
 
 
 def _compute_schema_hash(obj: Any) -> str:
@@ -178,11 +181,9 @@ def solve(app: "App", catalog: dict[str, Any], target: str = "generic") -> "Plan
     try:
         resource_order = graph.topological_order()
     except CyclicDependencyError as exc:
-        warnings.warn(
+        log.warning(
             f"Cyclic dependency detected in resource graph: {exc}. "
-            "Falling back to unordered resource list.",
-            RuntimeWarning,
-            stacklevel=2,
+            "Falling back to unordered resource list."
         )
         resource_order = sorted(all_resources.keys())
 
@@ -224,11 +225,9 @@ def solve(app: "App", catalog: dict[str, Any], target: str = "generic") -> "Plan
                         colocate_qname = candidate
                         break
                 if colocate_qname is None:
-                    warnings.warn(
+                    log.warning(
                         f"Storage {qname!r}: collocate_with={raw_colocate!r} "
-                        "does not match any registered resource. Ignored.",
-                        RuntimeWarning,
-                        stacklevel=2,
+                        "does not match any registered resource. Ignored."
                     )
 
         storage_specs[qname] = StorageSpec(
@@ -260,11 +259,9 @@ def solve(app: "App", catalog: dict[str, Any], target: str = "generic") -> "Plan
             )
         except UnsatisfiableComputeConstraints as e:
             # Warn the user that their constraint was violated, then fall back to cheapest
-            warnings.warn(
+            log.warning(
                 f"Compute constraint for {qname!r} is unsatisfiable: {e}. "
-                "Falling back to cheapest available instance.",
-                RuntimeWarning,
-                stacklevel=2,
+                "Falling back to cheapest available instance."
             )
             if compute_backends:
                 instance_type = min(
@@ -287,11 +284,9 @@ def solve(app: "App", catalog: dict[str, Any], target: str = "generic") -> "Plan
                         colocate_qname = candidate
                         break
                 if colocate_qname is None:
-                    warnings.warn(
+                    log.warning(
                         f"Function {qname!r}: collocate_with={raw_colocate!r} "
-                        "does not match any registered resource. Ignored.",
-                        RuntimeWarning,
-                        stacklevel=2,
+                        "does not match any registered resource. Ignored."
                     )
 
         # Scale strategy — set by @scale decorator
@@ -328,11 +323,9 @@ def solve(app: "App", catalog: dict[str, Any], target: str = "generic") -> "Plan
                 spec = encode_component(comp_name, comp_obj, catalog, target=target)
                 component_specs[comp_name] = spec
             except Exception as exc:  # noqa: BLE001
-                warnings.warn(
+                log.warning(
                     f"Component {comp_name!r} encoding failed: {exc}. "
-                    "It will be omitted from the plan.",
-                    RuntimeWarning,
-                    stacklevel=2,
+                    "It will be omitted from the plan."
                 )
 
     # ── Solve patterns (EventLog, Projection, Saga, Outbox) ───────────────
@@ -352,11 +345,9 @@ def solve(app: "App", catalog: dict[str, Any], target: str = "generic") -> "Plan
                     qname, pattern_constraints, storage_backends, target=target
                 )
             except UnsatisfiableConstraints as exc:
-                warnings.warn(
+                log.warning(
                     f"EventLog {qname!r} could not be solved: {exc}. "
-                    "No backing store will be provisioned.",
-                    RuntimeWarning,
-                    stacklevel=2,
+                    "No backing store will be provisioned."
                 )
                 backend_name, reason = "", str(exc)
 
@@ -389,11 +380,9 @@ def solve(app: "App", catalog: dict[str, Any], target: str = "generic") -> "Plan
 
             # Validate the handler points to a registered function
             if handler and handler not in registered_functions:
-                warnings.warn(
+                log.warning(
                     f"Projection {qname!r} references unknown handler {handler!r}. "
-                    "Make sure it is registered via @app.function.",
-                    RuntimeWarning,
-                    stacklevel=2,
+                    "Make sure it is registered via @app.function."
                 )
 
             # Projections force the target store to co-locate with the source.
@@ -438,11 +427,9 @@ def solve(app: "App", catalog: dict[str, Any], target: str = "generic") -> "Plan
                 if comp_name and comp_name not in registered_functions:
                     missing.append(f"compensate={comp_name!r}")
             if missing:
-                warnings.warn(
+                log.warning(
                     f"Saga {qname!r} references unregistered names: {', '.join(missing)}. "
-                    "Register them via @app.function before deploying.",
-                    RuntimeWarning,
-                    stacklevel=2,
+                    "Register them via @app.function before deploying."
                 )
 
             pattern_specs[qname] = PatternSpec(

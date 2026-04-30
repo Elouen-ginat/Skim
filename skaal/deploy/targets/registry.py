@@ -1,16 +1,17 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, TypeAlias
 
 import docker.errors as docker_errors
-import typer
 
 import skaal.deploy.targets.aws as aws_target
 import skaal.deploy.targets.gcp as gcp_target
 import skaal.deploy.targets.local as local_target
+from skaal.deploy._progress import ProgressSink
 from skaal.deploy.builders.local import local_image_name
 from skaal.deploy.errors import DeployError
 from skaal.deploy.packaging import build_and_push_image, package_lambda
@@ -29,6 +30,13 @@ from skaal.types import AppLike, ConfigOverrides, StackOutputs, StackProfile, Ta
 
 if TYPE_CHECKING:
     from skaal.plan import PlanFile
+
+
+deploy_log = logging.getLogger("skaal.deploy")
+packaging_log = logging.getLogger("skaal.deploy.packaging")
+docker_log = logging.getLogger("skaal.deploy.docker")
+pulumi_log = logging.getLogger("skaal.deploy.pulumi")
+_PROGRESS_SINK = ProgressSink(deploy_log)
 
 
 class GenerateArtifacts(Protocol):
@@ -83,7 +91,7 @@ def _local_config(context: DeploymentContext, default_region: str) -> ConfigOver
 
 def _aws_package(context: DeploymentContext) -> ConfigOverrides:
     meta = read_meta(context.artifacts_dir)
-    typer.echo("==> Packaging Lambda ...")
+    packaging_log.info("Packaging Lambda ...")
     package_lambda(
         context.artifacts_dir,
         context.project_root,
@@ -95,10 +103,14 @@ def _aws_package(context: DeploymentContext) -> ConfigOverrides:
 
 
 def _local_package(context: DeploymentContext) -> ConfigOverrides:
-    typer.echo("==> Building local app image ...")
+    docker_log.info("Building local app image ...")
     image_name = local_image_name(context.app_name)
     try:
-        image_id = build_local_image(context.artifacts_dir, image_name)
+        image_id = build_local_image(
+            context.artifacts_dir,
+            image_name,
+            progress=_PROGRESS_SINK.docker_log,
+        )
     except DeployError:
         raise
     except docker_errors.DockerException as exc:
@@ -118,7 +130,7 @@ def _gcp_post_up(context: DeploymentContext, output: "Callable[[str], str]") -> 
         )
     repository = output("imageRepository")
     resolved_region = context.region or "us-central1"
-    typer.echo(f"==> Building and pushing image to {repository} ...")
+    docker_log.info("Building and pushing image to %s ...", repository)
     try:
         build_and_push_image(
             context.artifacts_dir,
@@ -126,6 +138,7 @@ def _gcp_post_up(context: DeploymentContext, output: "Callable[[str], str]") -> 
             resolved_region,
             repository,
             context.app_name,
+            progress=_PROGRESS_SINK.docker_log,
         )
     except DeployError:
         raise
@@ -136,11 +149,11 @@ def _gcp_post_up(context: DeploymentContext, output: "Callable[[str], str]") -> 
             message="Failed to build or push the Cloud Run image.",
             diagnostics=str(exc),
         ) from exc
-    typer.echo("==> Deploying image to Cloud Run (pulumi up) ...")
+    pulumi_log.info("Deploying image to Cloud Run (pulumi up) ...")
     return True
 
 
-_runner = AutomationRunner()
+_runner = AutomationRunner(progress_sink=_PROGRESS_SINK)
 
 _AWS_STRATEGY = TargetStrategy(
     name="aws",
@@ -242,7 +255,15 @@ class PulumiDeployTarget(DeployTarget):
         )
         for key in ("apiUrl", "serviceUrl", "appUrl"):
             if key in outputs:
-                typer.echo(f"\nApp URL: {outputs[key]}")
+                deploy_log.info(
+                    "App URL: %s",
+                    outputs[key],
+                    extra={
+                        "app": context.app_name,
+                        "stack": context.stack,
+                        "target": context.target,
+                    },
+                )
                 break
         return outputs
 

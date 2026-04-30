@@ -1,9 +1,4 @@
-"""Shared helpers for CLI commands.
-
-The core logic lives in :mod:`skaal.api`.  These helpers only wrap API calls
-with the CLI-specific concerns: turning exceptions into ``typer.Exit(1)`` and
-formatting error messages.
-"""
+"""Shared helpers for CLI commands."""
 
 from __future__ import annotations
 
@@ -21,23 +16,8 @@ def get_app_name() -> str:
 
 
 def load_app(module_app: str) -> "App":
-    """CLI-facing wrapper around :func:`skaal.api.load_app`.
-
-    Converts any import/resolution failure into ``typer.Exit(1)`` with a
-    user-friendly error message.
-    """
-    import typer
+    """CLI-facing wrapper around :func:`skaal.api.load_app`."""
 
     from skaal import api
 
-    try:
-        return api.load_app(module_app)
-    except ValueError as exc:
-        typer.echo(f"Error: {exc}", err=True)
-        raise typer.Exit(1) from exc
-    except ModuleNotFoundError as exc:
-        typer.echo(f"Error: {exc}", err=True)
-        raise typer.Exit(1) from exc
-    except AttributeError as exc:
-        typer.echo(f"Error: {exc}", err=True)
-        raise typer.Exit(1) from exc
+    return api.load_app(module_app)

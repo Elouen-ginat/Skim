@@ -6,6 +6,7 @@ and explanation in one call.
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -18,6 +19,9 @@ from skaal.solver.stability import PlanDiff, diff_plans
 
 if TYPE_CHECKING:
     from skaal.app import App
+
+
+log = logging.getLogger("skaal.plan")
 
 
 def plan(
@@ -59,7 +63,7 @@ def plan(
         _attach_migration_metadata(plan_file, previous)
 
     if explain:
-        print(explain_plan(plan_file))
+        log.info(explain_plan(plan_file))
 
     return plan_file
 

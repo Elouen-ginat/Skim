@@ -5,7 +5,12 @@ from pathlib import Path
 import google.auth
 from google.auth.transport.requests import Request
 
-from skaal.deploy.packaging.docker_builder import build_image, login_registry, push_image
+from skaal.deploy.packaging.docker_builder import (
+    DockerProgress,
+    build_image,
+    login_registry,
+    push_image,
+)
 
 
 def build_and_push_image(
@@ -14,6 +19,7 @@ def build_and_push_image(
     region: str,
     repository: str,
     app_name: str,
+    progress: DockerProgress = None,
 ) -> None:
     credentials, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
     credentials.refresh(Request())
@@ -29,5 +35,5 @@ def build_and_push_image(
         username="oauth2accesstoken",
         password=credentials.token,
     )
-    build_image(context_dir=artifacts_dir.resolve(), tag=image_tag)
-    push_image(repository=image_repository, tag="latest")
+    build_image(context_dir=artifacts_dir.resolve(), tag=image_tag, progress=progress)
+    push_image(repository=image_repository, tag="latest", progress=progress)

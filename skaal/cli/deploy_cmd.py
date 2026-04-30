@@ -22,15 +22,20 @@ Then::
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Optional
 
 import typer
 
+from skaal.cli._errors import cli_error_boundary
+
 app = typer.Typer(help="Package and deploy previously-built artifacts.")
+log = logging.getLogger("skaal.cli")
 
 
 @app.callback(invoke_without_command=True)
+@cli_error_boundary
 def deploy(
     artifacts_dir: Path = typer.Option(
         Path("artifacts"),
@@ -80,20 +85,11 @@ def deploy(
     """
     from skaal import api
 
-    try:
-        api.deploy(
-            artifacts_dir=artifacts_dir,
-            stack=stack,
-            region=region,
-            gcp_project=gcp_project,
-            yes=yes,
-        )
-    except FileNotFoundError as exc:
-        typer.echo(f"Error: {exc}", err=True)
-        raise typer.Exit(1) from exc
-    except ValueError as exc:
-        typer.echo(f"Error: {exc}", err=True)
-        raise typer.Exit(1) from exc
-    except Exception as exc:  # noqa: BLE001
-        typer.echo(f"Deploy failed: {exc}", err=True)
-        raise typer.Exit(1) from exc
+    log.debug("Deploying artifacts from %s", artifacts_dir)
+    api.deploy(
+        artifacts_dir=artifacts_dir,
+        stack=stack,
+        region=region,
+        gcp_project=gcp_project,
+        yes=yes,
+    )

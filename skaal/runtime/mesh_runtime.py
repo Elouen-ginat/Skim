@@ -22,10 +22,16 @@ from __future__ import annotations
 
 import inspect
 import json
+import logging
 import traceback
 from typing import Any, cast
 
 _MAX_BODY_SIZE = 10 * 1024 * 1024
+log = logging.getLogger("skaal.runtime")
+
+
+def _format_banner(title: str, lines: list[str]) -> str:
+    return "\n".join(["", title, *lines, ""])
 
 
 class MeshRuntime:
@@ -245,11 +251,10 @@ class MeshRuntime:
 
         funcs = self._function_cache
         public_fns = [n for n in sorted(funcs) if not hasattr(funcs[n], "__skaal_schedule__")]
-        print(f"\n  Skaal mesh runtime — {self.app.name}")
-        print(f"  http://{self.host}:{self.port}\n")
+        banner_lines = [f"  http://{self.host}:{self.port}", ""]
         for name in public_fns:
-            print(f"    POST /{name}")
-        print()
+            banner_lines.append(f"    POST /{name}")
+        log.info(_format_banner(f"  Skaal mesh runtime — {self.app.name}", banner_lines))
 
         async def _handle(request: StarletteRequest) -> JSONResponse:
             body = await request.body()

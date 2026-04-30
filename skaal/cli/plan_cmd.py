@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
 import typer
 
+from skaal.cli._errors import cli_error_boundary
 from skaal.cli._utils import load_app  # noqa: F401 — re-exported for test patching
 from skaal.cli.config import SkaalSettings
 
@@ -14,6 +16,7 @@ if TYPE_CHECKING:
     from skaal.plan import PlanFile
 
 app = typer.Typer(help="Run the constraint solver and generate a plan.")
+log = logging.getLogger("skaal.cli")
 
 
 def _print_plan_table(plan_file: "PlanFile") -> None:
@@ -24,24 +27,26 @@ def _print_plan_table(plan_file: "PlanFile") -> None:
         f"{'Reason':<{col_w[2]}} |"
     )
     sep = f"+-{'-' * col_w[0]}-+-{'-' * col_w[1]}-+-{'-' * col_w[2]}-+"
-    typer.echo(sep)
-    typer.echo(header)
-    typer.echo(sep)
+    log.info(sep)
+    log.info(header)
+    log.info(sep)
     for spec in plan_file.storage.values():
-        typer.echo(
+        log.info(
             f"| {spec.variable_name:<{col_w[0]}} | "
             f"{spec.backend:<{col_w[1]}} | "
             f"{spec.reason[: col_w[2]]:<{col_w[2]}} |"
         )
-    typer.echo(sep)
+    log.info(sep)
 
     if plan_file.compute:
-        typer.echo("\nCompute assignments:")
+        log.info("")
+        log.info("Compute assignments:")
         for cspec in plan_file.compute.values():
-            typer.echo(f"  {cspec.function_name}: {cspec.instance_type}  ({cspec.reason})")
+            log.info("  %s: %s  (%s)", cspec.function_name, cspec.instance_type, cspec.reason)
 
 
 @app.callback(invoke_without_command=True)
+@cli_error_boundary
 def plan(
     target_app: Optional[str] = typer.Argument(
         None,
@@ -91,21 +96,15 @@ def plan(
     resolved_target = target or cfg.target
 
     if resolved_app is None:
-        typer.echo(
-            "Error: missing MODULE:APP.\n"
+        raise ValueError(
+            "missing MODULE:APP.\n"
             "  Pass it as an argument: skaal plan mypackage.app:skaal_app\n"
-            "  Or set 'app' in [tool.skaal] of pyproject.toml.",
-            err=True,
+            "  Or set 'app' in [tool.skaal] of pyproject.toml."
         )
-        raise typer.Exit(1)
 
-    try:
-        skaal_app = api.resolve_app(resolved_app)
-    except (ValueError, ModuleNotFoundError, AttributeError) as exc:
-        typer.echo(f"Error: {exc}", err=True)
-        raise typer.Exit(1) from exc
+    skaal_app = api.resolve_app(resolved_app)
 
-    typer.echo(f"Solving constraints for {skaal_app.name!r} -> target={resolved_target!r} ...")
+    log.info("Solving constraints for %r -> target=%r ...", skaal_app.name, resolved_target)
 
     try:
         plan_file = api.plan(
@@ -114,12 +113,9 @@ def plan(
             catalog=catalog,
             write=True,
         )
-    except FileNotFoundError as exc:
-        typer.echo(f"Error: {exc}", err=True)
-        raise typer.Exit(1) from exc
     except UnsatisfiableConstraints as exc:
-        typer.echo(f"Error: {exc}", err=True)
-        raise typer.Exit(1) from exc
+        raise ValueError(str(exc)) from exc
 
-    typer.echo(f"Wrote {PLAN_FILE_NAME}\n")
+    log.info("Wrote %s", PLAN_FILE_NAME)
+    log.info("")
     _print_plan_table(plan_file)

@@ -8,34 +8,31 @@ settings).  Useful sanity-check before running ``skaal deploy --stack X``.
 
 from __future__ import annotations
 
-import typer
-from rich.console import Console
-from rich.table import Table
+import logging
 
+import typer
+
+from skaal.cli._errors import cli_error_boundary
 from skaal.settings import SkaalSettings
 
 app = typer.Typer(help="List configured stack profiles.")
+log = logging.getLogger("skaal.cli")
 
 
 @app.callback(invoke_without_command=True)
+@cli_error_boundary
 def stacks() -> None:
     """Print one row per declared stack profile."""
     base = SkaalSettings()
     if not base.stacks:
-        typer.echo(
+        log.info(
             "No stacks configured. Add profiles under [tool.skaal.stacks.<name>] "
             "in pyproject.toml."
         )
         return
 
-    console = Console()
-    table = Table(show_header=True, header_style="bold")
-    table.add_column("stack")
-    table.add_column("target")
-    table.add_column("region")
-    table.add_column("gcp_project")
-    table.add_column("protect")
-    table.add_column("hooks")
+    log.info(f"{'stack':<18} {'target':<10} {'region':<15} {'gcp_project':<24} {'protect':<8} hooks")
+    log.info(f"{'-' * 18} {'-' * 10} {'-' * 15} {'-' * 24} {'-' * 8} {'-' * 5}")
 
     for name in sorted(base.stacks):
         cfg = base.for_stack(name)
@@ -49,15 +46,10 @@ def stacks() -> None:
         )
         hook_count = len(cfg.pre_deploy) + len(cfg.post_deploy)
         hooks = str(hook_count) if hook_count else "-"
-        table.add_row(
-            f"{marker}{name}",
-            cfg.target,
-            cfg.region,
-            cfg.gcp_project or "-",
-            protect,
-            hooks,
+        log.info(
+            f"{marker}{name:<17} {cfg.target:<10} {cfg.region:<15} "
+            f"{(cfg.gcp_project or '-'):<24} {protect:<8} {hooks}"
         )
 
-    console.print(table)
     if base.stack in base.stacks:
-        console.print("* = current default stack (tool.skaal.stack)", style="dim")
+        log.info("* = current default stack (tool.skaal.stack)")

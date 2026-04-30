@@ -2,16 +2,20 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Optional
 
 import typer
 
+from skaal.cli._errors import cli_error_boundary
 from skaal.cli.config import SkaalSettings
 
 app = typer.Typer(help="Run a Skaal app locally.")
+log = logging.getLogger("skaal.cli")
 
 
 @app.callback(invoke_without_command=True)
+@cli_error_boundary
 def run(
     target: Optional[str] = typer.Argument(
         None,
@@ -56,20 +60,18 @@ def run(
 
     resolved_app = target or SkaalSettings().app
     if resolved_app is None:
-        typer.echo(
-            "Error: missing MODULE:APP.\n"
+        raise ValueError(
+            "missing MODULE:APP.\n"
             "  Pass it as an argument: skaal run mypackage.app:skaal_app\n"
-            "  Or set 'app' in [tool.skaal] of pyproject.toml.",
-            err=True,
+            "  Or set 'app' in [tool.skaal] of pyproject.toml."
         )
-        raise typer.Exit(1)
 
     if distributed:
-        typer.echo(f"Using mesh runtime (node: {node_id})")
+        log.info("Using mesh runtime (node: %s)", node_id)
     elif redis:
-        typer.echo(f"Using Redis backend: {redis}")
+        log.info("Using Redis backend: %s", redis)
     elif persist:
-        typer.echo(f"Using SQLite backend: {db}")
+        log.info("Using SQLite backend: %s", db)
 
     try:
         api.run(
@@ -82,8 +84,5 @@ def run(
             distributed=distributed,
             node_id=node_id,
         )
-    except (ValueError, ModuleNotFoundError, AttributeError) as exc:
-        typer.echo(f"Error: {exc}", err=True)
-        raise typer.Exit(1) from exc
     except KeyboardInterrupt:
-        typer.echo("\nStopped.")
+        log.info("Stopped.")

@@ -2,15 +2,20 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Optional
 
 import typer
 
+from skaal.cli._errors import cli_error_boundary
+
 app = typer.Typer(help="Destroy previously-deployed Pulumi resources.")
+log = logging.getLogger("skaal.cli")
 
 
 @app.callback(invoke_without_command=True)
+@cli_error_boundary
 def destroy(
     artifacts_dir: Path = typer.Option(
         Path("artifacts"),
@@ -33,18 +38,9 @@ def destroy(
     """Destroy the app resources tracked by the Pulumi stack."""
     from skaal import api
 
-    try:
-        api.destroy(
-            artifacts_dir=artifacts_dir,
-            stack=stack,
-            yes=yes,
-        )
-    except FileNotFoundError as exc:
-        typer.echo(f"Error: {exc}", err=True)
-        raise typer.Exit(1) from exc
-    except ValueError as exc:
-        typer.echo(f"Error: {exc}", err=True)
-        raise typer.Exit(1) from exc
-    except Exception as exc:  # noqa: BLE001
-        typer.echo(f"Destroy failed: {exc}", err=True)
-        raise typer.Exit(1) from exc
+    log.debug("Destroying stack from %s", artifacts_dir)
+    api.destroy(
+        artifacts_dir=artifacts_dir,
+        stack=stack,
+        yes=yes,
+    )
