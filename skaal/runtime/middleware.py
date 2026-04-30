@@ -15,7 +15,9 @@ Rationale:
   holds its slot until it returns.
 - **Rate limit** is innermost so breaker trips (fast) don't consume tokens.
 
-No third-party dependencies; each primitive is ~30 lines.
+Tenacity handles retry orchestration and pybreaker owns the circuit-breaker
+state machine; bulkhead and rate limiting stay local because the runtime needs
+asyncio-native semantics and per-request scope keys.
 """
 
 from __future__ import annotations
@@ -27,6 +29,9 @@ import random
 import time
 from collections.abc import AsyncIterator, Awaitable
 from typing import Any, Callable
+
+import pybreaker
+from tenacity import AsyncRetrying, RetryCallState, retry_if_exception_type, stop_after_attempt
 
 from skaal.errors import SkaalUnavailable
 from skaal.types.compute import (
@@ -40,44 +45,27 @@ from skaal.types.compute import (
 # ── Circuit breaker ──────────────────────────────────────────────────────────
 
 
-class _Breaker:
-    """Per-function circuit breaker with half-open probe semantics."""
-
-    __slots__ = ("policy", "failures", "opened_at", "_lock")
-
-    def __init__(self, policy: CircuitBreaker) -> None:
-        self.policy = policy
-        self.failures = 0
-        self.opened_at: float | None = None
-        self._lock = asyncio.Lock()
-
-    def _state(self) -> str:
-        if self.opened_at is None:
-            return "closed"
-        elapsed_ms = (time.monotonic() - self.opened_at) * 1000
-        return "half-open" if elapsed_ms >= self.policy.recovery_timeout_ms else "open"
-
+class _AsyncCircuitBreaker:
     async def guard(
         self, call: Callable[[], Awaitable[Any]], fallback: Callable[[], Awaitable[Any]] | None
     ) -> Any:
-        state = self._state()
-        if state == "open":
+        try:
+            with self._breaker.calling():
+                return await call()
+        except pybreaker.CircuitBreakerError as exc:
             if fallback is not None:
                 return await fallback()
-            raise SkaalUnavailable("circuit breaker is open")
-        try:
-            result = await call()
-        except Exception:
-            async with self._lock:
-                self.failures += 1
-                if self.failures >= self.policy.failure_threshold:
-                    self.opened_at = time.monotonic()
-            raise
-        else:
-            async with self._lock:
-                self.failures = 0
-                self.opened_at = None
-            return result
+            raise SkaalUnavailable("circuit breaker is open") from exc
+
+    __slots__ = ("_breaker",)
+
+    def __init__(self, policy: CircuitBreaker) -> None:
+        self._breaker = pybreaker.CircuitBreaker(
+            fail_max=policy.failure_threshold,
+            reset_timeout=policy.recovery_timeout_ms / 1000.0,
+            success_threshold=1,
+            throw_new_error_on_trip=False,
+        )
 
 
 # ── Bulkhead (bounded concurrency) ───────────────────────────────────────────
@@ -176,39 +164,44 @@ _current_attempt: contextvars.ContextVar[int] = contextvars.ContextVar(
 )
 
 
-def _delay_seconds(policy: RetryPolicy, attempt: int) -> float:
-    """Return seconds to sleep before *attempt* (1-indexed)."""
-    base = policy.base_delay_ms / 1000.0
-    cap = policy.max_delay_ms / 1000.0
-    if policy.backoff == "fixed":
-        raw = base
-    elif policy.backoff == "linear":
-        raw = base * attempt
-    else:  # "exponential"
-        raw = base * (2 ** (attempt - 1))
-    raw = min(raw, cap)
-    # Full jitter — avoids thundering herd on retry storms.
-    return random.uniform(0, raw)
+def _retry_wait(policy: RetryPolicy) -> Callable[[RetryCallState], float]:
+    """Build a Tenacity-compatible wait strategy that preserves Skaal jitter semantics."""
+
+    def _wait(retry_state: RetryCallState) -> float:
+        attempt = retry_state.attempt_number
+        base = policy.base_delay_ms / 1000.0
+        cap = policy.max_delay_ms / 1000.0
+        if policy.backoff == "fixed":
+            raw = base
+        elif policy.backoff == "linear":
+            raw = base * attempt
+        else:  # "exponential"
+            raw = base * (2 ** (attempt - 1))
+        raw = min(raw, cap)
+        # Full jitter — avoids thundering herd on retry storms.
+        return random.uniform(0, raw)
+
+    return _wait
 
 
 async def _with_retry(
     policy: RetryPolicy,
     call: Callable[[], Awaitable[Any]],
 ) -> Any:
-    last: BaseException | None = None
-    for attempt in range(1, policy.max_attempts + 1):
-        token = _current_attempt.set(attempt)
+    retrying = AsyncRetrying(
+        reraise=True,
+        stop=stop_after_attempt(policy.max_attempts),
+        wait=_retry_wait(policy),
+        retry=retry_if_exception_type(Exception),
+    )
+    async for attempt in retrying:
+        token = _current_attempt.set(attempt.retry_state.attempt_number)
         try:
-            return await call()
-        except Exception as exc:  # noqa: BLE001
-            last = exc
-            if attempt >= policy.max_attempts:
-                break
-            await asyncio.sleep(_delay_seconds(policy, attempt))
+            with attempt:
+                return await call()
         finally:
             _current_attempt.reset(token)
-    assert last is not None  # for type-checkers
-    raise last
+    raise AssertionError("retry loop exited without returning or raising")
 
 
 # ── Public entry point ───────────────────────────────────────────────────────
@@ -231,7 +224,9 @@ class ResilientInvoker:
         self.fn = fn
         self.compute = compute
         self._breaker = (
-            _Breaker(compute.circuit_breaker) if compute and compute.circuit_breaker else None
+            _AsyncCircuitBreaker(compute.circuit_breaker)
+            if compute and compute.circuit_breaker
+            else None
         )
         self._bulkhead = _Bulkhead(compute.bulkhead) if compute and compute.bulkhead else None
         self._ratelimit = (
