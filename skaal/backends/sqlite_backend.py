@@ -7,6 +7,29 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, AsyncIterator, List, cast
 
+from skaal.storage import (
+    _cursor_identity,
+    _decode_cursor,
+    _encode_cursor,
+    _get_backend_indexes,
+    _normalize_limit,
+)
+from skaal.types.storage import Page
+
+
+def _validate_cursor(
+    cursor: str | None,
+    *,
+    mode: str,
+    extra: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    decoded = _decode_cursor(cursor)
+    expected = {"mode": mode, **(extra or {})}
+    for key, value in expected.items():
+        if decoded and decoded.get(key) != value:
+            raise ValueError("Cursor does not match this query")
+    return decoded
+
 
 class SqliteBackend:
     """
@@ -122,6 +145,28 @@ class SqliteBackend:
             rows = await cursor.fetchall()
         return [(row[0], json.loads(row[1])) for row in rows]
 
+    async def list_page(self, *, limit: int, cursor: str | None):
+        await self._ensure_connected()
+        limit = _normalize_limit(limit)
+        decoded = _validate_cursor(cursor, mode="list")
+        last_key = decoded.get("last_key")
+        query = "SELECT key, value FROM kv WHERE ns = ?"
+        params: list[Any] = [self.namespace]
+        if last_key is not None:
+            query += " AND key > ?"
+            params.append(last_key)
+        query += " ORDER BY key LIMIT ?"
+        params.append(limit + 1)
+        async with self._db.execute(query, tuple(params)) as sql_cursor:
+            rows = await sql_cursor.fetchall()
+        page_rows = rows[:limit]
+        has_more = len(rows) > limit
+        items = [(row[0], json.loads(row[1])) for row in page_rows]
+        next_cursor = None
+        if has_more and page_rows:
+            next_cursor = _encode_cursor({"mode": "list", "last_key": page_rows[-1][0]})
+        return Page(items=items, next_cursor=next_cursor, has_more=has_more)
+
     async def scan(self, prefix: str = "") -> List[tuple[str, Any]]:
         await self._ensure_connected()
         # Escape LIKE wildcards to prevent injection: % and _ are special in LIKE
@@ -132,6 +177,121 @@ class SqliteBackend:
         ) as cursor:
             rows = await cursor.fetchall()
         return [(row[0], json.loads(row[1])) for row in rows]
+
+    async def scan_page(self, prefix: str = "", *, limit: int, cursor: str | None):
+        await self._ensure_connected()
+        limit = _normalize_limit(limit)
+        decoded = _validate_cursor(cursor, mode="scan", extra={"prefix": prefix})
+        last_key = decoded.get("last_key")
+        escaped_prefix = prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        query = "SELECT key, value FROM kv WHERE ns = ? AND key LIKE ? ESCAPE '\\'"
+        params: list[Any] = [self.namespace, f"{escaped_prefix}%"]
+        if last_key is not None:
+            query += " AND key > ?"
+            params.append(last_key)
+        query += " ORDER BY key LIMIT ?"
+        params.append(limit + 1)
+        async with self._db.execute(query, tuple(params)) as sql_cursor:
+            rows = await sql_cursor.fetchall()
+        page_rows = rows[:limit]
+        has_more = len(rows) > limit
+        items = [(row[0], json.loads(row[1])) for row in page_rows]
+        next_cursor = None
+        if has_more and page_rows:
+            next_cursor = _encode_cursor(
+                {"mode": "scan", "prefix": prefix, "last_key": page_rows[-1][0]}
+            )
+        return Page(items=items, next_cursor=next_cursor, has_more=has_more)
+
+    async def query_index(
+        self,
+        index_name: str,
+        key: Any,
+        *,
+        limit: int,
+        cursor: str | None,
+    ):
+        await self._ensure_connected()
+        limit = _normalize_limit(limit)
+        indexes = _get_backend_indexes(self)
+        index = indexes.get(index_name)
+        if index is None:
+            raise ValueError(f"No secondary index named {index_name!r}")
+
+        decoded = _validate_cursor(
+            cursor,
+            mode="index",
+            extra={"index_name": index_name, "key": _cursor_identity(key)},
+        )
+        partition_path = f"$.{index.partition_key}"
+
+        if index.sort_key is None:
+            query = "SELECT key, value FROM kv WHERE ns = ? AND json_extract(value, ?) = ?"
+            params: list[Any] = [self.namespace, partition_path, key]
+            last_key = decoded.get("last_key")
+            if last_key is not None:
+                query += " AND key > ?"
+                params.append(last_key)
+            query += " ORDER BY key LIMIT ?"
+            params.append(limit + 1)
+            async with self._db.execute(query, tuple(params)) as sql_cursor:
+                rows = await sql_cursor.fetchall()
+            page_rows = rows[:limit]
+            has_more = len(rows) > limit
+            items = [json.loads(row[1]) for row in page_rows]
+            next_cursor = None
+            if has_more and page_rows:
+                next_cursor = _encode_cursor(
+                    {
+                        "mode": "index",
+                        "index_name": index_name,
+                        "key": _cursor_identity(key),
+                        "last_key": page_rows[-1][0],
+                    }
+                )
+            return Page(items=items, next_cursor=next_cursor, has_more=has_more)
+
+        sort_path = f"$.{index.sort_key}"
+        query = (
+            "SELECT key, value, json_extract(value, ?) AS sort_value "
+            "FROM kv WHERE ns = ? AND json_extract(value, ?) = ?"
+        )
+        params = [sort_path, self.namespace, partition_path, key]
+        if decoded.get("has_last_sort"):
+            last_sort = decoded.get("last_sort")
+            last_key = decoded.get("last_key")
+            if last_sort is None:
+                query += (
+                    " AND (json_extract(value, ?) IS NOT NULL "
+                    "OR (json_extract(value, ?) IS NULL AND key > ?))"
+                )
+                params.extend([sort_path, sort_path, last_key])
+            else:
+                query += (
+                    " AND (json_extract(value, ?) > ? "
+                    "OR (json_extract(value, ?) = ? AND key > ?))"
+                )
+                params.extend([sort_path, last_sort, sort_path, last_sort, last_key])
+        query += " ORDER BY sort_value, key LIMIT ?"
+        params.append(limit + 1)
+        async with self._db.execute(query, tuple(params)) as sql_cursor:
+            rows = await sql_cursor.fetchall()
+        page_rows = rows[:limit]
+        has_more = len(rows) > limit
+        items = [json.loads(row[1]) for row in page_rows]
+        next_cursor = None
+        if has_more and page_rows:
+            next_cursor = _encode_cursor(
+                {
+                    "mode": "index",
+                    "index_name": index_name,
+                    "key": _cursor_identity(key),
+                    "has_last_sort": True,
+                    "last_sort": page_rows[-1][2],
+                    "last_key": page_rows[-1][0],
+                }
+            )
+        return Page(items=items, next_cursor=next_cursor, has_more=has_more)
 
     async def increment_counter(self, key: str, delta: int = 1) -> int:
         """Atomically increment a counter using a transaction."""

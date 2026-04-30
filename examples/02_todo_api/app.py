@@ -74,6 +74,9 @@ class TodoSearchDocument(BaseModel):
     done: bool = False
 
 
+Todo.model_rebuild()
+
+
 class CreateTodoRequest(BaseModel):
     id: str
     title: str

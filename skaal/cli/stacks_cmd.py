@@ -31,7 +31,9 @@ def stacks() -> None:
         )
         return
 
-    log.info(f"{'stack':<18} {'target':<10} {'region':<15} {'gcp_project':<24} {'protect':<8} hooks")
+    log.info(
+        f"{'stack':<18} {'target':<10} {'region':<15} {'gcp_project':<24} {'protect':<8} hooks"
+    )
     log.info(f"{'-' * 18} {'-' * 10} {'-' * 15} {'-' * 24} {'-' * 8} {'-' * 5}")
 
     for name in sorted(base.stacks):

@@ -35,13 +35,16 @@ from skaal.relational import ensure_schema as ensure_relational_schema
 from skaal.relational import open_session as open_relational_session
 from skaal.schedule import Cron, Every, Schedule, ScheduleContext
 from skaal.storage import Store
+from skaal.sync import run as sync_run
 from skaal.types import (
     BeforeInvoke,
     Bulkhead,
     CircuitBreaker,
     InvokeContext,
+    Page,
     RateLimitPolicy,
     RetryPolicy,
+    SecondaryIndex,
 )
 from skaal.vector import VectorStore
 
@@ -58,6 +61,7 @@ __all__ = [
     "VectorStore",
     "Agent",
     "Channel",
+    "sync_run",
     # Decorators
     "agent",
     "compute",
@@ -91,12 +95,14 @@ __all__ = [
     "Schedule",
     "ScheduleContext",
     "BeforeInvoke",
+    "Page",
     # Resilience types
     "Bulkhead",
     "CircuitBreaker",
     "InvokeContext",
     "RateLimitPolicy",
     "RetryPolicy",
+    "SecondaryIndex",
     # Type namespace
     "types",
 ]

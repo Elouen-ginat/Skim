@@ -85,8 +85,7 @@ def build(
     plan_path = Path(PLAN_FILE_NAME)
     if not plan_path.exists():
         raise FileNotFoundError(
-            f"{PLAN_FILE_NAME} not found.\n"
-            "  Run `skaal plan MODULE:APP --target TARGET` first."
+            f"{PLAN_FILE_NAME} not found.\n" "  Run `skaal plan MODULE:APP --target TARGET` first."
         )
 
     log.info("Building from %s ...", plan_path)

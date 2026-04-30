@@ -31,9 +31,7 @@ def start(
     try:
         api.migrate_start(variable, from_backend, to_backend, app_name=get_app_name())
     except RuntimeError as exc:
-        raise ValueError(
-            f"{exc} Use `skaal migrate advance` or `skaal migrate rollback`."
-        )
+        raise ValueError(f"{exc} Use `skaal migrate advance` or `skaal migrate rollback`.")
 
     log.info(
         f"Migration started: {variable}  {from_backend} → {to_backend}\n"

@@ -79,10 +79,12 @@ def test_build_image_uses_high_level_decoded_log_stream(monkeypatch, tmp_path: P
     class _FakeImages:
         def build(self, **kwargs):
             captured_kwargs.update(kwargs)
-            return MagicMock(id="sha256:test-image"), iter([
-                {"stream": "Step 1/2"},
-                {"stream": "Step 2/2"},
-            ])
+            return MagicMock(id="sha256:test-image"), iter(
+                [
+                    {"stream": "Step 1/2"},
+                    {"stream": "Step 2/2"},
+                ]
+            )
 
     class _FakeClient:
         def __init__(self) -> None:
@@ -91,7 +93,9 @@ def test_build_image_uses_high_level_decoded_log_stream(monkeypatch, tmp_path: P
         def close(self) -> None:
             return None
 
-    monkeypatch.setattr("skaal.deploy.packaging.docker_builder.docker.from_env", lambda: _FakeClient())
+    monkeypatch.setattr(
+        "skaal.deploy.packaging.docker_builder.docker.from_env", lambda: _FakeClient()
+    )
 
     image_ref = build_image(
         context_dir=tmp_path,

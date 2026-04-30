@@ -6,6 +6,8 @@ import builtins
 from collections.abc import Callable
 from typing import Any, Protocol, runtime_checkable
 
+from skaal.types.storage import Page
+
 
 @runtime_checkable
 class StorageBackend(Protocol):
@@ -32,8 +34,33 @@ class StorageBackend(Protocol):
         """Return all (key, value) pairs."""
         ...
 
+    async def list_page(self, *, limit: int, cursor: str | None) -> Page[tuple[str, Any]]:
+        """Return one page of (key, value) pairs."""
+        ...
+
     async def scan(self, prefix: str = "") -> builtins.list[tuple[str, Any]]:
         """Return all (key, value) pairs where key starts with prefix."""
+        ...
+
+    async def scan_page(
+        self,
+        prefix: str = "",
+        *,
+        limit: int,
+        cursor: str | None,
+    ) -> Page[tuple[str, Any]]:
+        """Return one page of (key, value) pairs where key starts with prefix."""
+        ...
+
+    async def query_index(
+        self,
+        index_name: str,
+        key: Any,
+        *,
+        limit: int,
+        cursor: str | None,
+    ) -> Page[Any]:
+        """Return one page of values matching a declared secondary index."""
         ...
 
     async def increment_counter(self, key: str, delta: int = 1) -> int:

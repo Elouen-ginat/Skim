@@ -21,6 +21,7 @@ from skaal.types import (
     RateLimitPolicy,
     RetryPolicy,
     Scale,
+    SecondaryIndex,
     Throughput,
 )
 
@@ -127,6 +128,7 @@ class Module:
         auto_optimize: bool = ...,
         decommission_policy: DecommissionPolicy | None = ...,
         collocate_with: str | None = ...,
+        indexes: list[SecondaryIndex] | None = ...,
     ) -> C: ...
 
     @overload
@@ -145,6 +147,7 @@ class Module:
         auto_optimize: bool = ...,
         decommission_policy: DecommissionPolicy | None = ...,
         collocate_with: str | None = ...,
+        indexes: list[SecondaryIndex] | None = ...,
     ) -> Callable[[C], C]: ...
 
     def storage(
@@ -162,6 +165,7 @@ class Module:
         auto_optimize: bool = False,
         decommission_policy: DecommissionPolicy | None = None,
         collocate_with: str | None = None,
+        indexes: list[SecondaryIndex] | None = None,
     ) -> C | Callable[[C], C]:
         """Register a storage class with infrastructure constraints.
 
@@ -187,6 +191,7 @@ class Module:
             auto_optimize=auto_optimize,
             decommission_policy=decommission_policy,
             collocate_with=collocate_with,
+            indexes=indexes,
         )
 
         def decorator(cls: C) -> C:

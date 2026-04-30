@@ -14,6 +14,7 @@ from skaal.types import (
     Latency,
     Scale,
     ScaleStrategy,
+    SecondaryIndex,
     Throughput,
 )
 from skaal.types.compute import Bulkhead, CircuitBreaker, RateLimitPolicy, RetryPolicy
@@ -35,6 +36,7 @@ def storage(
     auto_optimize: bool = False,
     decommission_policy: DecommissionPolicy | None = None,
     collocate_with: str | None = None,
+    indexes: list[SecondaryIndex] | None = None,
 ) -> Callable[[C], C]:
     """Declare infrastructure constraints for a storage variable or Store class."""
 
@@ -82,6 +84,7 @@ def storage(
                 "auto_optimize": auto_optimize,
                 "decommission_policy": decommission_policy,
                 "collocate_with": collocate_with,
+                "indexes": list(indexes or []),
                 "schema": schema,  # empty dict for plain classes
             },
         )

@@ -52,6 +52,7 @@ from skaal.types.deploy import (
 )
 from skaal.types.invoke import BeforeInvoke, InvokeContext, StreamFn
 from skaal.types.schema import apply_migrations, migrate_from
+from skaal.types.storage import Page, SecondaryIndex
 
 __all__ = [
     # constraints
@@ -92,6 +93,9 @@ __all__ = [
     "BeforeInvoke",
     "InvokeContext",
     "StreamFn",
+    # storage
+    "Page",
+    "SecondaryIndex",
     # compute
     "Bulkhead",
     "CircuitBreaker",

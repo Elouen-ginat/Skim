@@ -6,7 +6,9 @@ import pytest
 from pydantic import BaseModel
 
 from skaal.backends.local_backend import LocalMap
+from skaal.decorators import storage as storage_decorator
 from skaal.storage import Store, _deserialize, _primary_key_field, _schema_hints, _serialize
+from skaal.types.storage import SecondaryIndex
 
 # ── Domain models for tests ────────────────────────────────────────────────────
 
@@ -28,6 +30,13 @@ class Product(BaseModel):
     sku: str
     name: str
     price: float
+
+
+class TeamMember(BaseModel):
+    id: str
+    team: str
+    score: int
+    email: str
 
 
 # ── Store[T] type extraction ──────────────────────────────────────────────────
@@ -366,6 +375,74 @@ async def test_store_update_accepts_atomic_function():
     assert stored.name == "Lena Updated"
 
 
+@pytest.mark.asyncio
+async def test_store_list_page_and_scan_page():
+    class UserStore(Store[User]):
+        pass
+
+    UserStore.wire(LocalMap())
+    for index in range(5):
+        await UserStore.set(
+            f"user:{index}",
+            User(
+                id=f"user:{index}",
+                name=f"User {index}",
+                address=Address(street=f"{index} Ave", city="NYC"),
+            ),
+        )
+
+    first_page = await UserStore.list_page(limit=2)
+    assert [key for key, _ in first_page.items] == ["user:0", "user:1"]
+    assert first_page.has_more is True
+    assert first_page.next_cursor is not None
+
+    second_page = await UserStore.list_page(limit=2, cursor=first_page.next_cursor)
+    assert [key for key, _ in second_page.items] == ["user:2", "user:3"]
+    assert second_page.has_more is True
+
+    scan_page = await UserStore.scan_page(prefix="user:4", limit=1)
+    assert [key for key, _ in scan_page.items] == ["user:4"]
+    assert scan_page.has_more is False
+
+
+@pytest.mark.asyncio
+async def test_store_query_index_pages_results_in_sort_key_order():
+    @storage_decorator(
+        indexes=[
+            SecondaryIndex(name="by_team", partition_key="team", sort_key="score"),
+            SecondaryIndex(name="by_email", partition_key="email", unique=True),
+        ]
+    )
+    class TeamMembers(Store[TeamMember]):
+        pass
+
+    TeamMembers.wire(LocalMap())
+    for member in [
+        TeamMember(id="m1", team="alpha", score=10, email="a@example.com"),
+        TeamMember(id="m2", team="alpha", score=2, email="b@example.com"),
+        TeamMember(id="m3", team="alpha", score=30, email="c@example.com"),
+        TeamMember(id="m4", team="beta", score=5, email="d@example.com"),
+    ]:
+        await TeamMembers.add(member)
+
+    first_page = await TeamMembers.query_index("by_team", "alpha", limit=2)
+    assert [member.id for member in first_page.items] == ["m2", "m1"]
+    assert first_page.has_more is True
+    assert first_page.next_cursor is not None
+
+    second_page = await TeamMembers.query_index(
+        "by_team",
+        "alpha",
+        limit=2,
+        cursor=first_page.next_cursor,
+    )
+    assert [member.id for member in second_page.items] == ["m3"]
+    assert second_page.has_more is False
+
+    unique_page = await TeamMembers.query_index("by_email", "d@example.com", limit=1)
+    assert [member.id for member in unique_page.items] == ["m4"]
+
+
 # ── todo_api.py integration ────────────────────────────────────────────────────
 
 
@@ -379,6 +456,9 @@ async def test_todo_api_end_to_end(tmp_path):
 
     runtime = LocalRuntime.from_sqlite(todo_app, db_path=tmp_path / "todo_api.db")
 
+    def invoke(name: str) -> str:
+        return f"/_skaal/invoke/todos.{name}"
+
     try:
         # Create
         body = json.dumps(
@@ -389,14 +469,14 @@ async def test_todo_api_end_to_end(tmp_path):
                 "tags": ["test", "groceries"],
             }
         ).encode()
-        data, status = await runtime._dispatch("POST", "/create_todo", body)
+        data, status = await runtime._dispatch("POST", invoke("create_todo"), body)
         assert status == 200
         assert data["id"] == "t1"
         assert data["tags"] == ["test", "groceries"]
         assert data["done"] is False
 
         # Get (returns full Pydantic model serialized)
-        data, status = await runtime._dispatch("POST", "/get_todo", b'{"id":"t1"}')
+        data, status = await runtime._dispatch("POST", invoke("get_todo"), b'{"id":"t1"}')
         assert status == 200
         assert data["title"] == "Test todo"
 
@@ -404,12 +484,12 @@ async def test_todo_api_end_to_end(tmp_path):
         body = json.dumps(
             {"todo_id": "t1", "author": "alex", "body": "Remember oat milk too"}
         ).encode()
-        data, status = await runtime._dispatch("POST", "/add_comment", body)
+        data, status = await runtime._dispatch("POST", invoke("add_comment"), body)
         assert status == 200
         assert data["todo_id"] == "t1"
         assert data["author"] == "alex"
 
-        data, status = await runtime._dispatch("POST", "/list_comments", b'{"todo_id":"t1"}')
+        data, status = await runtime._dispatch("POST", invoke("list_comments"), b'{"todo_id":"t1"}')
         assert status == 200
         assert data["count"] == 1
         assert data["comments"][0]["body"] == "Remember oat milk too"
@@ -418,41 +498,41 @@ async def test_todo_api_end_to_end(tmp_path):
         body = json.dumps(
             {"id": "t1", "url": "https://example.com/file.pdf", "name": "spec.pdf"}
         ).encode()
-        data, status = await runtime._dispatch("POST", "/add_attachment", body)
+        data, status = await runtime._dispatch("POST", invoke("add_attachment"), body)
         assert status == 200
         assert len(data["attachments"]) == 1
         assert data["attachments"][0]["name"] == "spec.pdf"
         assert data["attachments"][0]["mime_type"] == "application/octet-stream"
 
         # Complete
-        data, status = await runtime._dispatch("POST", "/complete_todo", b'{"id":"t1"}')
+        data, status = await runtime._dispatch("POST", invoke("complete_todo"), b'{"id":"t1"}')
         assert status == 200
         assert data["done"] is True
         assert data["completed_at"] is not None
 
         # Semantic search should use the vector index and resolve back to the stored todo
         body = json.dumps({"query": "grocery integration spec pdf", "done": True}).encode()
-        data, status = await runtime._dispatch("POST", "/search_todos", body)
+        data, status = await runtime._dispatch("POST", invoke("search_todos"), body)
         assert status == 200
         assert data["count"] == 1
         assert data["todos"][0]["id"] == "t1"
 
         # List — attachment and done status preserved
-        data, status = await runtime._dispatch("POST", "/list_todos", b"")
+        data, status = await runtime._dispatch("POST", invoke("list_todos"), b"")
         assert status == 200
         assert data["count"] == 1
         todo = data["todos"][0]
         assert len(todo["attachments"]) == 1
 
         # Delete
-        data, status = await runtime._dispatch("POST", "/delete_todo", b'{"id":"t1"}')
+        data, status = await runtime._dispatch("POST", invoke("delete_todo"), b'{"id":"t1"}')
         assert status == 200
 
-        data, status = await runtime._dispatch("POST", "/list_todos", b"")
+        data, status = await runtime._dispatch("POST", invoke("list_todos"), b"")
         assert data["count"] == 0
 
         data, status = await runtime._dispatch(
-            "POST", "/search_todos", b'{"query":"grocery integration spec"}'
+            "POST", invoke("search_todos"), b'{"query":"grocery integration spec"}'
         )
         assert status == 200
         assert data["count"] == 0

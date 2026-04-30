@@ -80,7 +80,7 @@ def test_cli_logging_respects_pyproject_level(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     (tmp_path / "pyproject.toml").write_text(
-        "[tool.skaal.logging]\nlevel = \"DEBUG\"\n",
+        '[tool.skaal.logging]\nlevel = "DEBUG"\n',
         encoding="utf-8",
     )
     monkeypatch.chdir(tmp_path)

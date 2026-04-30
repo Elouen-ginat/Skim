@@ -16,16 +16,18 @@ Each finding cites file:line evidence verified against current code.
 
 If the next implementation pass is one PR, these are the items that buy the most user-visible improvement, ranked by reach × severity:
 
-1. **Path-param HTTP routing + method routing** — every CRUD-style API needs `GET /items/{id}`. Today only `POST /{function_name}` works. P0. ([§B.1](#b1-httpapi-surface))
-2. **Pagination on `Store[T]`** — `Store.list()` returns *all* rows. Any non-toy KV store needs cursor/limit. P0. ([§B.2](#b2-kv-store-and-storage-tiers))
-3. **Secondary indexes on `Store[T]`** — only `scan(prefix)` exists, so `Users.find_by_email(...)` is impossible without dropping to relational. P0. ([§B.2](#b2-kv-store-and-storage-tiers))
-4. **Built-in auth middleware** — `APIGateway.auth` is declared but never consumed; runtime exposes everything publicly. P0. ([§B.1](#b1-httpapi-surface))
-5. **Blob / object storage tier** — there is no `@app.blob` and no S3/GCS backend, so any user with files drops the framework entirely. P0. ([§B.2](#b2-kv-store-and-storage-tiers))
-6. **Agent persistent-state save/load** — `__skaal_persistent_fields__` is collected but the runtime never loads or persists it; "fields marked @persistent survive restarts" in the docstring is currently false. P0 correctness gap. ([§B.7](#b7-agents))
-7. **`skaal init` / project scaffolding + `skaal dev` watch mode** — no zero-config first-run; no hot-reload. P0 for adoption. ([§A.1](#a1-cli-zero-config-and-dev-loop))
-8. **Solver-failure error messages with closest-match suggestions** — today an unsatisfiable plan surfaces as a Z3 stack trace. P0 for first-time users. ([§A.4](#a4-error-messages-and-validation))
-9. **Streaming responses + ASGI-native routing for Skaal functions** — required for any LLM use, and Skaal already markets a vector tier. P0 for AI users. ([§B.6](#b6-compute--functions))
-10. **Catalog overrides per environment** (dev / staging / prod) without copy-pasting whole TOML files. P1 but hits everyone past the prototype stage. ([§A.5](#a5-catalog-ergonomics))
+ADR 014 removed public HTTP routing/streaming from the "what Skaal should build next" list, and ADR 015 landed the first `Store[T]` pagination/index pass (`list_page`, `scan_page`, `query_index`, `SecondaryIndex`). The next coherent pass is now the remaining storage/runtime capability work.
+
+1. **Blob / object storage tier** — there is no `@app.blob` and no S3/GCS backend, so any user with files drops the framework entirely. P0. ([§B.2](#b2-kv-store-and-storage-tiers))
+2. **Agent persistent-state save/load** — `__skaal_persistent_fields__` is collected but the runtime never loads or persists it; "fields marked @persistent survive restarts" in the docstring is currently false. P0 correctness gap. ([§B.7](#b7-agents))
+3. **`skaal init` / project scaffolding + `skaal dev` watch mode** — no zero-config first-run; no hot-reload. P0 for adoption. ([§A.1](#a1-cli-zero-config-and-dev-loop))
+4. **Solver-failure error messages with closest-match suggestions** — today an unsatisfiable plan surfaces as a Z3 stack trace. P0 for first-time users. ([§A.4](#a4-error-messages-and-validation))
+5. **Catalog overrides per environment** (dev / staging / prod) without copy-pasting whole TOML files. P1 but hits everyone past the prototype stage. ([§A.5](#a5-catalog-ergonomics))
+6. **Relational migrations beyond `create_all`** — any team past first deploy will need schema versioning and rollback. P0. ([§B.3](#b3-relational-tier-skaalrelationalpy))
+7. **Secret injection at deploy / runtime** — there is still no Skaal-level Secrets Manager / Secret Manager surface. P0. ([§B.6](#b6-compute--functions))
+8. **Examples ladder and testing story** — the examples still do not cover agents, schedules, patterns, or test fixtures. P1. ([§A.2](#a2-testing-story), [§A.8](#a8-examples-dont-progress-and-miss-common-patterns))
+9. **Backend-native cursor/index optimization** — the new `Store[T]` surface is present, but the built-in backends still materialize pages/index queries rather than mapping to native cursor or secondary-index primitives. P1 scalability gap. ([§B.2](#b2-kv-store-and-storage-tiers))
+10. **Per-row TTL / cache semantics** — `retention` still influences planning rather than runtime expiry behavior. P0 for session/cache workloads. ([§B.2](#b2-kv-store-and-storage-tiers))
 
 ---
 
@@ -180,32 +182,30 @@ If the next implementation pass is one PR, these are the items that buy the most
 
 ### B.1. HTTP/API surface
 
-The runtime in `skaal/runtime/local.py` is the headline gap area for users coming from FastAPI/Flask.
+ADR 014 reframed this surface. Skaal now treats `@app.function()` as compute plus resilience, and the supported path for public HTTP shape is `mount_asgi(...)` / `mount_wsgi(...)` with FastAPI, Starlette, Litestar, Flask, Dash, and similar frameworks. Skaal itself reserves the internal invoke seam (`POST /_skaal/invoke/<qualified_name>`) plus health/index helpers. See `docs/http.md` and `docs/design/014-http-routing-overhaul.md`.
 
-Update: ADR 014 reframes this surface. Skaal now treats `@app.function()` as compute plus resilience, and the supported path for HTTP shape is `mount_asgi(...)` with FastAPI / Starlette / Litestar. See `docs/http.md` and `docs/design/014-http-routing-overhaul.md`.
+Resolved by that cut: path/method routing, request validation, OpenAPI generation, and SSE/streaming are no longer Skaal-router gaps because the mounted framework owns them. The remaining gaps are around deploy-time policy wiring and first-party guidance.
 
 | Want                                        | Today (`runtime/local.py`)                                                                                                    | Sev    |
 | ------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- | ------ |
-| `GET /items/{id}` — path params, methods    | Only `POST /<fn>`, `GET /`, `GET /health` (`local.py:340-397`). No path-param parser.                                         | **P0** |
-| Auth (OAuth/JWT/sessions)                   | `APIGateway.auth` exists in `skaal/components.py:191-230` but no deploy target consumes it; runtime has no auth middleware.   | **P0** |
-| CORS, request logging middleware            | None. ASGI mount via `mount_asgi()` is the only escape.                                                                       | P1     |
-| Request validation (typed request schemas)  | Body must be a JSON object (`local.py:367`); arg validation is whatever the function signature does at call time.             | P1     |
-| OpenAPI                                     | `GET /` returns `{path, function}`; no schema. Users mounting FastAPI get OpenAPI for the FastAPI side only.                  | P1     |
-| WebSockets                                  | None; channels are server-side only.                                                                                          | P1     |
-| File upload (multipart)                     | `_dispatch` assumes JSON body.                                                                                                | P1     |
-| SSE / streaming response                    | Functions return a single value (`local.py:391`).                                                                             | **P0** for LLM users |
-| Static asset serving                        | None. Mount ASGI/WSGI for it.                                                                                                 | P1     |
+| Skaal-level auth/cors policy wiring to deploy targets | `APIGateway.auth` exists in `skaal/components.py:191-230`, but deploy targets still do not consistently consume it.           | **P0** |
+| First-party auth / middleware examples      | Mounted frameworks can do this today, but the examples/docs stop at CRUD and streaming.                                       | P1     |
+| WebSockets                                  | Available through mounted ASGI apps, but there is no Skaal-level deploy/runtime story beyond "bring your own framework."     | P1     |
+| File upload / multipart                     | Available through mounted ASGI/WSGI apps; the internal invoke seam remains JSON-only by design.                               | P2     |
+| Static asset serving                        | Available through mounted ASGI/WSGI apps or an upstream proxy; Skaal does not add its own asset layer.                        | P2     |
 
-The single biggest user surprise is path-param routing — most teams hit it within an hour and conclude Skaal is "not for HTTP APIs."
+The main remaining user surprise is not path-param routing anymore; it is that Skaal is intentionally not the public HTTP router, so users need to start from the mounted-framework examples rather than from `@app.function()` itself.
 
 ---
 
 ### B.2. KV `Store` and storage tiers
 
+Update: ADR 015 landed a first coherent `Store[T]` surface for cursor pagination and secondary-index lookup. The remaining gap is mostly backend efficiency and richer storage tiers, not basic expressiveness.
+
 | Want                                       | Today                                                                                                       | Sev    |
 | ------------------------------------------ | ----------------------------------------------------------------------------------------------------------- | ------ |
-| Pagination / cursor on `list()`            | `Store.list()` returns everything (`storage.py:225-230`); `scan(prefix)` is full-scan.                      | **P0** |
-| Secondary indexes on `Store[T]`            | None; only prefix scans (`storage.py:233-238`).                                                             | **P0** |
+| Pagination / cursor on `Store[T]`          | `Store.list_page(...)` and `scan_page(...)` now exist, but the bundled backends still materialize pages rather than using native cursor primitives. | P1 |
+| Secondary indexes on `Store[T]`            | `SecondaryIndex(...)` and `Store.query_index(...)` now exist, but the bundled backends still evaluate declared indexes generically rather than provisioning native DB indexes. | P1 |
 | Per-row TTL (`@storage(retention=...)`)    | `retention` is parsed and consumed by the solver for catalog matching (`solver/storage.py:78`) but no backend implements per-row expiry — the SQLite/Postgres/Local KV backends have no TTL fields. | **P0** for session stores |
 | Blob / object tier                         | No `@app.blob`, no S3 / GCS backend in `skaal/backends/` or `pyproject.toml` plugin entry points.           | **P0** |
 | Cache layer (Redis-as-cache, not KV store) | Redis backend is a KV store; no TTL on `set`, no eviction policy plumbed.                                   | P1     |
@@ -260,13 +260,13 @@ The single biggest user surprise is path-param routing — most teams hit it wit
 | ------------------------------------------ | ----------------------------------------------------------------------------------------------------------- | --- |
 | Long-running / background jobs             | `@app.function` is request/response. `@app.schedule` is recurring. No "fire-and-forget" or "delayed once" primitive — users build it from a Channel + worker function. | **P0** |
 | One-shot delayed jobs ("remind me in 1 h") | None; `Cron`/`Every` only.                                                                                   | P1  |
-| Streaming response / async generator       | Functions return a single value (`local.py:391`). Required for LLM use.                                      | **P0** for AI |
+| Streaming response / async generator       | `app.invoke_stream(...)` now covers the mounted-HTTP path, but returning a stream directly from the raw internal invoke route is still not a first-class deploy/runtime primitive. | P1 |
 | GPU compute                                | Solver carries `compute_type` ("cpu","gpu","tpu") (`types/compute.py`) but the bundled catalogs (`catalogs/aws.toml`, `catalogs/gcp.toml`) define no GPU instance options. | **P0** for ML |
 | Custom container images                    | Deploy generators bundle Python deps; no path to "ship this Dockerfile."                                     | P1  |
 | Secret injection at deploy / runtime       | No integration with AWS Secrets Manager / GCP Secret Manager / Pulumi secrets. `connection_env` slot exists in `ExternalComponent` (`components.py:79-100`) but is not consumed. | **P0** |
 | Env-specific dependencies                  | None.                                                                                                       | P1  |
 | Per-call retry / circuit breaker for *outbound* HTTP | Function-level resilience (`runtime/middleware.py`) wraps the function as a whole, not its outbound HTTP calls. | P1 |
-| Returning a stream from `@app.function`    | Not supported (single JSON return).                                                                          | P0  |
+| Returning a stream from `@app.function`    | Supported through `app.invoke_stream(...)` when a mounted ASGI app owns the HTTP response; the internal invoke seam stays JSON-only. The remaining gap is deployment guidance, not local capability. | P1 |
 | Scheduled functions invocable via HTTP     | `@app.schedule` functions are also exposed via POST (`local.py:332`). Convenient for testing, awkward for security — they have no auth and their existence isn't advertised in `GET /`. | P1 |
 
 ---

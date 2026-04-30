@@ -80,6 +80,7 @@ from skaal import (
     Store,
     VectorStore,
     open_relational_session,
+    sync_run,
 )
 from skaal.agent import Agent
 from skaal.decorators import handler
@@ -847,8 +848,6 @@ def _seed_demo_data() -> None:
     if Tasks.sync_list():
         return  # already seeded
 
-    from skaal.backends.local_backend import _sync_run
-
     # Users
     alice = User(id=_SEED_USER_ALICE, name="Alice", email="alice@example.com")
     bob = User(id=_SEED_USER_BOB, name="Bob", email="bob@example.com")
@@ -888,18 +887,18 @@ def _seed_demo_data() -> None:
     # Vector index — best-effort (requires skaal[vector])
     try:
         for task in (t1, t2, t3):
-            _sync_run(_sync_task_search(task))
+            sync_run(_sync_task_search(task))
     except Exception:
         logger.debug("Vector index seed skipped (skaal[vector] not installed)")
 
     # Relational comments — best-effort (requires --persist or a relational backend)
     try:
-        _sync_run(
+        sync_run(
             add_task_comment(
                 _SEED_TASK_1, "Alice", "Confirmed: all services still use API keys. Priority: P0."
             )
         )
-        _sync_run(
+        sync_run(
             add_task_comment(
                 _SEED_TASK_1, "Bob", "Started cert rotation plan — draft PR up for review."
             )
@@ -1646,7 +1645,7 @@ def trigger_scheduled_job(*_):
     opening a second loop via asyncio.run() causes
     "Future attached to a different loop" errors.
     Using sync_* methods instead spawns a fresh OS thread per call (via
-    _sync_run), each with its own event loop, so no loop is shared.
+    sync_run), each with its own event loop, so no loop is shared.
     """
     ctx = dash.callback_context
     if not ctx.triggered:
@@ -1801,9 +1800,7 @@ def handle_search(_, query):
         return dbc.Alert("Enter a search query.", color="warning")
 
     try:
-        from skaal.backends.local_backend import _sync_run
-
-        result = _sync_run(search_tasks(query, k=5))
+        result = sync_run(search_tasks(query, k=5))
         tasks = result.get("tasks", [])
         if not tasks:
             return dbc.Alert("No matching tasks found.", color="light")
@@ -1846,8 +1843,6 @@ def handle_search(_, query):
 )
 def handle_comments(add_clicks, list_clicks, task_id, author, body, list_task_id):
     """Add or list task comments via the relational store."""
-    from skaal.backends.local_backend import _sync_run
-
     ctx = dash.callback_context
     if not ctx.triggered:
         return dash.no_update, dash.no_update
@@ -1860,7 +1855,7 @@ def handle_comments(add_clicks, list_clicks, task_id, author, body, list_task_id
                 "Task ID, author, and body are required.", color="warning"
             ), dash.no_update
         try:
-            result = _sync_run(add_task_comment(task_id, author, body))
+            result = sync_run(add_task_comment(task_id, author, body))
             if "error" in result:
                 return dbc.Alert(result["error"], color="danger"), dash.no_update
             return dbc.Alert(
@@ -1873,7 +1868,7 @@ def handle_comments(add_clicks, list_clicks, task_id, author, body, list_task_id
         if not list_task_id:
             return dash.no_update, dbc.Alert("Enter a Task ID to load comments.", color="warning")
         try:
-            result = _sync_run(list_task_comments(list_task_id))
+            result = sync_run(list_task_comments(list_task_id))
             comments = result.get("comments", [])
             if not comments:
                 return dash.no_update, dbc.Alert("No comments for this task.", color="light")

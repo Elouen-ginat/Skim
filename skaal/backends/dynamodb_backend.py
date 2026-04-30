@@ -3,10 +3,35 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 from typing import Any, Callable, List
 
 from skaal.errors import SkaalConflict, SkaalUnavailable
+from skaal.storage import (
+    _cursor_identity,
+    _decode_cursor,
+    _encode_cursor,
+    _field_value,
+    _get_backend_indexes,
+    _normalize_limit,
+    _sort_token,
+)
+from skaal.types.storage import Page
+
+
+def _validate_cursor(
+    cursor: str | None,
+    *,
+    mode: str,
+    extra: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    decoded = _decode_cursor(cursor)
+    expected = {"mode": mode, **(extra or {})}
+    for key, value in expected.items():
+        if decoded and decoded.get(key) != value:
+            raise ValueError("Cursor does not match this query")
+    return decoded
 
 
 class DynamoBackend:
@@ -37,6 +62,74 @@ class DynamoBackend:
             self._client = boto3.client("dynamodb", region_name=self.region)
         return self._client
 
+    def _index_bucket_pk(self, index_name: str, partition_key: Any) -> str:
+        token = base64.urlsafe_b64encode(
+            json.dumps(partition_key, sort_keys=True, default=str).encode("utf-8")
+        ).decode("ascii")
+        return f"__skaal_idx__:{index_name}:{token}"
+
+    def _read_index_bucket(
+        self, client: Any, index_name: str, partition_key: Any
+    ) -> list[dict[str, Any]]:
+        resp = client.get_item(
+            TableName=self.table_name,
+            Key={"pk": {"S": self._index_bucket_pk(index_name, partition_key)}},
+        )
+        item = resp.get("Item")
+        if item is None or "entries" not in item:
+            return []
+        return json.loads(item["entries"]["S"])
+
+    def _write_index_bucket(
+        self,
+        client: Any,
+        index_name: str,
+        partition_key: Any,
+        entries: list[dict[str, Any]],
+    ) -> None:
+        bucket_pk = self._index_bucket_pk(index_name, partition_key)
+        if not entries:
+            client.delete_item(TableName=self.table_name, Key={"pk": {"S": bucket_pk}})
+            return
+        client.put_item(
+            TableName=self.table_name,
+            Item={
+                "pk": {"S": bucket_pk},
+                "kind": {"S": "index_bucket"},
+                "entries": {"S": json.dumps(entries)},
+            },
+        )
+
+    def _sync_indexes(self, client: Any, key: str, old_value: Any, new_value: Any) -> None:
+        for index_name, index in _get_backend_indexes(self).items():
+            old_partition = (
+                _field_value(old_value, index.partition_key) if old_value is not None else None
+            )
+            new_partition = (
+                _field_value(new_value, index.partition_key) if new_value is not None else None
+            )
+
+            if old_partition is not None:
+                entries = [
+                    entry
+                    for entry in self._read_index_bucket(client, index_name, old_partition)
+                    if entry["pk"] != key
+                ]
+                self._write_index_bucket(client, index_name, old_partition, entries)
+
+            if new_partition is not None:
+                sort_value = (
+                    _field_value(new_value, index.sort_key) if index.sort_key is not None else key
+                )
+                entries = [
+                    entry
+                    for entry in self._read_index_bucket(client, index_name, new_partition)
+                    if entry["pk"] != key
+                ]
+                entries.append({"pk": key, "sort": sort_value})
+                entries.sort(key=lambda item: (_sort_token(item.get("sort")), item["pk"]))
+                self._write_index_bucket(client, index_name, new_partition, entries)
+
     async def _run(self, fn: Any, *args: Any, **kwargs: Any) -> Any:
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(None, lambda: fn(*args, **kwargs))
@@ -60,10 +153,22 @@ class DynamoBackend:
         client = self._get_client()
 
         def _put() -> None:
+            current = client.get_item(
+                TableName=self.table_name,
+                Key={"pk": {"S": key}},
+            ).get("Item")
+            old_value = (
+                json.loads(current["value"]["S"]) if current and "value" in current else None
+            )
             client.put_item(
                 TableName=self.table_name,
-                Item={"pk": {"S": key}, "value": {"S": json.dumps(value)}},
+                Item={
+                    "pk": {"S": key},
+                    "kind": {"S": "item"},
+                    "value": {"S": json.dumps(value)},
+                },
             )
+            self._sync_indexes(client, key, old_value, value)
 
         await self._run(_put)
 
@@ -71,55 +176,153 @@ class DynamoBackend:
         client = self._get_client()
 
         def _del() -> None:
+            current = client.get_item(
+                TableName=self.table_name,
+                Key={"pk": {"S": key}},
+            ).get("Item")
+            old_value = (
+                json.loads(current["value"]["S"]) if current and "value" in current else None
+            )
             client.delete_item(
                 TableName=self.table_name,
                 Key={"pk": {"S": key}},
             )
+            if old_value is not None:
+                self._sync_indexes(client, key, old_value, None)
 
         await self._run(_del)
 
     async def list(self) -> list[tuple[str, Any]]:
-        client = self._get_client()
+        page = await self.list_page(limit=10_000, cursor=None)
+        items = list(page.items)
+        while page.has_more:
+            page = await self.list_page(limit=10_000, cursor=page.next_cursor)
+            items.extend(page.items)
+        return items
 
-        def _scan() -> list[tuple[str, Any]]:
-            items: list[tuple[str, Any]] = []
-            kwargs: dict[str, Any] = {"TableName": self.table_name}
-            while True:
-                resp = client.scan(**kwargs)
-                for item in resp.get("Items", []):
-                    pk = item["pk"]["S"]
-                    val = json.loads(item["value"]["S"])
-                    items.append((pk, val))
-                last = resp.get("LastEvaluatedKey")
-                if not last:
-                    break
-                kwargs["ExclusiveStartKey"] = last
-            return items
-
-        return await self._run(_scan)
+    async def list_page(self, *, limit: int, cursor: str | None):
+        return await self._scan_page_native(prefix=None, limit=limit, cursor=cursor, mode="list")
 
     async def scan(self, prefix: str = "") -> List[tuple[str, Any]]:
-        client = self._get_client()
+        page = await self.scan_page(prefix=prefix, limit=10_000, cursor=None)
+        items = list(page.items)
+        while page.has_more:
+            page = await self.scan_page(prefix=prefix, limit=10_000, cursor=page.next_cursor)
+            items.extend(page.items)
+        return items
 
-        def _scan() -> list[tuple[str, Any]]:
-            items: list[tuple[str, Any]] = []
-            kwargs: dict[str, Any] = {"TableName": self.table_name}
-            if prefix:
-                kwargs["FilterExpression"] = "begins_with(pk, :pfx)"
-                kwargs["ExpressionAttributeValues"] = {":pfx": {"S": prefix}}
-            while True:
+    async def scan_page(self, prefix: str = "", *, limit: int, cursor: str | None):
+        return await self._scan_page_native(
+            prefix=prefix,
+            limit=limit,
+            cursor=cursor,
+            mode="scan",
+        )
+
+    async def _scan_page_native(
+        self,
+        *,
+        prefix: str | None,
+        limit: int,
+        cursor: str | None,
+        mode: str,
+    ) -> Page[tuple[str, Any]]:
+        client = self._get_client()
+        limit = _normalize_limit(limit)
+        extra = {"prefix": prefix or ""} if mode == "scan" else None
+        decoded = _validate_cursor(cursor, mode=mode, extra=extra)
+
+        def _page() -> Page[tuple[str, Any]]:
+            collected: list[tuple[str, Any]] = []
+            last_key = decoded.get("exclusive_start_key") if decoded else None
+            while len(collected) < limit + 1:
+                kwargs: dict[str, Any] = {
+                    "TableName": self.table_name,
+                    "Limit": limit + 1 - len(collected),
+                    "FilterExpression": "(attribute_not_exists(#kind) OR #kind = :item)"
+                    + (" AND begins_with(pk, :pfx)" if prefix else ""),
+                    "ExpressionAttributeNames": {"#kind": "kind"},
+                    "ExpressionAttributeValues": {":item": {"S": "item"}},
+                }
+                if prefix:
+                    kwargs["ExpressionAttributeValues"][":pfx"] = {"S": prefix}
+                if last_key is not None:
+                    kwargs["ExclusiveStartKey"] = last_key
                 resp = client.scan(**kwargs)
                 for item in resp.get("Items", []):
-                    pk = item["pk"]["S"]
-                    val = json.loads(item["value"]["S"])
-                    items.append((pk, val))
-                last = resp.get("LastEvaluatedKey")
-                if not last:
+                    if "value" not in item:
+                        continue
+                    collected.append((item["pk"]["S"], json.loads(item["value"]["S"])))
+                    if len(collected) >= limit + 1:
+                        break
+                last_key = resp.get("LastEvaluatedKey")
+                if not last_key:
                     break
-                kwargs["ExclusiveStartKey"] = last
-            return items
 
-        return await self._run(_scan)
+            page_items = collected[:limit]
+            has_more = len(collected) > limit or bool(last_key)
+            next_cursor = None
+            if has_more and last_key is not None:
+                payload = {"mode": mode, "exclusive_start_key": last_key}
+                if prefix is not None and mode == "scan":
+                    payload["prefix"] = prefix
+                next_cursor = _encode_cursor(payload)
+            return Page(items=page_items, next_cursor=next_cursor, has_more=has_more)
+
+        return await self._run(_page)
+
+    async def query_index(
+        self,
+        index_name: str,
+        key: Any,
+        *,
+        limit: int,
+        cursor: str | None,
+    ):
+        client = self._get_client()
+        limit = _normalize_limit(limit)
+        decoded = _validate_cursor(
+            cursor,
+            mode="index",
+            extra={"index_name": index_name, "key": _cursor_identity(key)},
+        )
+
+        def _query() -> Page[Any]:
+            entries = self._read_index_bucket(client, index_name, key)
+            offset = int(decoded.get("offset", 0)) if decoded else 0
+            page_entries = entries[offset : offset + limit]
+            has_more = offset + len(page_entries) < len(entries)
+            if not page_entries:
+                return Page(items=[], next_cursor=None, has_more=False)
+
+            batch = client.batch_get_item(
+                RequestItems={
+                    self.table_name: {
+                        "Keys": [{"pk": {"S": entry["pk"]}} for entry in page_entries]
+                    }
+                }
+            )
+            items_by_pk = {
+                item["pk"]["S"]: json.loads(item["value"]["S"])
+                for item in batch.get("Responses", {}).get(self.table_name, [])
+                if "value" in item
+            }
+            ordered_items = [
+                items_by_pk[entry["pk"]] for entry in page_entries if entry["pk"] in items_by_pk
+            ]
+            next_cursor = None
+            if has_more:
+                next_cursor = _encode_cursor(
+                    {
+                        "mode": "index",
+                        "index_name": index_name,
+                        "key": _cursor_identity(key),
+                        "offset": offset + len(page_entries),
+                    }
+                )
+            return Page(items=ordered_items, next_cursor=next_cursor, has_more=has_more)
+
+        return await self._run(_query)
 
     async def increment_counter(self, key: str, delta: int = 1) -> int:
         """Atomically increment a counter using DynamoDB UpdateItem.
@@ -193,6 +396,7 @@ class DynamoBackend:
                         TableName=self.table_name,
                         Item={
                             "pk": {"S": key},
+                            "kind": {"S": "item"},
                             "value": {"S": json.dumps(updated)},
                             "ver": {"N": str(next_ver)},
                         },
@@ -203,6 +407,7 @@ class DynamoBackend:
                         TableName=self.table_name,
                         Item={
                             "pk": {"S": key},
+                            "kind": {"S": "item"},
                             "value": {"S": json.dumps(updated)},
                             "ver": {"N": str(next_ver)},
                         },
@@ -214,6 +419,7 @@ class DynamoBackend:
                 if code == "ConditionalCheckFailedException":
                     return False, None
                 raise
+            self._sync_indexes(client, key, current, updated)
             return True, updated
 
         async def _loop() -> Any:
