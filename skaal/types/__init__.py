@@ -5,6 +5,7 @@ continues to work without change.
 """
 
 from skaal.types.blob import BlobObject
+from skaal.types.cli import ChangeBatch, ChangeStream, ChildArgv, ReloadDirs, ReloadMode
 from skaal.types.compute import (
     Bulkhead,
     CircuitBreaker,
@@ -73,6 +74,12 @@ __all__ = [
     "Throughput",
     # blob
     "BlobObject",
+    # cli
+    "ChangeBatch",
+    "ChangeStream",
+    "ChildArgv",
+    "ReloadDirs",
+    "ReloadMode",
     # deploy
     "AppLike",
     "AuthConfig",

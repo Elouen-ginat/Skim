@@ -8,6 +8,9 @@ Skaal lets you describe your application's storage and compute needs as constrai
 
 ```bash
 pip install "skaal[serve]"
+skaal init demo
+cd demo && pip install -e .
+skaal run                       # hot-reloads on save
 ```
 
 ```bash
@@ -15,26 +18,7 @@ pip install "skaal[serve]"
 pip install "skaal[mesh]"
 ```
 
-```python
-from skaal import App, Module, storage, compute
-
-class TodoModule(Module):
-    @storage(reads_per_sec=100, writes_per_sec=50)
-    async def todos(self): ...
-
-    @compute(max_replicas=4)
-    async def handle_create(self, item: dict): ...
-
-app = App(modules=[TodoModule()])
-```
-
-```bash
-# Solve constraints and generate an infrastructure plan
-skaal plan --app myapp:app --catalog catalogs/local.toml
-
-# Run locally
-skaal run --app myapp:app
-```
+See `docs/cli.md` for `skaal init` and `skaal run` reload flags.
 
 Install `skaal[runtime]` as well when your app uses schedules, JWT auth, or OpenTelemetry.
 

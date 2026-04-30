@@ -1,0 +1,34 @@
+"""{name} — a Skaal app.
+
+Run locally:
+
+    skaal run
+
+Try it:
+
+    curl -s -X POST localhost:8000/increment -d '{{"name":"hits"}}'
+    curl -s -X POST localhost:8000/get_count -d '{{"name":"hits"}}'
+"""
+
+from skaal import App, Store
+
+app = App("{name}")
+
+
+@app.storage(read_latency="< 5ms", durability="ephemeral")
+class Counts(Store[int]):
+    """Named integer counters."""
+
+
+@app.function()
+async def increment(name: str, by: int = 1) -> dict[str, int | str]:
+    current = await Counts.get(name) or 0
+    new_value = current + by
+    await Counts.set(name, new_value)
+    return {{"name": name, "value": new_value}}
+
+
+@app.function()
+async def get_count(name: str) -> dict[str, int | str]:
+    value = await Counts.get(name) or 0
+    return {{"name": name, "value": value}}

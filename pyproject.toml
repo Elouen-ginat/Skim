@@ -46,6 +46,7 @@ Issues = "https://github.com/Elouen-ginat/Skaal/issues"
 serve = [
     "uvicorn>=0.29",
     "starlette>=0.34",
+    "watchfiles>=0.22",
 ]
 runtime = [
     "apscheduler>=3.10,<4.0",
@@ -166,6 +167,7 @@ packages = ["skaal"]
 artifacts = [
     "skaal/deploy/templates/**",
     "skaal/catalog/data/**",
+    "skaal/cli/templates/**",
 ]
 
 [tool.ruff]

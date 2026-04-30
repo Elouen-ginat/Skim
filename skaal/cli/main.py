@@ -11,6 +11,7 @@ from skaal.cli.deploy_cmd import app as deploy_app
 from skaal.cli.destroy_cmd import app as destroy_app
 from skaal.cli.diff_cmd import app as diff_app
 from skaal.cli.infra_cmd import app as infra_app
+from skaal.cli.init_cmd import app as init_app
 from skaal.cli.migrate_cmd import app as migrate_app
 from skaal.cli.plan_cmd import app as plan_app
 from skaal.cli.run_cmd import app as run_app
@@ -22,6 +23,7 @@ app = typer.Typer(
     no_args_is_help=True,
 )
 
+app.add_typer(init_app, name="init")
 app.add_typer(run_app, name="run")
 app.add_typer(plan_app, name="plan")
 app.add_typer(build_app, name="build")
