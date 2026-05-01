@@ -1,3 +1,5 @@
+"""Async Redis storage backend using redis.asyncio."""
+
 from __future__ import annotations
 
 import asyncio
@@ -5,8 +7,6 @@ import base64
 import json
 from typing import Any, Callable, List
 
-from skaal.backends._spec import BackendSpec, Wiring
-from skaal.deploy.kinds import StorageKind
 from skaal.errors import SkaalConflict, SkaalUnavailable
 from skaal.storage import (
     _cursor_identity,
@@ -21,9 +21,26 @@ from skaal.types.storage import Page
 
 
 class RedisBackend:
+    """
+    Redis storage backend using redis.asyncio.
+
+    Keys are stored as: skaal:{namespace}:{key}
+    Values are JSON-serialized.
+
+    scan(prefix) uses SCAN with MATCH pattern.
+    list() uses SCAN * then MGET.
+
+    Connection is lazy and **per event-loop**: each asyncio event loop that
+    uses this backend gets its own redis.asyncio client and connection pool.
+    This avoids "Future attached to a different loop" errors when the same
+    backend instance is shared between the scheduler daemon thread (which has
+    its own loop) and the sync-bridge background loop used by Dash callbacks.
+    """
+
     def __init__(self, url: str = "redis://localhost:6379", namespace: str = "default") -> None:
         self.url = url
         self.namespace = namespace
+        # Keyed by id(event_loop) so every loop gets its own connection pool.
         self._clients: dict[int, Any] = {}
 
     def _key(self, key: str) -> str:
@@ -119,6 +136,7 @@ class RedisBackend:
                 )
 
     async def connect(self) -> None:
+        """Create a Redis client for the current event loop. Called lazily on first use."""
         await self._ensure_connected()
 
     async def _ensure_connected(self) -> Any:
@@ -274,6 +292,7 @@ class RedisBackend:
         return Page(items=items, next_cursor=next_cursor, has_more=has_more)
 
     async def increment_counter(self, key: str, delta: int = 1) -> int:
+        """Atomically increment a counter using Redis INCR."""
         client = await self._ensure_connected()
         new_value = await client.incrby(self._key(key), delta)
         await client.zadd(self._key_index(), {key: 0})
@@ -286,6 +305,12 @@ class RedisBackend:
         *,
         max_retries: int = 64,
     ) -> Any:
+        """Atomically read, apply *fn*, and write back using a Redis pipeline with WATCH.
+
+        Retries up to *max_retries* times on ``WatchError`` before surfacing
+        a :class:`skaal.errors.SkaalConflict`.  Transient connection errors
+        become :class:`skaal.errors.SkaalUnavailable`.
+        """
         import redis.asyncio as aioredis
         from redis.exceptions import (
             ConnectionError as RedisConnectionError,
@@ -322,38 +347,3 @@ class RedisBackend:
 
     def __repr__(self) -> str:
         return f"RedisBackend(url={self.url!r}, namespace={self.namespace!r})"
-
-
-LOCAL_REDIS_SPEC = BackendSpec(
-    name="local-redis",
-    kinds=frozenset({StorageKind.KV}),
-    wiring=Wiring(
-        class_name="RedisBackend",
-        module="skaal.backends.kv.redis",
-        env_prefix="SKAAL_REDIS_URL",
-        uses_namespace=True,
-        local_service="redis",
-        local_env_value="redis://redis:6379",
-        dependency_sets=("redis-runtime",),
-    ),
-    supported_targets=frozenset({"local"}),
-)
-
-MEMORYSTORE_REDIS_SPEC = BackendSpec(
-    name="memorystore-redis",
-    kinds=frozenset({StorageKind.KV}),
-    wiring=Wiring(
-        class_name="RedisBackend",
-        module="skaal.backends.kv.redis",
-        env_prefix="SKAAL_REDIS_URL",
-        uses_namespace=True,
-        requires_vpc=True,
-        local_service="redis",
-        local_env_value="redis://redis:6379",
-        dependency_sets=("redis-runtime",),
-    ),
-    supported_targets=frozenset({"gcp"}),
-    local_fallbacks={StorageKind.KV: "local-redis"},
-)
-
-__all__ = ["LOCAL_REDIS_SPEC", "MEMORYSTORE_REDIS_SPEC", "RedisBackend"]

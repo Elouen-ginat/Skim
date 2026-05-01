@@ -1,4 +1,4 @@
-from skaal.backends.kv.sqlite import SqliteBackend
+"""SQLite-backed persistent key-value store via aiosqlite."""
 
 from __future__ import annotations
 

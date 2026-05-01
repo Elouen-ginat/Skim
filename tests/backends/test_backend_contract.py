@@ -70,7 +70,7 @@ async def _redis_factory(tmp_path: Path) -> AsyncIterator[Any]:
     try:
         import redis.asyncio  # noqa: F401
 
-        from skaal.backends.kv.redis import RedisBackend
+        from skaal.backends.redis_backend import RedisBackend
     except ImportError:
         pytest.skip("redis not installed")
 

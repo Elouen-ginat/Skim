@@ -18,7 +18,6 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
-    "Typing :: Typed",
     "Topic :: Software Development :: Libraries :: Application Frameworks",
     "Topic :: System :: Systems Administration",
 ]
@@ -153,8 +152,8 @@ s3 = "skaal.backends.s3_blob_backend:S3BlobBackend"
 gcs = "skaal.backends.gcs_blob_backend:GCSBlobBackend"
 
 [project.entry-points."skaal.channels"]
-local = "skaal.backends.channels.local:wire_local"
-redis = "skaal.backends.channels.redis:wire_redis"
+local = "skaal.channel:wire_local"
+redis = "skaal.channel:wire_redis"
 
 [tool.uv.sources]
 # Local checkouts can still resolve the unpublished mesh package when the
@@ -166,9 +165,7 @@ skaal-mesh = { path = "mesh" }
 packages = ["skaal"]
 # Include non-Python template files (Dockerfile, Pulumi.yaml, etc.)
 artifacts = [
-    "skaal/py.typed",
     "skaal/deploy/templates/**",
-    "skaal/deploy/data/**",
     "skaal/catalog/data/**",
     "skaal/cli/templates/**",
 ]

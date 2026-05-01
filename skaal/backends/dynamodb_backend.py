@@ -1,3 +1,5 @@
+"""DynamoDB storage backend (boto3 + thread pool for async compatibility)."""
+
 from __future__ import annotations
 
 import asyncio
@@ -5,8 +7,6 @@ import base64
 import json
 from typing import Any, Callable, List
 
-from skaal.backends._spec import BackendSpec, Wiring
-from skaal.deploy.kinds import StorageKind
 from skaal.errors import SkaalConflict, SkaalUnavailable
 from skaal.storage import (
     _cursor_identity,
@@ -21,6 +21,17 @@ from skaal.types.storage import Page
 
 
 class DynamoBackend:
+    """
+    AWS DynamoDB storage backend.
+
+    Table schema: pk (String, hash key), value (String, JSON-encoded).
+    Uses boto3 in asyncio.run_in_executor for async compatibility.
+    Requires boto3 installed and AWS credentials configured.
+
+    All methods delegate to synchronous boto3 calls via run_in_executor
+    to avoid blocking the event loop.
+    """
+
     def __init__(self, table_name: str, region: str = "us-east-1") -> None:
         self.table_name = table_name
         self.region = region
@@ -32,7 +43,7 @@ class DynamoBackend:
                 import boto3
             except ImportError as exc:
                 raise ImportError(
-                    "boto3 is required for DynamoBackend. Install it with: pip install boto3"
+                    "boto3 is required for DynamoBackend. " "Install it with: pip install boto3"
                 ) from exc
             self._client = boto3.client("dynamodb", region_name=self.region)
         return self._client
@@ -165,7 +176,7 @@ class DynamoBackend:
             if old_value is not None:
                 self._sync_indexes(client, key, old_value, None)
 
-        await self._run(_delete)
+        await self._run(_del)
 
     async def list(self) -> list[tuple[str, Any]]:
         page = await self.list_page(limit=10_000, cursor=None)
@@ -300,6 +311,12 @@ class DynamoBackend:
         return await self._run(_query)
 
     async def increment_counter(self, key: str, delta: int = 1) -> int:
+        """Atomically increment a counter using DynamoDB UpdateItem.
+
+        Uses a single ``UpdateItem`` with ``if_not_exists`` to handle both
+        the create-if-missing and increment cases atomically — no separate
+        ``put_item`` needed.
+        """
         client = self._get_client()
 
         def _increment() -> int:
@@ -314,10 +331,10 @@ class DynamoBackend:
                 },
                 ReturnValues="ALL_NEW",
             )
-            new_value = resp["Attributes"]["counter"]
-            if isinstance(new_value, dict) and "N" in new_value:
-                return int(new_value["N"])
-            return int(new_value)
+            new_val = resp["Attributes"]["counter"]
+            if isinstance(new_val, dict) and "N" in new_val:
+                return int(new_val["N"])
+            return int(new_val)
 
         return await self._run(_increment)
 
@@ -328,9 +345,16 @@ class DynamoBackend:
         *,
         max_retries: int = 8,
     ) -> Any:
+        """Atomically read-modify-write using an optimistic ``version`` attribute.
+
+        Each row carries a monotonic ``ver`` number; writes use
+        ``ConditionExpression`` to only succeed when the version hasn't
+        changed since the read.  After *max_retries* contended attempts a
+        :class:`skaal.errors.SkaalConflict` is raised.
+        """
         try:
             import botocore.exceptions
-        except ImportError as exc:
+        except ImportError as exc:  # pragma: no cover — boto3 always ships botocore
             raise SkaalUnavailable("botocore is required for DynamoBackend") from exc
 
         client = self._get_client()
@@ -397,19 +421,8 @@ class DynamoBackend:
         return await _loop()
 
     async def close(self) -> None:
+        # boto3 clients don't need explicit closing
         self._client = None
 
-
-DYNAMODB_SPEC = BackendSpec(
-    name="dynamodb",
-    kinds=frozenset({StorageKind.KV}),
-    wiring=Wiring(
-        class_name="DynamoBackend",
-        module="skaal.backends.kv.dynamodb",
-        env_prefix="SKAAL_TABLE",
-    ),
-    supported_targets=frozenset({"aws"}),
-    local_fallbacks={StorageKind.KV: "sqlite"},
-)
-
-__all__ = ["DYNAMODB_SPEC", "DynamoBackend"]
+    def __repr__(self) -> str:
+        return f"DynamoBackend(table={self.table_name!r}, region={self.region!r})"

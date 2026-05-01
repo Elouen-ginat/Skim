@@ -13,10 +13,12 @@ _RELATIONAL_BACKEND_ATTR = "__skaal_relational_backend__"
 
 
 def _require_sqlmodel() -> type:
+    from skaal.errors import MissingExtraError
+
     try:
         from sqlmodel import SQLModel
     except ImportError as exc:  # pragma: no cover - exercised when optional dep missing
-        raise ImportError(
+        raise MissingExtraError(
             "Relational storage requires SQLModel. Install it with `pip install sqlmodel`."
         ) from exc
     return SQLModel

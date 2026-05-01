@@ -204,6 +204,14 @@ class LambdaDeployConfig(ComputeDeployConfig):
             "Any positive value caps parallel invocations."
         ),
     )
+    vpc_id: str | None = Field(
+        default=None,
+        description="VPC ID (e.g. 'vpc-…') the Lambda should attach to. None = no VPC.",
+    )
+    subnet_ids: list[str] = Field(
+        default_factory=list,
+        description="Subnet IDs (e.g. 'subnet-…') for VPC attachment. Requires vpc_id.",
+    )
 
     @field_validator("runtime")
     @classmethod

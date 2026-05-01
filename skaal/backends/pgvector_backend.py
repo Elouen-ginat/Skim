@@ -1,13 +1,11 @@
+"""LangChain PGVector-backed vector storage backend."""
+
 from __future__ import annotations
 
 import re
 from typing import Any, cast
 
-from skaal.backends._spec import BackendSpec, Wiring
-from skaal.deploy.kinds import StorageKind
 from skaal.vector import HashEmbeddings
-
-_LOCAL_POSTGRES_DSN = "postgresql://skaal_user:skaal_pass@postgres/skaal_db"
 
 
 def _collection_slug(namespace: str) -> str:
@@ -16,6 +14,8 @@ def _collection_slug(namespace: str) -> str:
 
 
 class PgVectorBackend:
+    """Vector storage backed by pgvector via LangChain's PGVector adapter."""
+
     def __init__(
         self,
         dsn: str,
@@ -34,7 +34,7 @@ class PgVectorBackend:
         *,
         dimensions: int,
         metric: str,
-        model_type: type | None = None,
+        model_type: type | None = None,  # noqa: ARG002 - reserved for future use
         embeddings: Any | None = None,
     ) -> None:
         self._dimensions = dimensions
@@ -57,7 +57,7 @@ class PgVectorBackend:
     def _distance_strategy(self) -> Any:
         try:
             from langchain_postgres.vectorstores import DistanceStrategy
-        except ImportError as exc:
+        except ImportError as exc:  # pragma: no cover - optional dependency path
             raise ImportError("PGVector storage requires `langchain-postgres`.") from exc
 
         if self._metric == "l2":
@@ -72,7 +72,7 @@ class PgVectorBackend:
 
         try:
             from langchain_postgres import PGVector
-        except ImportError as exc:
+        except ImportError as exc:  # pragma: no cover - optional dependency path
             raise ImportError(
                 "pgvector storage requires `langchain-postgres` and `psycopg[binary]`."
             ) from exc
@@ -133,40 +133,3 @@ class PgVectorBackend:
 
     def __repr__(self) -> str:
         return f"PgVectorBackend(dsn={self.dsn!r}, namespace={self.namespace!r})"
-
-
-RDS_PGVECTOR_SPEC = BackendSpec(
-    name="rds-pgvector",
-    kinds=frozenset({StorageKind.VECTOR}),
-    wiring=Wiring(
-        class_name="PgVectorBackend",
-        module="skaal.backends.vector.pgvector",
-        env_prefix="SKAAL_DB_DSN",
-        uses_namespace=True,
-        dependency_sets=("pgvector-runtime",),
-        requires_vpc=True,
-        local_service="postgres",
-        local_env_value=_LOCAL_POSTGRES_DSN,
-    ),
-    supported_targets=frozenset({"aws"}),
-    local_fallbacks={StorageKind.VECTOR: "chroma-local"},
-)
-
-CLOUD_SQL_PGVECTOR_SPEC = BackendSpec(
-    name="cloud-sql-pgvector",
-    kinds=frozenset({StorageKind.VECTOR}),
-    wiring=Wiring(
-        class_name="PgVectorBackend",
-        module="skaal.backends.vector.pgvector",
-        env_prefix="SKAAL_DB_DSN",
-        uses_namespace=True,
-        dependency_sets=("cloud-sql-connector", "pgvector-runtime"),
-        requires_vpc=True,
-        local_service="postgres",
-        local_env_value=_LOCAL_POSTGRES_DSN,
-    ),
-    supported_targets=frozenset({"gcp"}),
-    local_fallbacks={StorageKind.VECTOR: "chroma-local"},
-)
-
-__all__ = ["CLOUD_SQL_PGVECTOR_SPEC", "PgVectorBackend", "RDS_PGVECTOR_SPEC"]

@@ -121,23 +121,6 @@ class _TokenBucket:
             return False
 
 
-RateLimitKeyer = Callable[[dict[str, Any]], str]
-
-
-def _global_rate_limit_key(_kwargs: dict[str, Any]) -> str:
-    return "__global__"
-
-
-def _per_client_rate_limit_key(kwargs: dict[str, Any]) -> str:
-    return str(kwargs.get("client_id") or kwargs.get("client") or "__anon__")
-
-
-_KEYERS: dict[str, RateLimitKeyer] = {
-    "global": _global_rate_limit_key,
-    "per-client": _per_client_rate_limit_key,
-}
-
-
 class _RateLimiter:
     __slots__ = ("policy", "_buckets")
 
@@ -147,9 +130,10 @@ class _RateLimiter:
 
     def _key(self, kwargs: dict[str, Any]) -> str:
         scope = self.policy.scope
-        keyer = _KEYERS.get(scope)
-        if keyer is not None:
-            return keyer(kwargs)
+        if scope == "global":
+            return "__global__"
+        if scope == "per-client":
+            return str(kwargs.get("client_id") or kwargs.get("client") or "__anon__")
         if scope.startswith("per-key:"):
             arg = scope.split(":", 1)[1]
             return str(kwargs.get(arg, "__missing__"))

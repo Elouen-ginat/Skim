@@ -68,16 +68,6 @@ def deploy(
         "--yes/--no-yes",
         help="Pass --yes to pulumi up (non-interactive).",
     ),
-    detach: bool = typer.Option(
-        False,
-        "--detach",
-        help="Local target only: start Docker Compose in detached mode.",
-    ),
-    follow_logs: bool = typer.Option(
-        False,
-        "--follow-logs",
-        help="Local target only: after a detached start, follow Docker Compose logs.",
-    ),
 ) -> None:
     """
     Package the app and deploy it using Pulumi.
@@ -94,7 +84,6 @@ def deploy(
             GCP: Application Default Credentials configured and a reachable Docker daemon.
     """
     from skaal import api
-    from skaal.deploy.reporting import TyperReporter
 
     log.debug("Deploying artifacts from %s", artifacts_dir)
     api.deploy(

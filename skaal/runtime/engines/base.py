@@ -52,13 +52,22 @@ async def start_engines_for(app: Any, context: Any) -> list[PatternEngine]:
     *context* is passed through to every engine's :meth:`start` call — the
     runtime uses it to expose the function registry, storage overrides, etc.
     """
-    from skaal.runtime.engines import eventlog, outbox, projection, saga  # noqa: F401
+    from skaal.patterns import EventLog, Outbox, Projection, Saga
+    from skaal.runtime.engines.eventlog import EventLogEngine
+    from skaal.runtime.engines.outbox import OutboxEngine
+    from skaal.runtime.engines.projection import ProjectionEngine
+    from skaal.runtime.engines.saga import SagaEngine
 
-    engines: list[PatternEngine] = [
-        eng
-        for obj in app._collect_all().values()
-        if isinstance(obj, Pattern) and (eng := engine_for(obj)) is not None
-    ]
+    engines: list[PatternEngine] = []
+    for obj in app._collect_all().values():
+        if isinstance(obj, EventLog):
+            engines.append(EventLogEngine(obj))
+        elif isinstance(obj, Projection):
+            engines.append(ProjectionEngine(obj))
+        elif isinstance(obj, Saga):
+            engines.append(SagaEngine(obj))
+        elif isinstance(obj, Outbox):
+            engines.append(OutboxEngine(obj))
 
     for eng in engines:
         await eng.start(context)

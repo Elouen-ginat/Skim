@@ -375,40 +375,15 @@ def test_run_hooks_sets_output_env(tmp_path: Path) -> None:
 
 
 def test_run_hooks_propagates_failure(tmp_path: Path) -> None:
-    """A non-zero exit aborts the hook sequence with SkaalHookError."""
+    """A non-zero exit aborts the hook sequence with CalledProcessError."""
+    import subprocess
     import sys
 
     from skaal.api import _run_hooks
-    from skaal.errors import SkaalHookError
 
-    bad = [sys.executable, "-c", "import sys; print('boom'); sys.exit(7)"]
-    with pytest.raises(SkaalHookError) as exc_info:
-        _run_hooks(
-            [bad],
-            cwd=tmp_path,
-            phase="post-deploy",
-            recovery_hint="rerun the hook after fixing the script",
-        )
-
-    message = str(exc_info.value)
-    assert "Post-deploy hook failed." in message
-    assert "Exit code: 7" in message
-    assert "boom" in message
-    assert "rerun the hook after fixing the script" in message
-
-
-def test_run_hooks_wraps_missing_executable(tmp_path: Path) -> None:
-    """Missing hook executables should surface as SkaalHookError with a hint."""
-    from skaal.api import _run_hooks
-    from skaal.errors import SkaalHookError
-
-    with pytest.raises(SkaalHookError) as exc_info:
-        _run_hooks([["missing-hook-binary"]], cwd=tmp_path, phase="pre-deploy")
-
-    message = str(exc_info.value)
-    assert "Pre-deploy hook failed." in message
-    assert "missing-hook-binary" in message
-    assert "not found on PATH" in message
+    bad = [sys.executable, "-c", "import sys; sys.exit(7)"]
+    with pytest.raises(subprocess.CalledProcessError):
+        _run_hooks([bad], cwd=tmp_path)
 
 
 def test_stacks_cli_lists_profiles(

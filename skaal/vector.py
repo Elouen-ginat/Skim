@@ -45,13 +45,15 @@ class HashEmbeddings:
 
 
 def _require_langchain_core() -> None:
+    """Raise :class:`~skaal.errors.MissingExtraError` if the vector extra is missing."""
+    from skaal.errors import MissingExtraError
+
     try:
         import langchain_core  # noqa: F401
     except ImportError as exc:  # pragma: no cover - exercised when vector extra missing
-        raise ImportError(
-            "Vector storage requires LangChain vector dependencies. "
-            "Install them with `pip install skaal[vector]` or add "
-            "`langchain-core`, `langchain-chroma`, and `langchain-postgres`."
+        raise MissingExtraError(
+            "Vector storage requires the 'vector' extra. "
+            "Install it with `pip install 'skaal[vector]'`."
         ) from exc
 
 

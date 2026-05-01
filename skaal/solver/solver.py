@@ -11,9 +11,8 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
 from skaal.plan import ComponentSpec, ComputeSpec, PatternSpec, PlanFile, StorageSpec
-from skaal.solver._pattern_solvers import PatternSolveContext, collect_function_names, solve_pattern
 from skaal.solver.graph import CyclicDependencyError, build_graph
-from skaal.solver.storage import select_backend
+from skaal.solver.storage import UnsatisfiableConstraints, select_backend
 from skaal.solver.targets import catalog_compute_key
 
 if TYPE_CHECKING:
@@ -74,6 +73,28 @@ def _policy_to_dict(policy: Any) -> dict[str, Any] | None:
     return dict(policy) if isinstance(policy, Mapping) else None
 
 
+def _storage_constraints_from_pattern(pattern_meta: dict[str, Any]) -> dict[str, Any]:
+    """
+    Build a ``__skaal_storage__``-shaped dict from an ``EventLog`` pattern's
+    ``pattern_meta["storage"]`` sub-dict, so it can be fed to ``select_backend``.
+    """
+    src = pattern_meta.get("storage", {})
+    # The source may lack throughput/size_hint/etc. — fill with the few keys
+    # the checker registry understands.
+    return {
+        "kind": "kv",
+        "access_pattern": src.get("access_pattern"),
+        "durability": src.get("durability"),
+        "write_throughput": src.get("throughput"),
+        "retention": None,  # retention here is a duration string, not an enum
+        "read_latency": None,
+        "write_latency": None,
+        "consistency": None,
+        "residency": None,
+        "size_hint": None,
+    }
+
+
 def _collect_all_components(app: "App") -> dict[str, Any]:
     """
     Recursively collect all components from *app* and every mounted submodule.
@@ -96,42 +117,58 @@ def _collect_all_components(app: "App") -> dict[str, Any]:
     return result
 
 
-def _resolve_collocate(
-    raw_colocate: str | None,
-    *,
-    owner_qname: str,
-    owner_kind: str,
-    all_resources: dict[str, Any],
-) -> str | None:
-    """Resolve a ``collocate_with`` hint to a qualified resource name.
-
-    The decorator accepts a bare class name or a qualified name; this
-    normalises to a qualified name registered in *all_resources*.  Emits a
-    ``RuntimeWarning`` and returns ``None`` if the hint matches nothing.
+def _collect_function_names(app: "App") -> set[str]:
     """
-    if not raw_colocate:
-        return None
-    if raw_colocate in all_resources:
-        return raw_colocate
-    for candidate in all_resources:
-        if candidate == raw_colocate or candidate.endswith(f".{raw_colocate}"):
-            return candidate
-    warnings.warn(
-        f"{owner_kind} {owner_qname!r}: collocate_with={raw_colocate!r} "
-        "does not match any registered resource. Ignored.",
-        RuntimeWarning,
-        stacklevel=2,
-    )
+    Return the set of all function identifiers a Saga step can legally
+    reference.  Includes bare names and qualified names so module authors can
+    use either form.
+    """
+    names: set[str] = set()
+    for qname, obj in app._collect_all().items():
+        if callable(obj) and hasattr(obj, "__skaal_compute__"):
+            names.add(qname)
+            # Also register the bare leaf name (saga.function → "reserve_inventory")
+            names.add(qname.rsplit(".", 1)[-1])
+    return names
+
+
+def _resolve_resource_qname(obj: Any, all_resources: dict[str, Any]) -> str | None:
+    """
+    Reverse-lookup: given a resource object, return the qualified name it's
+    registered under in ``all_resources``.  Used to resolve Projection/Outbox
+    cross-references from Python object to plan entry.
+    """
+    for qname, registered in all_resources.items():
+        if registered is obj:
+            return qname
+    # Fall back to class name for storage classes
+    name = getattr(obj, "__name__", None) or type(obj).__name__
+    for qname in all_resources:
+        if qname == name or qname.endswith(f".{name}"):
+            return qname
     return None
 
 
-def _solve_storage(
-    all_resources: dict[str, Any],
-    storage_backends: dict[str, Any],
-    *,
-    target: str,
-) -> dict[str, StorageSpec]:
-    """Pick a backend for every ``__skaal_storage__``-annotated class."""
+def solve(app: "App", catalog: dict[str, Any], target: str = "generic") -> "PlanFile":
+    """
+    Run the Z3 constraint solver over all registered storage and compute
+    declarations, producing a concrete infrastructure plan.
+
+    Args:
+        app:     The Skaal App whose decorators define the constraints.
+        catalog: Parsed TOML catalog entries (backends and their characteristics).
+        target:  Deploy target: "generic" | "aws-lambda" | "k8s" | "ecs"
+
+    Returns:
+        A PlanFile with concrete backend and instance selections.
+
+    Raises:
+        UnsatisfiableConstraints: If no backend can satisfy the declared constraints.
+    """
+    all_resources = app._collect_all()
+    storage_backends = catalog.get("storage", {})
+    compute_backends = catalog.get("compute", {})
+
     storage_specs: dict[str, StorageSpec] = {}
     compute_specs: dict[str, ComputeSpec] = {}
     component_specs: dict[str, ComponentSpec] = {}
@@ -157,8 +194,20 @@ def _solve_storage(
             continue
 
         constraints = obj.__skaal_storage__
-        backend_name, reason = select_backend(qname, constraints, storage_backends, target=target)
 
+        backend_name, reason = select_backend(
+            qname,
+            constraints,
+            storage_backends,
+            target=target,
+        )
+
+        # Compute a stable schema hash from the class's annotated fields
+        # This changes when fields are added, removed, or their types change
+        schema_hash = _compute_schema_hash(obj)
+
+        # Carry deploy-time provisioning params from the catalog into the plan.
+        # The solver never reads these; they are only consumed by deploy generators.
         backend_entry = storage_backends.get(backend_name, {})
         deploy_params = backend_entry.get("deploy", {})
         wire_params = backend_entry.get("wire", {})
@@ -189,26 +238,17 @@ def _solve_storage(
             previous_backend=None,
             migration_plan=None,
             migration_stage=0,
-            schema_hash=_compute_schema_hash(obj),
+            schema_hash=schema_hash,
             reason=reason,
             collocate_with=colocate_qname,
             auto_optimize=bool(constraints.get("auto_optimize", False)),
             deploy_params=deploy_params,
             wire_params=wire_params,
         )
-    return storage_specs
 
-
-def _solve_compute(
-    all_resources: dict[str, Any],
-    compute_backends: dict[str, Any],
-    *,
-    target: str,
-) -> dict[str, ComputeSpec]:
-    """Pick an instance type for every ``__skaal_compute__``-annotated callable."""
+    # ── Solve compute ──────────────────────────────────────────────────────
     from skaal.solver.compute import UnsatisfiableComputeConstraints, encode_compute
 
-    compute_specs: dict[str, ComputeSpec] = {}
     for qname, obj in all_resources.items():
         if not (callable(obj) and hasattr(obj, "__skaal_compute__")):
             continue
@@ -273,20 +313,11 @@ def _solve_compute(
             rate_limit=_policy_to_dict(getattr(compute_constraint, "rate_limit", None)),
             bulkhead=_policy_to_dict(getattr(compute_constraint, "bulkhead", None)),
         )
-    return compute_specs
 
-
-def _solve_components(
-    app: "App",
-    catalog: dict[str, Any],
-    *,
-    target: str,
-) -> dict[str, ComponentSpec]:
-    """Encode every attached :class:`ComponentBase` into a spec."""
+    # ── Solve components ───────────────────────────────────────────────────
     from skaal.components import ComponentBase
     from skaal.solver.components import encode_component
 
-    component_specs: dict[str, ComponentSpec] = {}
     for comp_name, comp_obj in _collect_all_components(app).items():
         if isinstance(comp_obj, ComponentBase):
             try:
@@ -298,25 +329,8 @@ def _solve_components(
                     "It will be omitted from the plan."
                 )
 
-
-def _solve_patterns(
-    app: "App",
-    all_resources: dict[str, Any],
-    storage_backends: dict[str, Any],
-    storage_specs: dict[str, StorageSpec],
-    *,
-    target: str,
-) -> dict[str, PatternSpec]:
-    """Encode EventLog / Projection / Saga / Outbox patterns into specs.
-
-    May mutate *storage_specs* — Projections force their target store to
-    co-locate with the source.
-    """
-    from skaal.solver import patterns as _pattern_solver_registrations
-
-    _ = _pattern_solver_registrations
-    pattern_specs: dict[str, PatternSpec] = {}
-    registered_functions = collect_function_names(app)
+    # ── Solve patterns (EventLog, Projection, Saga, Outbox) ───────────────
+    registered_functions = _collect_function_names(app)
 
     for qname, obj in all_resources.items():
         pattern_meta = getattr(obj, "__skaal_pattern__", None)
@@ -354,14 +368,16 @@ def _solve_patterns(
                     ),
                 },
             )
-        )
-        if spec is not None:
-            pattern_specs[qname] = spec
-    return pattern_specs
 
+        elif ptype == "projection":
+            source = pattern_meta.get("source")
+            target_obj = pattern_meta.get("target")
+            handler = pattern_meta.get("handler")
 
-def _resolve_resource_order(app: "App") -> list[str]:
-    """Compute the topological order over the app's resource graph.
+            source_qname = _resolve_resource_qname(source, all_resources) if source else None
+            target_qname = (
+                _resolve_resource_qname(target_obj, all_resources) if target_obj else None
+            )
 
             # Validate the handler points to a registered function
             if handler and handler not in registered_functions:
@@ -370,11 +386,36 @@ def _resolve_resource_order(app: "App") -> list[str]:
                     "Make sure it is registered via @app.function."
                 )
 
+            # Projections force the target store to co-locate with the source.
+            # If the target appears in storage_specs, overwrite its collocate_with
+            # so deploy generators pin it to the same cluster as the source.
+            if target_qname and source_qname and target_qname in storage_specs:
+                existing = storage_specs[target_qname]
+                storage_specs[target_qname] = existing.model_copy(
+                    update={"collocate_with": source_qname}
+                )
 
-def solve(app: "App", catalog: dict[str, Any], target: str = "generic") -> "PlanFile":
-    """
-    Run the Z3 constraint solver over all registered storage and compute
-    declarations, producing a concrete infrastructure plan.
+            consistency = pattern_meta.get("consistency")
+            pattern_specs[qname] = PatternSpec(
+                pattern_name=qname,
+                pattern_type="projection",
+                backend=None,
+                reason=(
+                    f"projection {qname!r}: {source_qname!r} → {target_qname!r} "
+                    f"via handler={handler!r}"
+                ),
+                config={
+                    "source": source_qname,
+                    "target": target_qname,
+                    "handler": handler,
+                    "consistency": (
+                        consistency.value
+                        if consistency is not None and hasattr(consistency, "value")
+                        else consistency
+                    ),
+                    "checkpoint_every": pattern_meta.get("checkpoint_every"),
+                },
+            )
 
         elif ptype == "saga":
             steps = pattern_meta.get("steps", [])
@@ -392,35 +433,65 @@ def solve(app: "App", catalog: dict[str, Any], target: str = "generic") -> "Plan
                     "Register them via @app.function before deploying."
                 )
 
-    Returns:
-        A PlanFile with concrete backend and instance selections.
+            pattern_specs[qname] = PatternSpec(
+                pattern_name=qname,
+                pattern_type="saga",
+                backend=None,
+                reason=(
+                    f"saga {pattern_meta.get('name')!r}: {len(steps)} step(s), "
+                    f"coordination={pattern_meta.get('coordination')!r}"
+                ),
+                config={
+                    "name": pattern_meta.get("name"),
+                    "steps": steps,
+                    "coordination": pattern_meta.get("coordination"),
+                    "timeout_ms": pattern_meta.get("timeout_ms"),
+                    "missing_references": missing,
+                },
+            )
 
-    Raises:
-        UnsatisfiableConstraints: If no backend can satisfy the declared constraints.
-    """
-    all_resources = app._collect_all()
-    storage_backends = catalog.get("storage", {})
-    compute_backends = catalog.get("compute", {})
+        elif ptype == "outbox":
+            channel_obj = pattern_meta.get("channel")
+            storage_obj = pattern_meta.get("storage")
+            channel_qname = (
+                _resolve_resource_qname(channel_obj, all_resources) if channel_obj else None
+            )
+            storage_qname = (
+                _resolve_resource_qname(storage_obj, all_resources) if storage_obj else None
+            )
 
-    # Build the dependency graph once up front so every sub-solver can consult
-    # it.  The ordering is written into the plan so deploy generators can
-    # provision resources in dependency order.
-    resource_order = _resolve_resource_order(app)
+            # The outbox table must live on the same backend as the primary
+            # storage so the write is transactional.  Borrow its backend.
+            outbox_backend: str | None = None
+            if storage_qname and storage_qname in storage_specs:
+                outbox_backend = storage_specs[storage_qname].backend
 
-    storage_specs = _solve_storage(all_resources, storage_backends, target=target)
-    compute_specs = _solve_compute(all_resources, compute_backends, target=target)
-    component_specs = _solve_components(app, catalog, target=target)
-    # Patterns may rewrite storage_specs (Projections force collocation).
-    pattern_specs = _solve_patterns(
-        app, all_resources, storage_backends, storage_specs, target=target
-    )
+            pattern_specs[qname] = PatternSpec(
+                pattern_name=qname,
+                pattern_type="outbox",
+                backend=outbox_backend,
+                reason=(
+                    f"outbox: writes to {storage_qname!r}, forwards to {channel_qname!r}, "
+                    f"delivery={pattern_meta.get('delivery')!r}"
+                ),
+                config={
+                    "channel": channel_qname,
+                    "storage": storage_qname,
+                    "delivery": pattern_meta.get("delivery"),
+                },
+            )
 
-    # Flatten transitive collocate_with chains in topological order.
+    # ── Propagate collocation through the storage graph ───────────────────
+    # A storage that is co-located with another storage inherits the region /
+    # cluster hints of its target.  We cannot enforce region pinning here
+    # (that's a deploy-time concern), but we can surface the inherited target
+    # in the plan so downstream generators can follow the chain in one pass.
     _propagate_collocation(storage_specs, compute_specs, resource_order)
 
-    # Target-level deploy config — read deploy params for the target compute
-    # backend (e.g. Lambda, Cloud Run) from the catalog.  The solver doesn't
-    # use these; deploy generators do.
+    # ── Target-level deploy config ─────────────────────────────────────────
+    # Read the deploy params for the target compute backend (e.g. Lambda,
+    # Cloud Run) from the catalog.  The solver doesn't use these; deploy
+    # generators do.
     target_compute_key = catalog_compute_key(target)
     deploy_config: dict[str, Any] = {}
     if target_compute_key:

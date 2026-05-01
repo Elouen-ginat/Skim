@@ -16,14 +16,10 @@ from __future__ import annotations
 import io
 import logging
 
-import pytest
-
 from skaal import App
 from skaal.catalog.loader import load_catalog
 from skaal.decorators import scale
 from skaal.patterns import EventLog, Outbox, Projection, Saga, SagaStep
-from skaal.plan import PatternSpec
-from skaal.solver._pattern_solvers import PatternSolveContext, register_pattern_solver
 from skaal.solver.solver import solve
 from skaal.types import (
     Bulkhead,
@@ -462,11 +458,3 @@ def test_solve_outbox_borrows_primary_storage_backend():
     # Outbox backend should match the primary storage backend
     assert spec.backend == plan.storage["ob.Orders"].backend
     assert spec.config["storage"] == "ob.Orders"
-
-
-def test_register_pattern_solver_rejects_duplicates():
-    with pytest.raises(RuntimeError, match="solver already registered"):
-
-        @register_pattern_solver("event-log")
-        def _duplicate(_ctx: PatternSolveContext) -> PatternSpec:
-            raise AssertionError("duplicate registration should fail")

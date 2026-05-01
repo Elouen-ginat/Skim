@@ -7,17 +7,16 @@ import importlib
 import os
 
 _user_module = importlib.import_module("$source_module")
-from skaal.plan import PlanFile
+$backend_imports
 from skaal.runtime.local import LocalRuntime
-
-_plan = PlanFile.model_validate_json($plan_json_literal)
 
 # Wire Skaal storage before gunicorn forks workers, then start the
 # background scheduler so @app.schedule() functions run in Docker too.
-_runtime = LocalRuntime.from_plan(
+_runtime = LocalRuntime(
     _user_module.$app_var,
-    _plan,
-    target="$target_name",
+    backend_overrides={
+$backend_overrides
+    },
 )
 # Starts APScheduler in a daemon thread; each firing is printed to stdout
 # so it appears in `docker logs`.  No-ops if apscheduler is not installed.

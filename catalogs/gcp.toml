@@ -20,13 +20,13 @@ memory_size_gb = 1
 
 [storage.memorystore-redis.wire]
 class_name      = "RedisBackend"
-module          = "skaal.backends.kv.redis"
+module          = "redis_backend"
 env_prefix      = "SKAAL_REDIS_URL"
 uses_namespace  = true
 requires_vpc    = true
 local_service   = "redis"
 local_env_value = "redis://redis:6379"
-dependency_sets = ["redis-runtime"]
+extra_deps      = []
 
 [storage.cloud-sql-postgres]
 display_name = "Cloud SQL (PostgreSQL 16)"
@@ -48,13 +48,13 @@ deletion_protection = false
 
 [storage.cloud-sql-postgres.wire]
 class_name      = "PostgresBackend"
-module          = "skaal.backends.kv.postgres"
+module          = "postgres_backend"
 env_prefix      = "SKAAL_DB_DSN"
 uses_namespace  = true
 requires_vpc    = true
 local_service   = "postgres"
 local_env_value = "postgresql://skaal_user:skaal_pass@postgres/skaal_db"
-dependency_sets = ["cloud-sql-connector"]
+extra_deps      = ["cloud-sql-python-connector[asyncpg]>=1.9"]
 
 [storage.cloud-sql-pgvector]
 display_name = "Cloud SQL (PostgreSQL 16 + pgvector)"
@@ -77,13 +77,17 @@ deletion_protection = false
 
 [storage.cloud-sql-pgvector.wire]
 class_name      = "PgVectorBackend"
-module          = "skaal.backends.vector.pgvector"
+module          = "pgvector_backend"
 env_prefix      = "SKAAL_DB_DSN"
 uses_namespace  = true
 requires_vpc    = true
 local_service   = "postgres"
 local_env_value = "postgresql://skaal_user:skaal_pass@postgres/skaal_db"
-dependency_sets = ["cloud-sql-connector", "pgvector-runtime"]
+extra_deps      = [
+	"cloud-sql-python-connector[asyncpg]>=1.9",
+	"langchain-postgres>=0.0.17",
+	"psycopg[binary]>=3.3",
+]
 
 [storage.gcs]
 display_name = "Google Cloud Storage"
@@ -105,7 +109,7 @@ extra_deps      = ["gcsfs>=2025.3.0"]
 
 [storage.firestore.wire]
 class_name  = "FirestoreBackend"
-module      = "skaal.backends.kv.firestore"
+module      = "firestore_backend"
 env_prefix  = "SKAAL_COLLECTION"
 
 [storage.firestore]

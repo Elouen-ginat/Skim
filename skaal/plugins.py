@@ -15,8 +15,6 @@ from importlib.metadata import entry_points
 from pathlib import Path
 from typing import Any, Callable
 
-from skaal.backends._registry import backend_registry, get_backend_impl
-from skaal.deploy.kinds import StorageKind
 from skaal.errors import SkaalPluginError
 
 # ── Cache of entry-point results (populated lazily, flushable for tests) ──────

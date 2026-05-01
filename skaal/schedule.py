@@ -85,7 +85,7 @@ class Every(BaseModel):
         """Interval in seconds."""
         return _parse_seconds(self.interval)
 
-    def to_aws_expression(self) -> str:
+    def as_rate_expression(self) -> str:
         """AWS EventBridge ``rate(N unit)`` expression."""
         secs = self.seconds
         if secs >= 3600 and secs % 3600 == 0:
@@ -99,7 +99,7 @@ class Every(BaseModel):
             unit = "second" if n == 1 else "seconds"
         return f"rate({n} {unit})"
 
-    def to_gcp_expression(self) -> str:
+    def as_cron_expression(self) -> str:
         """5-field cron expression for GCP Cloud Scheduler.
 
         Only supports intervals that divide evenly into minutes or hours.
@@ -124,12 +124,6 @@ class Every(BaseModel):
             )
         return f"*/{int(mins)} * * * *"
 
-    def as_rate_expression(self) -> str:
-        return self.to_aws_expression()
-
-    def as_cron_expression(self) -> str:
-        return self.to_gcp_expression()
-
 
 class Cron(BaseModel):
     """Standard 5-field cron expression.
@@ -153,18 +147,10 @@ class Cron(BaseModel):
             )
         return v
 
-    def to_aws_expression(self) -> str:
+    def as_aws_expression(self) -> str:
         """AWS EventBridge 6-field cron expression (appends year wildcard ``*``)."""
         min_, hr, dom, mon, dow = self.expression.split()
         return f"cron({min_} {hr} {dom} {mon} {dow} *)"
-
-    def to_gcp_expression(self) -> str:
-        """GCP Cloud Scheduler accepts standard 5-field cron expressions."""
-
-        return self.expression
-
-    def as_aws_expression(self) -> str:
-        return self.to_aws_expression()
 
 
 class ScheduleContext(BaseModel):
@@ -182,7 +168,7 @@ class ScheduleContext(BaseModel):
 
 
 # Union alias for type annotations
-Schedule: TypeAlias = Every | Cron
+Schedule = Union[Every, Cron]
 
 
 def build_apscheduler_trigger(trigger: Schedule, *, timezone: str) -> Any:

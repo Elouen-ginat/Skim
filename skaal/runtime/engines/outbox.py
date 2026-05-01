@@ -10,8 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from collections.abc import Awaitable, Callable
-from typing import Any, Literal, cast
+from typing import Any
 
 from skaal.patterns import Outbox
 from skaal.runtime.engines.base import BackgroundTaskEngine
@@ -36,13 +35,14 @@ class OutboxEngine(BackgroundTaskEngine):
     # ── Writer + relay ───────────────────────────────────────────────────────
 
     def _write_factory(self) -> Any:
+        store_backend = _backend_of(self.outbox.storage)
+
         async def write(row_key: str, payload: Any) -> None:
             """Atomically append *payload* to the outbox.
 
             The payload is stored under ``outbox:<row_key>:<ts>`` so ordering
             is preserved by the backend's lexicographic scan.
             """
-            store_backend = _backend_of(self.outbox.storage)
             ts = f"{time.time_ns():020d}"
             key = f"outbox:{row_key}:{ts}"
 
@@ -70,12 +70,11 @@ class OutboxEngine(BackgroundTaskEngine):
                 for key, row in sorted(pending):
                     if not isinstance(row, dict) or row.get("delivered"):
                         continue
-                    row_data = cast(dict[str, Any], row)
                     try:
                         if hasattr(channel, "send"):
-                            await channel.send(row_data["payload"])
+                            await channel.send(row["payload"])
                         elif hasattr(channel, "append"):
-                            await channel.append(row_data["payload"])
+                            await channel.append(row["payload"])
                         else:
                             continue
                     except Exception:  # noqa: BLE001
@@ -83,9 +82,15 @@ class OutboxEngine(BackgroundTaskEngine):
                         self._failures += 1
                         continue
 
+                    # Mark delivered.  For at-least-once the safest thing is to
+                    # delete the row; for exactly-once we keep it marked so a
+                    # downstream dedupe layer can reconcile.
                     try:
-                        finalizer = _DELIVERY_FINALIZERS[cast(DeliveryMode, self.outbox.delivery)]
-                        await finalizer(store_backend, key, row_data)
+                        if self.outbox.delivery == "at-least-once":
+                            await store_backend.delete(key)
+                        else:
+                            row["delivered"] = True
+                            await store_backend.set(key, row)
                     except Exception:  # noqa: BLE001
                         self._failures += 1
                         continue

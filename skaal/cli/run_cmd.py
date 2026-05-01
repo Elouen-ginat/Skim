@@ -41,11 +41,6 @@ def run(
         False, "--persist", help="Use SQLite for persistent local storage."
     ),
     db: str = typer.Option("skaal_local.db", "--db", help="SQLite database path (with --persist)."),
-    plan: Optional[str] = typer.Option(
-        None,
-        "--plan",
-        help="Use a solved plan file and local fallbacks to wire runtime backends.",
-    ),
     distributed: bool = typer.Option(
         False,
         "--distributed",
@@ -121,7 +116,7 @@ def run(
             persist=persist,
             db=db,
             distributed=distributed,
-            plan=plan,
+            node_id=node_id,
         )
     except KeyboardInterrupt:
         log.info("Stopped.")

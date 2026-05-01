@@ -6,16 +6,15 @@
 import os
 
 import $source_module as _user_module
-from skaal.plan import PlanFile
+$backend_imports
 from skaal.runtime.local import LocalRuntime
 
-_plan = PlanFile.model_validate_json($plan_json_literal)
-
 # Wire Skaal storage at cold-start.
-LocalRuntime.from_plan(
+LocalRuntime(
     _user_module.$app_var,
-    _plan,
-    target="$target_name",
+    backend_overrides={
+$backend_overrides
+    },
 )
 
 # WSGI callable — mounted via app.mount_wsgi("$wsgi_attribute")

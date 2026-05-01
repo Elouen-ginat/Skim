@@ -43,19 +43,20 @@ def _format_banner(title: str, lines: list[str]) -> str:
 class MeshRuntime(BaseRuntime):
     """Distributed runtime that delegates agent routing and channels to the Rust mesh.
 
-    The mesh layer currently shares the same local HTTP dispatch and channel
-    wiring path as :class:`~skaal.runtime.local.LocalRuntime`. The distributed
-    behavior today comes from the Rust mesh bridge APIs and health snapshot:
+    The HTTP server / dispatch path mirrors :class:`~skaal.runtime.local.LocalRuntime`
+    so existing Starlette / uvicorn plumbing is reused.  The mesh layer adds:
 
     - **Agent placement**: :meth:`route_agent` wraps
       ``SkaalMesh.route_agent_call`` so agent calls resolve to a live instance.
+    - **Distributed channels**: :meth:`channel_publish` forwards to
+      ``SkaalMesh.publish`` (``tokio::sync::broadcast``-backed pub/sub).
     - **Health**: :meth:`health` returns the mesh's aggregated health snapshot
       (agents, state, migrations, channels).
     """
 
     def __init__(
         self,
-        app: RuntimeApp,
+        app: Any,
         *,
         host: str = "127.0.0.1",
         port: int = 8000,
@@ -66,11 +67,8 @@ class MeshRuntime(BaseRuntime):
         telemetry_runtime: "RuntimeTelemetry | None" = None,
         auth_http_client: "httpx.AsyncClient | None" = None,
     ) -> None:
-        if backend_overrides is not None and runtime_plan is not None:
-            raise ValueError("Pass either backend_overrides or runtime_plan, not both.")
-
         try:
-            importlib.import_module("skaal_mesh")
+            import skaal_mesh
         except ImportError as exc:
             raise ImportError(
                 "MeshRuntime requires the skaal_mesh native extension.\n"
@@ -194,19 +192,11 @@ class MeshRuntime(BaseRuntime):
 
     # ── Mesh bridge API (used by engines / agents) ────────────────────────────
 
-    async def route_agent(
-        self,
-        agent_type: str,
-        agent_id: str,
-        method: str,
-        args: RuntimePayload,
-    ) -> object:
-        return await self.agents.route(agent_type, agent_id, method, args)
+    def route_agent(self, agent_type: str, agent_id: str, method: str, args: dict[str, Any]) -> str:
+        return self._mesh.route_agent_call(agent_type, agent_id, method, json.dumps(args))
 
-    def channel_publish(self, topic: str, message: object) -> int:
-        return self._mesh.publish(topic, message)
+    def channel_publish(self, topic: str, message: Any) -> int:
+        return self._mesh.publish(topic, json.dumps(message))
 
-    def health(self) -> RuntimePayload:
-        snapshot = cast(RuntimePayload, asdict(cast(Any, self._mesh.health_snapshot())))
-        snapshot["observer"] = self.observer.snapshot()
-        return snapshot
+    def health(self) -> dict[str, Any]:
+        return json.loads(self._mesh.health_snapshot())

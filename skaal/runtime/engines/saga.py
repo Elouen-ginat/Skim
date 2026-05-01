@@ -25,7 +25,6 @@ from langgraph.graph import END, START, StateGraph
 
 from skaal.errors import SkaalError
 from skaal.patterns import Saga
-from skaal.runtime.engines.base import register_engine
 
 
 class SagaState(TypedDict, total=False):
@@ -43,7 +42,7 @@ class SagaState(TypedDict, total=False):
 
 
 class SagaExecutor:
-    """Runs a single saga instance exposed on the runtime context."""
+    """Runs a single saga instance; exposed on the app via :meth:`SagaEngine.executor`."""
 
     def __init__(
         self,
@@ -201,7 +200,6 @@ class SagaExecutor:
             pass
 
 
-@register_engine(Saga)
 class SagaEngine:
     """Registers a :class:`SagaExecutor` on the app so user code can trigger it."""
 

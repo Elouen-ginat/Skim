@@ -6,11 +6,8 @@ import httpx
 import pytest
 
 from skaal import App
-from skaal.agent import Agent
-from skaal.decorators import handler
 from skaal.runtime.local import LocalRuntime
 from skaal.storage import Store
-from skaal.types import Persistent
 
 
 def _invoke_path(app: App, function_name: str) -> str:
@@ -41,7 +38,7 @@ def counter_app() -> App:
 
 def test_runtime_default_in_memory(counter_app):
     """Default LocalRuntime uses in-memory LocalMap."""
-    from skaal.backends.kv.local_map import LocalMap
+    from skaal.backends.local_backend import LocalMap
 
     rt = LocalRuntime(counter_app)
     backends = list(rt._backends.values())
@@ -50,7 +47,7 @@ def test_runtime_default_in_memory(counter_app):
 
 def test_runtime_from_sqlite(counter_app, tmp_path):
     """from_sqlite creates a runtime with SqliteBackend instances."""
-    from skaal.backends.kv.sqlite import SqliteBackend
+    from skaal.backends.sqlite_backend import SqliteBackend
 
     db = tmp_path / "test.db"
     rt = LocalRuntime.from_sqlite(counter_app, db_path=str(db))
@@ -70,7 +67,7 @@ def test_runtime_from_backend_sqlite(counter_app, tmp_path):
 
 def test_runtime_backend_override(counter_app):
     """Explicit backend_overrides replace default LocalMap."""
-    from skaal.backends.kv.local_map import LocalMap
+    from skaal.backends.local_backend import LocalMap
 
     custom = LocalMap()
     custom._data["seed"] = 42
@@ -130,7 +127,7 @@ async def test_runtime_dispatch_bad_method(counter_app):
 
 def test_from_postgres_creates_backends(counter_app):
     """from_postgres() creates PostgresBackend instances (lazy connect)."""
-    from skaal.backends.kv.postgres import PostgresBackend
+    from skaal.backends.postgres_backend import PostgresBackend
 
     rt = LocalRuntime.from_postgres(counter_app, dsn="postgresql://user:pass@localhost/test")
     backends = list(rt._backends.values())

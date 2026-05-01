@@ -53,8 +53,7 @@ class App(Module):
 
         ``skaal run`` uses *wsgi_app* directly — it serves via uvicorn +
         starlette ``WSGIMiddleware`` so the full Dash/Flask UI is available
-        at ``http://localhost:<port>`` while Skaal function endpoints stay
-        reachable under ``/_skaal/*``.
+        at ``http://localhost:<port>``.
 
         ``skaal deploy`` uses *attribute* to generate the correct entry point:
 
@@ -100,10 +99,6 @@ class App(Module):
                        live instance.
             attribute: Dotted attribute path used by deploy generators in the
                        generated entry-point files, e.g. ``"fastapi_app"``.
-
-        When served through ``skaal run`` the mounted app stays at ``/`` and
-        Skaal function endpoints move under ``/_skaal/*`` so both surfaces stay
-        reachable.
 
         Example::
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from skaal.backends.kv.local_map import LocalMap
+from skaal.backends.local_backend import LocalMap
 from skaal.migrate.engine import MigrationEngine, copy_all
 from skaal.migrate.shadow import ShadowBackend
 

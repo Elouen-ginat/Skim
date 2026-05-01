@@ -89,7 +89,6 @@ def plan(
     """
     from skaal import api
     from skaal.plan import PLAN_FILE_NAME
-    from skaal.solver.storage import UnsatisfiableConstraints
 
     cfg = SkaalSettings()
     resolved_app = target_app or cfg.app
@@ -106,15 +105,12 @@ def plan(
 
     log.info("Solving constraints for %r -> target=%r ...", skaal_app.name, resolved_target)
 
-    try:
-        plan_file = api.plan(
-            resolved_app,
-            target=resolved_target,
-            catalog=catalog,
-            write=True,
-        )
-    except UnsatisfiableConstraints as exc:
-        raise ValueError(str(exc)) from exc
+    plan_file = api.plan(
+        resolved_app,
+        target=resolved_target,
+        catalog=catalog,
+        write=True,
+    )
 
     log.info("Wrote %s", PLAN_FILE_NAME)
     log.info("")

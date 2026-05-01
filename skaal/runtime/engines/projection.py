@@ -57,21 +57,12 @@ class ProjectionEngine(BackgroundTaskEngine):
                     self._failures += 1
                     continue
                 counter += 1
-                if self._observer is not None:
-                    self._observer.event_handled(self.projection.handler, offset)
                 if counter % max(1, self.projection.checkpoint_every) == 0:
-                    try:
-                        await _write_projection_checkpoint(self.projection, offset)
-                    except Exception as exc:  # noqa: BLE001
-                        if self._observer is not None:
-                            self._observer.event_failed(self.projection.handler, offset, exc)
-                        if self.projection.strict:
-                            raise
+                    # subscribe() already writes consumer offset; this hook is
+                    # reserved for snapshotting derived state in future versions.
+                    pass
         except asyncio.CancelledError:
             return
-        finally:
-            if self._observer is not None:
-                self._observer.engine_stopped(self._engine_name())
 
 
 def _missing_handler(name: str) -> Any:
@@ -79,18 +70,3 @@ def _missing_handler(name: str) -> Any:
         raise RuntimeError(f"projection handler {name!r} is not registered with the runtime")
 
     return _raise
-
-
-async def _write_projection_checkpoint(projection: Projection[Any, Any], offset: int) -> None:
-    backend = _target_backend_of(projection.target)
-    if backend is None or not hasattr(backend, "set"):
-        return
-    await backend.set(f"__projection__:{projection.handler}:offset", offset)
-
-
-def _target_backend_of(target: Any) -> Any | None:
-    for attr in ("_backend", "__skaal_backend__"):
-        backend = getattr(target, attr, None)
-        if backend is not None:
-            return backend
-    return None

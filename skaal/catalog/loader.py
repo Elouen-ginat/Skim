@@ -35,9 +35,14 @@ _BUNDLED_CATALOGS: list[str] = ["aws.toml", "gcp.toml", "local.toml"]
 
 def _load_bundled(name: str) -> dict[str, Any]:
     """Load a catalog TOML bundled inside the skaal package."""
+    from skaal.errors import CatalogError
+
     data_pkg = importlib.resources.files("skaal.catalog.data")
     content = (data_pkg / name).read_bytes()
-    return tomllib.loads(content.decode())
+    try:
+        return tomllib.loads(content.decode())
+    except tomllib.TOMLDecodeError as err:  # pragma: no cover - bundled is valid
+        raise CatalogError(f"bundled catalog {name!r}: invalid TOML: {err}") from err
 
 
 def _resolve_path(path: Path | str | None, target: str | None) -> Path | dict[str, Any]:
@@ -143,11 +148,16 @@ def load_catalog(path: Path | str | None = None, target: str | None = None) -> d
         target: Deploy target name (e.g., 'aws', 'gcp', 'aws-lambda') used to
                 bias filesystem search when *path* is not given.
     """
+    from skaal.errors import CatalogError
+
     resolved = _resolve_path(path, target)
     if isinstance(resolved, dict):
         return resolved
-    with open(resolved, "rb") as f:
-        return tomllib.load(f)
+    try:
+        with open(resolved, "rb") as f:
+            return tomllib.load(f)
+    except tomllib.TOMLDecodeError as err:
+        raise CatalogError(f"catalog {resolved}: invalid TOML: {err}") from err
 
 
 def load_typed_catalog(path: Path | str | None = None, target: str | None = None) -> Catalog:

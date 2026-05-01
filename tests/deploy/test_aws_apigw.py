@@ -212,7 +212,7 @@ def test_stage_depends_on_routes():
         assert f"${{{rk}}}" in depends
 
 
-def test_build_runtime_wiring_aws_uses_planned_handlers() -> None:
+def test_build_wiring_aws_uses_planned_handlers() -> None:
     plan = PlanFile(
         app_name="demo",
         storage={
@@ -222,7 +222,7 @@ def test_build_runtime_wiring_aws_uses_planned_handlers() -> None:
                 kind="kv",
                 wire_params={
                     "class_name": "DynamoBackend",
-                    "module": "skaal.backends.kv.dynamodb",
+                    "module": "dynamodb_backend",
                     "env_prefix": "SKAAL_TABLE",
                 },
             ),
@@ -232,7 +232,7 @@ def test_build_runtime_wiring_aws_uses_planned_handlers() -> None:
                 kind="relational",
                 wire_params={
                     "class_name": "PostgresBackend",
-                    "module": "skaal.backends.kv.postgres",
+                    "module": "postgres_backend",
                     "env_prefix": "SKAAL_DB_DSN",
                     "uses_namespace": True,
                     "requires_vpc": True,
@@ -241,10 +241,10 @@ def test_build_runtime_wiring_aws_uses_planned_handlers() -> None:
         },
     )
 
-    imports, overrides = build_runtime_wiring(plan, target="aws")
+    imports, overrides = build_wiring_aws(plan)
 
-    assert "from skaal.backends.kv.dynamodb import DynamoBackend" in imports
-    assert "from skaal.backends.kv.postgres import PostgresBackend" in imports
+    assert "from skaal.backends.dynamodb_backend import DynamoBackend" in imports
+    assert "from skaal.backends.postgres_backend import PostgresBackend" in imports
     assert '"Counter": DynamoBackend(os.environ["SKAAL_TABLE_COUNTER"]),' in overrides
     assert (
         '"User": PostgresBackend(os.environ["SKAAL_DB_DSN_USER"], namespace="User"),' in overrides
@@ -263,7 +263,7 @@ def test_aws_pulumi_stack_provisions_rds_and_lambda_vpc() -> None:
                 kind="kv",
                 wire_params={
                     "class_name": "DynamoBackend",
-                    "module": "skaal.backends.kv.dynamodb",
+                    "module": "dynamodb_backend",
                     "env_prefix": "SKAAL_TABLE",
                 },
             ),
@@ -273,7 +273,7 @@ def test_aws_pulumi_stack_provisions_rds_and_lambda_vpc() -> None:
                 kind="relational",
                 wire_params={
                     "class_name": "PostgresBackend",
-                    "module": "skaal.backends.kv.postgres",
+                    "module": "postgres_backend",
                     "env_prefix": "SKAAL_DB_DSN",
                     "uses_namespace": True,
                     "requires_vpc": True,
@@ -284,19 +284,17 @@ def test_aws_pulumi_stack_provisions_rds_and_lambda_vpc() -> None:
 
     stack = build_pulumi_stack(app, plan, region="us-east-1")
 
-    assert stack["variables"]["selectedVpcId"]["fn::invoke"]["function"] == "aws:ec2:getVpc"
-    assert stack["variables"]["selectedSubnetIds"]["fn::invoke"]["return"] == "ids"
+    assert stack["variables"]["defaultVpcId"]["fn::invoke"]["function"] == "aws:ec2:getVpc"
+    assert stack["variables"]["defaultSubnetIds"]["fn::invoke"]["return"] == "ids"
 
     resources = stack["resources"]
     assert resources["counter-table"]["type"] == "aws:dynamodb:Table"
-    assert resources["rds-subnet-group"]["type"] == "aws:rds:SubnetGroup"
     assert resources["user-db-password"]["type"] == "random:index:RandomPassword"
     assert resources["user-db-sg"]["properties"]["ingress"][0]["securityGroups"] == [
         "${lambda-sg.id}"
     ]
     assert resources["user-db"]["type"] == "aws:rds:Instance"
     assert resources["user-db"]["properties"]["instanceClass"] == "${dbInstanceClassUser}"
-    assert resources["user-db"]["properties"]["dbSubnetGroupName"] == "${rds-subnet-group.name}"
     assert resources["user-db"]["properties"]["vpcSecurityGroupIds"] == ["${user-db-sg.id}"]
 
     lambda_fn = resources["lambda-fn"]
@@ -305,82 +303,9 @@ def test_aws_pulumi_stack_provisions_rds_and_lambda_vpc() -> None:
     assert env_vars["SKAAL_DB_DSN_USER"].startswith(
         "postgresql://skaal:${user-db-password.result}@"
     )
-    assert lambda_fn["properties"]["vpcConfig"]["subnetIds"] == "${selectedSubnetIds}"
-    assert lambda_fn["properties"]["vpcConfig"]["vpcId"] == "${selectedVpcId}"
+    assert lambda_fn["properties"]["vpcConfig"]["subnetIds"] == "${defaultSubnetIds}"
     assert "${lambda-dynamodb-attach}" in lambda_fn["options"]["dependsOn"]
     assert "${lambda-vpc-access-attach}" in lambda_fn["options"]["dependsOn"]
 
     assert stack["outputs"]["tableCounter"] == "${counter-table.name}"
     assert stack["outputs"]["dbEndpointUser"] == "${user-db.address}"
-
-
-def test_aws_rds_stack_respects_lifecycle_flags() -> None:
-    app = App(name="demo")
-    plan = PlanFile(
-        app_name="demo",
-        deploy_target="aws",
-        storage={
-            "demo.User": StorageSpec(
-                variable_name="demo.User",
-                backend="rds-postgres",
-                kind="relational",
-                deploy_params={
-                    "publicly_accessible": True,
-                    "skip_final_snapshot": False,
-                },
-                wire_params={
-                    "class_name": "PostgresBackend",
-                    "module": "skaal.backends.kv.postgres",
-                    "env_prefix": "SKAAL_DB_DSN",
-                    "uses_namespace": True,
-                    "requires_vpc": True,
-                },
-            ),
-        },
-    )
-
-    stack = _build_pulumi_stack(app, plan, region="us-east-1")
-    db_props = stack["resources"]["user-db"]["properties"]
-
-    assert db_props["publiclyAccessible"] is True
-    assert db_props["skipFinalSnapshot"] is False
-
-
-def test_aws_pulumi_stack_respects_configured_vpc_and_subnets() -> None:
-    app = App(name="demo")
-    plan = PlanFile(
-        app_name="demo",
-        deploy_target="aws",
-        deploy_config={
-            "vpc_id": "vpc-12345678",
-            "subnet_ids": ["subnet-aaaa1111", "subnet-bbbb2222"],
-        },
-        storage={
-            "demo.User": StorageSpec(
-                variable_name="demo.User",
-                backend="rds-postgres",
-                kind="relational",
-                wire_params={
-                    "class_name": "PostgresBackend",
-                    "module": "skaal.backends.kv.postgres",
-                    "env_prefix": "SKAAL_DB_DSN",
-                    "uses_namespace": True,
-                    "requires_vpc": True,
-                },
-            ),
-        },
-    )
-
-    stack = _build_pulumi_stack(app, plan, region="us-east-1")
-
-    assert "selectedVpcId" not in stack.get("variables", {})
-    assert "selectedSubnetIds" not in stack.get("variables", {})
-    assert stack["resources"]["rds-subnet-group"]["properties"]["subnetIds"] == [
-        "subnet-aaaa1111",
-        "subnet-bbbb2222",
-    ]
-    assert stack["resources"]["lambda-sg"]["properties"]["vpcId"] == "vpc-12345678"
-    assert stack["resources"]["lambda-fn"]["properties"]["vpcConfig"]["subnetIds"] == [
-        "subnet-aaaa1111",
-        "subnet-bbbb2222",
-    ]

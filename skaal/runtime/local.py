@@ -41,9 +41,9 @@ class LocalRuntime(BaseRuntime):
     Runs a Skaal App locally as a minimal asyncio HTTP server.
 
     - Each ``@app.function()`` becomes a ``POST /{name}`` endpoint.
-    - Storage classes are patched with in-memory :class:`~skaal.backends.kv.local_map.LocalMap`
+    - Storage classes are patched with in-memory :class:`~skaal.backends.local_backend.LocalMap`
       backends (or overrides supplied via *backend_overrides*).
-    - Channel instances are wired to :class:`~skaal.backends.channels.local.LocalChannel`.
+    - Channel instances are wired to :class:`~skaal.runtime.channels.LocalChannel`.
     - ``GET /`` returns a JSON index of available endpoints.
     - ``GET /health`` returns ``{"status": "ok"}``.
 
@@ -57,7 +57,7 @@ class LocalRuntime(BaseRuntime):
 
     def __init__(
         self,
-        app: RuntimeApp,
+        app: Any,
         host: str = "127.0.0.1",
         port: int = 8000,
         backend_overrides: dict[str, Any] | None = None,
@@ -292,7 +292,7 @@ class LocalRuntime(BaseRuntime):
     @classmethod
     def from_redis(
         cls,
-        app: RuntimeApp,
+        app: Any,
         redis_url: str,
         host: str = "127.0.0.1",
         port: int = 8000,
@@ -309,7 +309,7 @@ class LocalRuntime(BaseRuntime):
     @classmethod
     def from_sqlite(
         cls,
-        app: RuntimeApp,
+        app: Any,
         db_path: str | Path = "skaal_local.db",
         host: str = "127.0.0.1",
         port: int = 8000,
@@ -356,7 +356,7 @@ class LocalRuntime(BaseRuntime):
     @classmethod
     def from_postgres(
         cls,
-        app: RuntimeApp,
+        app: Any,
         dsn: str,
         host: str = "127.0.0.1",
         port: int = 8000,

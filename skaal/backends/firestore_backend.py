@@ -1,3 +1,5 @@
+"""Cloud Firestore storage backend (google-cloud-firestore + thread pool for async compatibility)."""
+
 from __future__ import annotations
 
 import asyncio
@@ -5,8 +7,6 @@ import base64
 import json
 from typing import Any, Callable, List
 
-from skaal.backends._spec import BackendSpec, Wiring
-from skaal.deploy.kinds import StorageKind
 from skaal.errors import SkaalConflict, SkaalUnavailable
 from skaal.storage import (
     _cursor_identity,
@@ -21,6 +21,20 @@ from skaal.types.storage import Page
 
 
 class FirestoreBackend:
+    """
+    Google Cloud Firestore storage backend.
+
+    Each backend instance maps to a Firestore collection named ``namespace``.
+    Documents have the form: {pk: <key>, value: <json-string>}.
+
+    Uses google-cloud-firestore in asyncio.run_in_executor for async
+    compatibility (the Firestore SDK is synchronous).
+
+    Requires google-cloud-firestore installed and Application Default
+    Credentials configured (e.g. GOOGLE_APPLICATION_CREDENTIALS env var or
+    running on GCP with a service account).
+    """
+
     def __init__(
         self,
         collection: str,
@@ -138,7 +152,7 @@ class FirestoreBackend:
             if old_value is not None:
                 self._sync_indexes(key, old_value, None)
 
-        await self._run(_delete)
+        await self._run(_del)
 
     async def list(self) -> list[tuple[str, Any]]:
         page = await self.list_page(limit=10_000, cursor=None)
@@ -253,6 +267,8 @@ class FirestoreBackend:
         return await self._run(_query_index)
 
     async def increment_counter(self, key: str, delta: int = 1) -> int:
+        """Atomically increment a counter using a Firestore transaction."""
+
         def _increment() -> int:
             from google.cloud import firestore
 
@@ -272,11 +288,19 @@ class FirestoreBackend:
         return await self._run(_increment)
 
     async def atomic_update(self, key: str, fn: Callable[[Any], Any]) -> Any:
+        """Atomically read, apply *fn*, and write back inside a Firestore transaction.
+
+        Firestore retries the transaction internally on contention; after the
+        configured attempts are exhausted the SDK raises
+        ``google.api_core.exceptions.Aborted``, which we surface as
+        :class:`skaal.errors.SkaalConflict`.
+        """
+
         def _apply() -> Any:
             try:
                 from google.api_core import exceptions as g_exc
                 from google.cloud import firestore
-            except ImportError as exc:
+            except ImportError as exc:  # pragma: no cover
                 raise SkaalUnavailable(
                     "google-cloud-firestore is required for atomic_update"
                 ) from exc
@@ -307,6 +331,7 @@ class FirestoreBackend:
         return await self._run(_apply)
 
     async def close(self) -> None:
+        # google-cloud-firestore clients don't require explicit closing
         self._client = None
 
     def __repr__(self) -> str:
@@ -314,18 +339,3 @@ class FirestoreBackend:
             f"FirestoreBackend(collection={self.collection!r}, "
             f"project={self.project!r}, database={self.database!r})"
         )
-
-
-FIRESTORE_SPEC = BackendSpec(
-    name="firestore",
-    kinds=frozenset({StorageKind.KV}),
-    wiring=Wiring(
-        class_name="FirestoreBackend",
-        module="skaal.backends.kv.firestore",
-        env_prefix="SKAAL_COLLECTION",
-    ),
-    supported_targets=frozenset({"gcp"}),
-    local_fallbacks={StorageKind.KV: "sqlite"},
-)
-
-__all__ = ["FIRESTORE_SPEC", "FirestoreBackend"]

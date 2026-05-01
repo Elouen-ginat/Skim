@@ -20,7 +20,7 @@ memory_size_gb = 1
 
 [storage.memorystore-redis.wire]
 class_name      = "RedisBackend"
-module          = "skaal.backends.kv.redis"
+module          = "redis_backend"
 env_prefix      = "SKAAL_REDIS_URL"
 uses_namespace  = true
 requires_vpc    = true
@@ -48,7 +48,7 @@ deletion_protection = false
 
 [storage.cloud-sql-postgres.wire]
 class_name      = "PostgresBackend"
-module          = "skaal.backends.kv.postgres"
+module          = "postgres_backend"
 env_prefix      = "SKAAL_DB_DSN"
 uses_namespace  = true
 requires_vpc    = true
@@ -77,7 +77,7 @@ deletion_protection = false
 
 [storage.cloud-sql-pgvector.wire]
 class_name      = "PgVectorBackend"
-module          = "skaal.backends.vector.pgvector"
+module          = "pgvector_backend"
 env_prefix      = "SKAAL_DB_DSN"
 uses_namespace  = true
 requires_vpc    = true
@@ -109,7 +109,7 @@ extra_deps      = ["google-cloud-storage>=2.16"]
 
 [storage.firestore.wire]
 class_name  = "FirestoreBackend"
-module      = "skaal.backends.kv.firestore"
+module      = "firestore_backend"
 env_prefix  = "SKAAL_COLLECTION"
 
 [storage.firestore]

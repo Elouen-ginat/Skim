@@ -1,11 +1,11 @@
+"""LangChain Chroma-backed vector storage backend."""
+
 from __future__ import annotations
 
 import re
 from pathlib import Path
 from typing import Any, cast
 
-from skaal.backends._spec import BackendSpec, Wiring
-from skaal.deploy.kinds import StorageKind
 from skaal.vector import HashEmbeddings
 
 
@@ -15,6 +15,8 @@ def _collection_slug(namespace: str) -> str:
 
 
 class ChromaVectorBackend:
+    """Persistent local vector storage using Chroma via LangChain."""
+
     def __init__(
         self,
         path: str | Path = "skaal_chroma",
@@ -33,7 +35,7 @@ class ChromaVectorBackend:
         *,
         dimensions: int,
         metric: str,
-        model_type: type | None = None,
+        model_type: type | None = None,  # noqa: ARG002 - reserved for future use
         embeddings: Any | None = None,
     ) -> None:
         self._dimensions = dimensions
@@ -52,7 +54,7 @@ class ChromaVectorBackend:
 
         try:
             from langchain_chroma import Chroma
-        except ImportError as exc:
+        except ImportError as exc:  # pragma: no cover - optional dependency path
             raise ImportError(
                 "Chroma vector storage requires `langchain-chroma` and `chromadb`."
             ) from exc
@@ -105,19 +107,3 @@ class ChromaVectorBackend:
 
     def __repr__(self) -> str:
         return f"ChromaVectorBackend(path={str(self.path)!r}, namespace={self.namespace!r})"
-
-
-CHROMA_LOCAL_SPEC = BackendSpec(
-    name="chroma-local",
-    kinds=frozenset({StorageKind.VECTOR}),
-    wiring=Wiring(
-        class_name="ChromaVectorBackend",
-        module="skaal.backends.vector.chroma",
-        path_default="/app/data/chroma",
-        uses_namespace=True,
-        dependency_sets=("chroma-runtime",),
-    ),
-    supported_targets=frozenset({"local"}),
-)
-
-__all__ = ["CHROMA_LOCAL_SPEC", "ChromaVectorBackend"]

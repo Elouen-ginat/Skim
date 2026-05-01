@@ -10,16 +10,18 @@ from __future__ import annotations
 
 from typing import Any
 
+from skaal.errors import UnsatisfiableConstraints
 from skaal.solver.targets import catalog_compute_key
 
+# Back-compat alias: pre-ADR-020 callers imported UnsatisfiableComputeConstraints.
+# Now unified with the storage variant via skaal.errors.UnsatisfiableConstraints.
+UnsatisfiableComputeConstraints = UnsatisfiableConstraints
 
-class UnsatisfiableComputeConstraints(Exception):
-    """Raised when no instance type satisfies the declared compute constraints."""
-
-    def __init__(self, function_name: str, reason: str = "") -> None:
-        self.function_name = function_name
-        self.reason = reason
-        super().__init__(f"Cannot satisfy compute constraints for {function_name!r}. {reason}")
+__all__ = [
+    "UnsatisfiableComputeConstraints",
+    "UnsatisfiableConstraints",
+    "encode_compute",
+]
 
 
 def encode_compute(
@@ -131,16 +133,32 @@ def encode_compute(
 
     result = opt.check()
     if result != sat:
-        reasons = []
+        from skaal.solver.diagnostics import build_diagnosis, evaluate_compute_candidates
+
+        diag_constraints: dict[str, Any] = {
+            "compute_type": compute_type if compute_type != "cpu" else None,
+            "memory": memory_gb,
+            "latency": latency_ms,
+        }
+        requested_text: dict[str, str] = {}
         if compute_type != "cpu":
-            reasons.append(f"compute_type={compute_type}")
+            requested_text["compute_type"] = f"compute_type={compute_type}"
         if memory_gb is not None:
-            reasons.append(f"memory>={memory_gb}GB")
+            requested_text["memory"] = f"memory ≥ {memory_gb} GB"
         if latency_ms is not None:
-            reasons.append(f"latency<{latency_ms}ms")
-        raise UnsatisfiableComputeConstraints(
+            requested_text["latency"] = f"latency < {latency_ms}ms"
+
+        diagnosis = build_diagnosis(
+            resource_name=function_name,
+            resource_kind="compute",
+            requested=requested_text,
+            candidates=evaluate_compute_candidates(diag_constraints, instance_types),
+        )
+        reason_summary = ", ".join(requested_text.values()) or "constraints"
+        raise UnsatisfiableConstraints(
             function_name,
-            f"No instance satisfies: {', '.join(reasons) or 'constraints'}",
+            f"No instance satisfies: {reason_summary}",
+            diagnosis=diagnosis,
         )
 
     model = opt.model()
@@ -150,9 +168,7 @@ def encode_compute(
     )
 
     if selected is None:
-        raise UnsatisfiableComputeConstraints(
-            function_name, "Z3 returned sat but no instance selected"
-        )
+        raise UnsatisfiableConstraints(function_name, "Z3 returned sat but no instance selected")
 
     spec = instance_types[selected]
     display = spec.get("display_name", selected)

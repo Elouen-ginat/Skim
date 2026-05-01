@@ -113,26 +113,6 @@ class Module:
 
     # ── Registration decorators ────────────────────────────────────────────
 
-    def _register_storage(
-        self,
-        decorator_fn: Callable[..., Callable[[C], C]],
-        cls_to_decorate: C | None,
-        **kwargs: Any,
-    ) -> C | Callable[[C], C]:
-        """Build the outer decorator from *decorator_fn*, register the result
-        in ``self._storage``, and apply the dual ``@app.storage`` /
-        ``@app.storage(...)`` calling convention."""
-        outer = decorator_fn(**kwargs)
-
-        def decorator(cls: C) -> C:
-            annotated = outer(cls)
-            self._storage[cls.__name__] = annotated
-            return annotated
-
-        if cls_to_decorate is None:
-            return decorator
-        return decorator(cls_to_decorate)
-
     @overload
     def storage(
         self,
@@ -227,6 +207,15 @@ class Module:
             collocate_with=collocate_with,
             indexes=indexes,
         )
+
+        def decorator(cls: C) -> C:
+            annotated = outer(cls)
+            self._storage[cls.__name__] = annotated
+            return annotated
+
+        if cls_to_decorate is None:
+            return decorator
+        return decorator(cls_to_decorate)
 
     @overload
     def agent(self, cls_to_decorate: C, *, persistent: bool = ...) -> C: ...
@@ -490,18 +479,17 @@ class Module:
 
         Returns a ``ModuleExport`` handle for cross-module references.
         """
-        registered: dict[BucketName, dict[str, Any]] = {
+        registered: dict[str, dict[str, Any]] = {
             "storage": self._storage,
             "agents": self._agents,
             "functions": self._functions,
             "channels": self._channels,
         }
-        exports: dict[BucketName, dict[str, Any]] = {
-            "storage": {},
-            "agents": {},
-            "functions": {},
-            "channels": {},
-        }
+
+        exp_storage: dict[str, Any] = {}
+        exp_agents: dict[str, Any] = {}
+        exp_functions: dict[str, Any] = {}
+        exp_channels: dict[str, Any] = {}
 
         for sym in symbols:
             sym_name = getattr(sym, "__name__", repr(sym))
@@ -510,7 +498,14 @@ class Module:
                 if sym_name in bucket:
                     self._exports.add(sym_name)
                     found = True
-                    exports[bucket_name][sym_name] = sym
+                    if bucket_name == "storage":
+                        exp_storage[sym_name] = sym
+                    elif bucket_name == "agents":
+                        exp_agents[sym_name] = sym
+                    elif bucket_name == "functions":
+                        exp_functions[sym_name] = sym
+                    elif bucket_name == "channels":
+                        exp_channels[sym_name] = sym
                     break
             if not found:
                 raise ValueError(
@@ -519,10 +514,10 @@ class Module:
                 )
 
         return ModuleExport(
-            storage=exports["storage"],
-            agents=exports["agents"],
-            functions=exports["functions"],
-            channels=exports["channels"],
+            storage=exp_storage,
+            agents=exp_agents,
+            functions=exp_functions,
+            channels=exp_channels,
             namespace=self.name,
         )
 

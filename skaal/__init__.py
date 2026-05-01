@@ -30,7 +30,6 @@ from skaal.decorators import (
 )
 from skaal.module import Module, ModuleExport
 from skaal.patterns import EventLog, Outbox, Projection, Saga, SagaStep
-from skaal.plan import PlanFile
 from skaal.relational import ensure_schema as ensure_relational_schema
 from skaal.relational import open_session as open_relational_session
 from skaal.schedule import Cron, Every, Schedule, ScheduleContext
@@ -57,11 +56,6 @@ _ensure_null_handler()
 __all__ = [
     # Python API namespace (run/plan/build/deploy/...)
     "api",
-    "components",
-    "decorators",
-    "errors",
-    "schedule",
-    "PlanFile",
     # Core
     "App",
     "Module",
