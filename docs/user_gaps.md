@@ -20,7 +20,7 @@ ADR 014 removed public HTTP routing/streaming from the "what Skaal should build 
 
 1. **Blob / object storage tier** — there is no `@app.blob` and no S3/GCS backend, so any user with files drops the framework entirely. P0. ([§B.2](#b2-kv-store-and-storage-tiers), [ADR 016](./design/016-blob-storage-tier-implementation-plan.md))
 2. **Agent persistent-state save/load** — `__skaal_persistent_fields__` is collected but the runtime never loads or persists it; "fields marked @persistent survive restarts" in the docstring is currently false. P0 correctness gap. ([§B.7](#b7-agents))
-3. **`skaal init` / project scaffolding + `skaal dev` watch mode** — no zero-config first-run; no hot-reload. P0 for adoption. ([§A.1](#a1-cli-zero-config-and-dev-loop))
+3. **`skaal init` / project scaffolding + `skaal dev` watch mode** — the pieces now exist only partially; Skaal still lacks a first-class zero-config `init` → `dev` onboarding path. P0 for adoption. ([§A.1](#a1-cli-zero-config-and-dev-loop), [ADR 020](./design/020-skaal-init-and-dev-implementation-plan.md))
 4. **Solver-failure error messages with closest-match suggestions** — today an unsatisfiable plan surfaces as a Z3 stack trace. P0 for first-time users. ([§A.4](#a4-error-messages-and-validation))
 5. **Catalog overrides per environment** (dev / staging / prod) without copy-pasting whole TOML files. P1 but hits everyone past the prototype stage. ([§A.5](#a5-catalog-ergonomics))
 6. **Relational migrations beyond `create_all`** — any team past first deploy will need schema versioning and rollback. P0. ([§B.3](#b3-relational-tier-skaalrelationalpy))
@@ -38,14 +38,14 @@ ADR 014 removed public HTTP routing/streaming from the "what Skaal should build 
 **What users want:** `pip install skaal && skaal init && skaal dev` — get to "code reload on save, hitting localhost" without reading docs.
 
 **What happens today:**
-- No `skaal init` / `skaal new` command — the CLI in `skaal/cli/main.py:25-34` registers `run / plan / build / deploy / destroy / catalog / diff / infra / migrate / stacks` and nothing that scaffolds a project.
-- No `skaal dev` watch-mode. `skaal run` (`skaal/cli/run_cmd.py:62-67`) starts a server but does not watch source files; users must Ctrl-C and restart on every edit.
+- `skaal init` now exists and scaffolds a starter project, but the happy path still ends in `skaal run` output rather than a dedicated dev command.
+- There is still no first-class `skaal dev` watch-mode. Hot reload exists under `skaal run` (`skaal/cli/run_cmd.py`) via `skaal/cli/_reload.py`, but it is not surfaced as the obvious default entry point.
 - `skaal run` requires `MODULE:APP` either as a positional or under `[tool.skaal]` in `pyproject.toml`. The fallback is real and the error message is good, but it is not surfaced in `--help`.
 - No tab-completion install path documented (Typer supports it; nothing in the CLI registers it).
 
-**Why it's awkward:** First-run experience for a solo dev is "read several docs pages, hand-write `pyproject.toml`, hand-write or copy a catalog, then run." Compare to `cargo new`, `npm init`, `django-admin startproject`. After that, the inner loop has no hot-reload.
+**Why it's awkward:** The first-run story is better than the original audit, but it is still split across partially-hidden surfaces. Users can scaffold and they can hot-reload, yet the framework still does not present that as one obvious `skaal init` → `skaal dev` workflow. Compare to `cargo new`, `npm init`, `vite`, or `django-admin startproject`, where the default inner loop is immediately legible.
 
-**Severity:** P0 (adoption). Fix is mechanical: add `skaal init <name>` (writes `pyproject.toml`, sample `app.py`, copies a starter `catalogs/local.toml`) and `skaal dev` (uvicorn `--reload` plus a watcher on the catalog).
+**Severity:** P0 (adoption). Tracked in [ADR 020](./design/020-skaal-init-and-dev-implementation-plan.md). The remaining work is to turn the existing scaffolding + reload pieces into a first-class `skaal init` → `skaal dev` onboarding path.
 
 ---
 
