@@ -8,7 +8,7 @@ version = "0.2.0"
 description = "Infrastructure as Constraints — write it once, scale it with a word."
 readme = "README.md"
 license = { file = "LICENSE" }
-requires-python = ">=3.11,<3.13"
+requires-python = ">=3.11"
 keywords = ["infrastructure", "constraints", "cloud", "deployment", "z3", "solver"]
 classifiers = [
     "Development Status :: 3 - Alpha",
@@ -31,9 +31,9 @@ dependencies = [
     "redis>=5.0",
     "aiosqlite>=0.19",
     "httpx>=0.27",
-    "tenacity>=9.1.4,<10.0",
-    "pybreaker>=1.4.1,<2.0",
-    "langgraph>=1.1.10,<2.0",
+    "tenacity>=9.1.4",
+    "pybreaker>=1.4.1",
+    "langgraph>=1.1.10",
     "fsspec>=2025.3.0",
 ]
 
@@ -49,7 +49,7 @@ serve = [
     "watchfiles>=0.22",
 ]
 runtime = [
-    "apscheduler>=3.10,<4.0",
+    "apscheduler>=3.10",
     "PyJWT[crypto]>=2.9",
     "opentelemetry-api>=1.27",
     "opentelemetry-sdk>=1.27",
