@@ -6,6 +6,11 @@ Catalog sources, in order of precedence:
 2. Short name registered via the ``skaal.catalogs`` entry-point group
     (``--catalog aws`` → whatever an addon registers for ``aws``)
 3. Built-in filesystem search (``catalogs/<target>.toml``)
+
+Per ADR 022 each catalog file may declare a parent under ``[skaal] extends``
+(path or registered short name) and prune entries from the merged result via
+``[skaal] remove = ["storage.X"]``.  See :class:`skaal.types.CatalogSource`
+for the introspectable resolved chain.
 """
 
 from __future__ import annotations
@@ -16,8 +21,16 @@ from pathlib import Path
 from typing import Any
 
 from skaal.catalog.models import Catalog
-from skaal.errors import SkaalPluginError
+from skaal.errors import CatalogError, SkaalPluginError
 from skaal.plugins import get_catalog_path
+from skaal.types.catalog import CatalogRaw, CatalogSource
+
+# Sections we recursively merge by per-key (e.g. backend name) replacement.
+# Keys outside this set are passed through with the child value winning.
+_MERGE_SECTIONS: tuple[str, ...] = ("storage", "compute", "network")
+
+# Reserved top-level table — not part of the merged catalog payload.
+_RESERVED_TABLE: str = "skaal"
 
 # Default search order when no explicit path is given.
 # Cloud catalogs take priority; local.toml is the zero-setup fallback.
@@ -138,8 +151,163 @@ def _resolve_path(path: Path | str | None, target: str | None) -> Path | dict[st
     )
 
 
+def _read_toml(p: Path) -> CatalogRaw:
+    """Parse a catalog TOML, wrapping decode errors as :class:`CatalogError`."""
+    try:
+        with open(p, "rb") as f:
+            return tomllib.load(f)
+    except tomllib.TOMLDecodeError as err:
+        raise CatalogError(f"catalog {p}: invalid TOML: {err}") from err
+
+
+def _split_skaal_table(
+    raw: CatalogRaw,
+) -> tuple[CatalogRaw, str | None, tuple[str, ...]]:
+    """Pop the reserved ``[skaal]`` table off *raw*.
+
+    Returns ``(payload, extends, removes)`` where:
+      - *payload*  is the catalog dict with ``[skaal]`` removed.
+      - *extends*  is the value of ``[skaal] extends`` or ``None``.
+      - *removes*  is the value of ``[skaal] remove`` (always a tuple).
+    """
+    if _RESERVED_TABLE not in raw:
+        return raw, None, ()
+    reserved = raw[_RESERVED_TABLE]
+    if not isinstance(reserved, dict):
+        raise CatalogError(f"[{_RESERVED_TABLE}] must be a table; got {type(reserved).__name__}.")
+    extends_value = reserved.get("extends")
+    if extends_value is not None and not isinstance(extends_value, str):
+        raise CatalogError(
+            f"[{_RESERVED_TABLE}] extends must be a string; got {type(extends_value).__name__}."
+        )
+    removes_value = reserved.get("remove", [])
+    if not isinstance(removes_value, list) or not all(isinstance(x, str) for x in removes_value):
+        raise CatalogError(f"[{_RESERVED_TABLE}] remove must be a list[str].")
+    payload = {k: v for k, v in raw.items() if k != _RESERVED_TABLE}
+    return payload, extends_value, tuple(removes_value)
+
+
+def _resolve_extends_path(extends: str, anchor: Path | None) -> tuple[Path | None, CatalogRaw]:
+    """Resolve a parent reference.
+
+    *extends* may be a relative/absolute filesystem path or a short name
+    registered via the ``skaal.catalogs`` entry-point group / bundled
+    catalog set.
+
+    Returns ``(path, raw)`` — *path* is ``None`` when the parent was loaded
+    from a bundled importlib resource, in which case *raw* carries the
+    parsed payload directly.
+    """
+    if anchor is not None and not Path(extends).is_absolute():
+        candidate = (anchor.parent / extends).resolve()
+    else:
+        candidate = Path(extends).resolve()
+    if candidate.exists():
+        return candidate, _read_toml(candidate)
+
+    # Plugin-registered short name?
+    try:
+        plugin_path = get_catalog_path(extends)
+    except SkaalPluginError:
+        plugin_path = None
+    if plugin_path is not None and plugin_path.exists():
+        return plugin_path, _read_toml(plugin_path)
+
+    # Bundled catalog short name?
+    bundled_name = extends if extends.endswith(".toml") else f"{extends}.toml"
+    if bundled_name in _BUNDLED_CATALOGS:
+        return None, _load_bundled(bundled_name)
+
+    raise CatalogError(
+        f"[{_RESERVED_TABLE}] extends={extends!r} does not resolve to a file or "
+        "a registered/bundled catalog short name."
+    )
+
+
+def _build_source_chain(
+    raw: CatalogRaw,
+    *,
+    path: Path | None,
+    visited: tuple[Path, ...] = (),
+) -> CatalogSource:
+    """Walk ``[skaal] extends`` parents depth-first, returning the leaf source."""
+    payload, extends, removes = _split_skaal_table(raw)
+    if path is not None:
+        path = path.resolve()
+        if path in visited:
+            cycle = " → ".join(str(p) for p in (*visited, path))
+            raise CatalogError(f"circular extends: {cycle}")
+        visited = (*visited, path)
+
+    parent_source: CatalogSource | None = None
+    if extends is not None:
+        parent_path, parent_raw = _resolve_extends_path(extends, anchor=path)
+        parent_source = _build_source_chain(parent_raw, path=parent_path, visited=visited)
+
+    return CatalogSource(path=path, raw=payload, parent=parent_source, removes=removes)
+
+
+def _merge_payloads(parent: CatalogRaw, child: CatalogRaw) -> CatalogRaw:
+    """Deep-merge two catalog payloads at section granularity.
+
+    Child entries replace parent entries by key (per-backend granularity).
+    """
+    keys = set(parent) | set(child)
+    merged: CatalogRaw = {}
+    for key in keys:
+        if key in _MERGE_SECTIONS:
+            section_parent = parent.get(key, {})
+            section_child = child.get(key, {})
+            merged[key] = {**section_parent, **section_child}
+        elif key in child:
+            merged[key] = child[key]
+        else:
+            merged[key] = parent[key]
+    return merged
+
+
+def _apply_removes(payload: CatalogRaw, removes: tuple[str, ...]) -> CatalogRaw:
+    """Delete entries named by dotted paths (e.g. ``"storage.sqlite"``)."""
+    if not removes:
+        return payload
+    import logging
+
+    log = logging.getLogger("skaal.catalog")
+    out: CatalogRaw = {
+        section: dict(values) if isinstance(values, dict) else values
+        for section, values in payload.items()
+    }
+    for dotted in removes:
+        section, _, name = dotted.partition(".")
+        if not section or not name:
+            raise CatalogError(
+                f"[{_RESERVED_TABLE}] remove entries must be dotted "
+                f"'section.name' paths; got {dotted!r}."
+            )
+        bucket = out.get(section)
+        if not isinstance(bucket, dict) or name not in bucket:
+            log.warning("catalog remove %r: nothing to remove", dotted)
+            continue
+        del bucket[name]
+    return out
+
+
+def _flatten_chain(source: CatalogSource) -> CatalogRaw:
+    """Walk the chain root → leaf, merging payloads and applying removes."""
+    merged: CatalogRaw = {}
+    for node in source.chain():
+        merged = _merge_payloads(merged, node.raw)
+        merged = _apply_removes(merged, node.removes)
+    return merged
+
+
 def load_catalog(path: Path | str | None = None, target: str | None = None) -> dict[str, Any]:
-    """Load a catalog TOML and return the raw dict.
+    """Load a catalog TOML and return the merged raw dict.
+
+    Any ``[skaal] extends`` chain is flattened and ``[skaal] remove`` entries
+    are pruned.  The reserved ``[skaal]`` table itself is stripped from the
+    result so downstream consumers (Pydantic models, the solver, etc.) do
+    not need to know it exists.
 
     Args:
         path: Explicit path to a catalog file, or a short name registered via
@@ -148,16 +316,21 @@ def load_catalog(path: Path | str | None = None, target: str | None = None) -> d
         target: Deploy target name (e.g., 'aws', 'gcp', 'aws-lambda') used to
                 bias filesystem search when *path* is not given.
     """
-    from skaal.errors import CatalogError
+    return _flatten_chain(load_catalog_with_sources(path, target=target))
 
+
+def load_catalog_with_sources(
+    path: Path | str | None = None, target: str | None = None
+) -> CatalogSource:
+    """Like :func:`load_catalog` but return the resolved :class:`CatalogSource`.
+
+    Use this when you need to introspect *where* each layer came from — the
+    ``skaal catalog sources`` command and tests both rely on it.
+    """
     resolved = _resolve_path(path, target)
     if isinstance(resolved, dict):
-        return resolved
-    try:
-        with open(resolved, "rb") as f:
-            return tomllib.load(f)
-    except tomllib.TOMLDecodeError as err:
-        raise CatalogError(f"catalog {resolved}: invalid TOML: {err}") from err
+        return _build_source_chain(resolved, path=None)
+    return _build_source_chain(_read_toml(resolved), path=resolved)
 
 
 def load_typed_catalog(path: Path | str | None = None, target: str | None = None) -> Catalog:

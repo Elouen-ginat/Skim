@@ -5,6 +5,7 @@ continues to work without change.
 """
 
 from skaal.types.blob import BlobObject
+from skaal.types.catalog import CatalogRaw, CatalogSource
 from skaal.types.cli import ChangeBatch, ChangeStream, ChildArgv, ReloadDirs, ReloadMode
 from skaal.types.compute import (
     Bulkhead,
@@ -81,6 +82,9 @@ __all__ = [
     "Throughput",
     # blob
     "BlobObject",
+    # catalog (pre-validation layer; see skaal.catalog.models for the typed Catalog)
+    "CatalogRaw",
+    "CatalogSource",
     # cli
     "ChangeBatch",
     "ChangeStream",

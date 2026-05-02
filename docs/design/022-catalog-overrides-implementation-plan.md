@@ -1,6 +1,6 @@
 # ADR 022 — Catalog Overrides per Environment
 
-**Status:** Proposed
+**Status:** Implemented
 **Date:** 2026-05-02
 **Related:** [user_gaps.md §A.5](../user_gaps.md#a5-catalog-ergonomics), [skaal/catalog/loader.py](../../skaal/catalog/loader.py), [skaal/catalog/models.py](../../skaal/catalog/models.py), [skaal/cli/catalog_cmd.py](../../skaal/cli/catalog_cmd.py), [skaal/settings.py](../../skaal/settings.py), [ADR 003](003-catalog-toml-format.md)
 

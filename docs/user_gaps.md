@@ -22,7 +22,7 @@ ADR 014 removed public HTTP routing/streaming from the "what Skaal should build 
 2. **Agent persistent-state save/load** — `__skaal_persistent_fields__` is collected but the runtime never loads or persists it; "fields marked @persistent survive restarts" in the docstring is currently false. P0 correctness gap. ([§B.7](#b7-agents))
 3. **`skaal init` / project scaffolding + `skaal dev` watch mode** — the pieces now exist only partially; Skaal still lacks a first-class zero-config `init` → `dev` onboarding path. P0 for adoption. ([§A.1](#a1-cli-zero-config-and-dev-loop), [ADR 020](./design/020-skaal-init-and-dev-implementation-plan.md))
 4. **Solver-failure error messages with closest-match suggestions** — today an unsatisfiable plan surfaces as a Z3 stack trace. P0 for first-time users. ([§A.4](#a4-error-messages-and-validation))
-5. **Catalog overrides per environment** (dev / staging / prod) without copy-pasting whole TOML files. P1 but hits everyone past the prototype stage. ([§A.5](#a5-catalog-ergonomics))
+5. **Catalog overrides per environment** (dev / staging / prod) without copy-pasting whole TOML files. P1 but hits everyone past the prototype stage. ([§A.5](#a5-catalog-ergonomics), [ADR 022](./design/022-catalog-overrides-implementation-plan.md))
 6. **Relational migrations beyond `create_all`** — any team past first deploy will need schema versioning and rollback. P0. ([§B.3](#b3-relational-tier-skaalrelationalpy))
 7. **Secret injection at deploy / runtime** — there is still no Skaal-level Secrets Manager / Secret Manager surface. P0. ([§B.6](#b6-compute--functions))
 8. **Examples ladder and testing story** — the examples still do not cover agents, schedules, patterns, or test fixtures. P1. ([§A.2](#a2-testing-story), [§A.8](#a8-examples-dont-progress-and-miss-common-patterns))
@@ -105,7 +105,7 @@ ADR 014 removed public HTTP routing/streaming from the "what Skaal should build 
 - `Catalog.from_raw()` validates `[storage.X.deploy]` (`skaal/catalog/models.py:78-100`), but there is no published schema or "skaal catalog validate" command — users discover required fields only on failure.
 - Catalog file lookup fallback chain (`skaal/catalog/loader.py:44-134`) is reasonable but invisible: when it fails, the error names the search list, but users do not know that list existed.
 
-**Severity:** P1 across the board. Adding `[extends = "../base.toml"]` and `skaal catalog validate <path>` covers most of it.
+**Severity:** P1 across the board. Tracked in [ADR 022](./design/022-catalog-overrides-implementation-plan.md): a reserved `[skaal] extends = "..."` table for inheritance, `[skaal] remove = [...]` for narrowing, plus `skaal catalog validate <path>` and `skaal catalog sources <path>` subcommands.
 
 ---
 
