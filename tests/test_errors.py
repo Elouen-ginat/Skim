@@ -1,4 +1,4 @@
-"""Tests for skaal.errors helpers added in ADR 020."""
+"""Tests for skaal.errors helpers added in ADR 021."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from skaal.errors import (
 
 
 def test_skaal_config_error_resolves():
-    """The pre-ADR-020 NameError on import is gone."""
+    """The pre-ADR-021 NameError on import is gone."""
     assert issubclass(SkaalConfigError, SkaalError)
     assert issubclass(CatalogError, SkaalConfigError)
 

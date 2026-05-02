@@ -1,4 +1,4 @@
-# ADR 020 — Solver Diagnostics: UNSAT Explanations and Constraint Suggestions
+# ADR 021 — Solver Diagnostics: UNSAT Explanations and Constraint Suggestions
 
 **Status:** Proposed
 **Date:** 2026-05-01

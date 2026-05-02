@@ -113,12 +113,12 @@ class UnsatisfiableConstraints(SkaalSolverError):
 
     @property
     def variable_name(self) -> str:
-        """Back-compat alias for the storage-specific name used pre-ADR 020."""
+        """Back-compat alias for the storage-specific name used pre-ADR 021."""
         return self.resource_name
 
     @property
     def function_name(self) -> str:
-        """Back-compat alias for the compute-specific name used pre-ADR 020."""
+        """Back-compat alias for the compute-specific name used pre-ADR 021."""
         return self.resource_name
 
 

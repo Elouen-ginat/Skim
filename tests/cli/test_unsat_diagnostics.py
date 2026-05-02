@@ -1,4 +1,4 @@
-"""CLI surface for solver UNSAT (ADR 020) — exit code 2 + rendered diagnosis."""
+"""CLI surface for solver UNSAT (ADR 021) — exit code 2 + rendered diagnosis."""
 
 from __future__ import annotations
 

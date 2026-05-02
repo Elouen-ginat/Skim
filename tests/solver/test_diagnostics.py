@@ -1,4 +1,4 @@
-"""Tests for ADR 020 — solver UNSAT diagnostics."""
+"""Tests for ADR 021 — solver UNSAT diagnostics."""
 
 from __future__ import annotations
 
@@ -159,7 +159,7 @@ def test_unsatisfiable_constraints_exit_code_is_2():
 
 
 def test_unsatisfiable_back_compat_aliases():
-    """variable_name / function_name still resolve for pre-ADR-020 callers."""
+    """variable_name / function_name still resolve for pre-ADR-021 callers."""
     exc = UnsatisfiableConstraints("Counts")
     assert exc.variable_name == "Counts"
     assert exc.function_name == "Counts"

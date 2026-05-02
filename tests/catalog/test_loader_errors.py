@@ -1,4 +1,4 @@
-"""Catalog-loader error wrapping (ADR 020 §A.4)."""
+"""Catalog-loader error wrapping (ADR 021 §A.4)."""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""Did-you-mean hints on the constraint enums (ADR 020 §A.4)."""
+"""Did-you-mean hints on the constraint enums (ADR 021 §A.4)."""
 
 from __future__ import annotations
 

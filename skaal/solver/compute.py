@@ -13,7 +13,7 @@ from typing import Any
 from skaal.errors import UnsatisfiableConstraints
 from skaal.solver.targets import catalog_compute_key
 
-# Back-compat alias: pre-ADR-020 callers imported UnsatisfiableComputeConstraints.
+# Back-compat alias: pre-ADR-021 callers imported UnsatisfiableComputeConstraints.
 # Now unified with the storage variant via skaal.errors.UnsatisfiableConstraints.
 UnsatisfiableComputeConstraints = UnsatisfiableConstraints
 
