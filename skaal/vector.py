@@ -45,13 +45,15 @@ class HashEmbeddings:
 
 
 def _require_langchain_core() -> None:
+    """Raise :class:`~skaal.errors.MissingExtraError` if the vector extra is missing."""
+    from skaal.errors import MissingExtraError
+
     try:
         import langchain_core  # noqa: F401
     except ImportError as exc:  # pragma: no cover - exercised when vector extra missing
-        raise ImportError(
-            "Vector storage requires LangChain vector dependencies. "
-            "Install them with `pip install skaal[vector]` or add "
-            "`langchain-core`, `langchain-chroma`, and `langchain-postgres`."
+        raise MissingExtraError(
+            "Vector storage requires the 'vector' extra. "
+            "Install it with `pip install 'skaal[vector]'`."
         ) from exc
 
 
@@ -67,11 +69,13 @@ def _string_like(annotation: Any) -> bool:
 def validate_vector_model(store_cls: type) -> None:
     """Raise if *store_cls* is not a concrete ``VectorStore[T]`` model."""
     if not isinstance(store_cls, type) or not issubclass(store_cls, VectorStore):
-        raise TypeError("@app.vector requires a skaal.VectorStore subclass.")
+        raise TypeError('@app.storage(kind="vector") requires a skaal.VectorStore subclass.')
 
     value_type = getattr(store_cls, "__skaal_value_type__", None)
     if value_type is None or not _is_pydantic(value_type):
-        raise TypeError("@app.vector requires VectorStore[T] where T is a Pydantic model.")
+        raise TypeError(
+            '@app.storage(kind="vector") requires VectorStore[T] where T is a Pydantic model.'
+        )
 
     metric = getattr(store_cls, "__skaal_vector_metric__", "cosine")
     if metric not in _VALID_VECTOR_METRICS:

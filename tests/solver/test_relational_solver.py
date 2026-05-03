@@ -18,7 +18,7 @@ class User(SQLModel, table=True):
 
 def _make_relational_app() -> App:
     app = App("relational-solver")
-    app.relational(read_latency="< 60ms", durability="persistent")(User)
+    app.storage(kind="relational", read_latency="< 60ms", durability="persistent")(User)
     return app
 
 

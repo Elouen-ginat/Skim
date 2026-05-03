@@ -78,7 +78,9 @@ class TestMeshRuntime:
         assert "mesh" in result
 
         # Function invocation through the dispatch path.
-        result, status = await rt._dispatch("POST", "/greet", json.dumps({"name": "mesh"}).encode())
+        result, status = await rt._dispatch(
+            "POST", "/_skaal/invoke/mesh-test.greet", json.dumps({"name": "mesh"}).encode()
+        )
         assert status == 200
         assert result == {"hello": "mesh"}
 
@@ -87,25 +89,13 @@ class TestMeshRuntime:
     @pytest.mark.asyncio
     async def test_mesh_bridge_methods(self) -> None:
         from skaal import App
-        from skaal.agent import Agent
-        from skaal.decorators import handler
         from skaal.runtime.mesh_runtime import MeshRuntime
-        from skaal.types import Persistent
 
         app = App("bridge-test")
 
         @app.function
         async def noop() -> dict:
             return {}
-
-        @app.agent()
-        class Worker(Agent):
-            count: Persistent[int] = 0
-
-            @handler
-            async def increment(self, delta: int = 1) -> int:
-                self.count += delta
-                return self.count
 
         rt = MeshRuntime(app)
 
@@ -116,16 +106,5 @@ class TestMeshRuntime:
         h = rt.health()
         assert h["app"] == "bridge-test"
         assert "agents" in h
-        assert "observer" in h
-
-        await rt.state.set("hits", 1)
-        assert await rt.state.get("hits") == 1
-
-        declared = await rt.agents.list_agents(function_name="Worker")
-        assert any(agent.agent_id == "bridge-test.Worker" for agent in declared)
-
-        routed = await rt.route_agent("Worker", "bridge-test.Worker", "increment", {"delta": 1})
-        assert routed.status == "routed"
-        assert routed.agent_id == "bridge-test.Worker"
 
         await rt.shutdown()

@@ -1,5 +1,5 @@
 """
-Todo API — demonstrates KV, relational, and vector storage in one small app.
+Todo API — FastAPI mounted over Skaal compute, KV, relational, and vector storage.
 
 For semantic search, install the vector extra first:
 
@@ -7,6 +7,7 @@ For semantic search, install the vector extra first:
 
 Run locally:
 
+    pip install "skaal[examples,vector]"
     skaal run examples.todo_api:app
 
 With persistent SQLite:
@@ -20,25 +21,26 @@ Deploy to AWS Lambda + DynamoDB:
 
 Try it:
 
-    curl -s localhost:8000/create_todo \\
-            -d '{"id":"t1","title":"Buy groceries","description":"Milk eggs bread","tags":["home","errands"]}' | jq
+    curl -s localhost:8000/todos \
+        -X POST \
+        -H "Content-Type: application/json" \
+        -d '{"id":"t1","title":"Buy groceries","description":"Milk eggs bread","tags":["home","errands"]}' | jq
 
-        curl -s localhost:8000/add_comment \\
-            -d '{"todo_id":"t1","author":"alex","body":"Remember oat milk too"}' | jq
-
-        curl -s localhost:8000/list_comments -d '{"todo_id":"t1"}' | jq
-        curl -s localhost:8000/search_todos -d '{"query":"grocery list"}' | jq
-
-    curl -s localhost:8000/complete_todo -d '{"id":"t1"}' | jq
-    curl -s localhost:8000/list_todos | jq
-    curl -s localhost:8000/get_todo -d '{"id":"t1"}' | jq
-    curl -s localhost:8000/delete_todo -d '{"id":"t1"}' | jq
+    curl -s localhost:8000/todos | jq
+    curl -s localhost:8000/todos/t1 | jq
+    curl -s localhost:8000/todos/t1/comments \
+        -X POST \
+        -H "Content-Type: application/json" \
+        -d '{"author":"alex","body":"Remember oat milk too"}' | jq
+    curl -s 'localhost:8000/todos/search?q=grocery%20list' | jq
+    curl -s localhost:8000/todos/t1 -X DELETE | jq
 """
 
 from __future__ import annotations
 
 from datetime import datetime, timezone
 
+from fastapi import FastAPI, HTTPException, Query, status
 from pydantic import BaseModel
 from pydantic import Field as PydanticField
 from sqlmodel import Field, SQLModel, select
@@ -72,9 +74,26 @@ class TodoSearchDocument(BaseModel):
     done: bool = False
 
 
+Todo.model_rebuild()
+
+
+class CreateTodoRequest(BaseModel):
+    id: str
+    title: str
+    description: str = ""
+    tags: list[str] = PydanticField(default_factory=list)
+    attachments: list[Attachment] = PydanticField(default_factory=list)
+
+
+class CommentRequest(BaseModel):
+    author: str
+    body: str
+
+
 # ── App declaration ────────────────────────────────────────────────────────────
 
 app = App("todos")
+api = FastAPI(title="Skaal Todo API")
 
 
 @app.storage(
@@ -93,7 +112,7 @@ class Todos(Store[Todo]):
     """
 
 
-@app.relational(read_latency="< 20ms", durability="persistent")
+@app.storage(kind="relational", read_latency="< 20ms", durability="persistent")
 class Comments(SQLModel, table=True):
     """Structured todo comments stored in the relational tier."""
 
@@ -106,7 +125,8 @@ class Comments(SQLModel, table=True):
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
 
-@app.vector(
+@app.storage(
+    kind="vector",
     dim=64,
     metric="cosine",
     read_latency="< 30ms",
@@ -265,3 +285,57 @@ async def delete_todo(id: str) -> dict:
     await Todos.delete(id)
     await TodoSearchIndex.delete([id])
     return {"ok": True, "deleted": id}
+
+
+def _raise_for_error(result: dict, *, not_found: bool = False, conflict: bool = False) -> dict:
+    if "error" not in result:
+        return result
+    if conflict:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=result["error"])
+    if not_found:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=result["error"])
+    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=result["error"])
+
+
+@api.get("/todos")
+async def http_list_todos(done: bool | None = Query(default=None)) -> dict:
+    return await app.invoke(list_todos, done=done)
+
+
+@api.get("/todos/{todo_id}")
+async def http_get_todo(todo_id: str) -> dict:
+    result = await app.invoke(get_todo, id=todo_id)
+    return _raise_for_error(result, not_found=True)
+
+
+@api.post("/todos", status_code=status.HTTP_201_CREATED)
+async def http_create_todo(payload: CreateTodoRequest) -> dict:
+    result = await app.invoke(
+        create_todo,
+        **payload.model_dump(mode="json"),
+    )
+    return _raise_for_error(result, conflict=True)
+
+
+@api.delete("/todos/{todo_id}")
+async def http_delete_todo(todo_id: str) -> dict:
+    return await app.invoke(delete_todo, id=todo_id)
+
+
+@api.post("/todos/{todo_id}/comments", status_code=status.HTTP_201_CREATED)
+async def http_add_comment(todo_id: str, payload: CommentRequest) -> dict:
+    result = await app.invoke(add_comment, todo_id=todo_id, **payload.model_dump())
+    return _raise_for_error(result, not_found=True)
+
+
+@api.get("/todos/{todo_id}/comments")
+async def http_list_comments(todo_id: str) -> dict:
+    return await app.invoke(list_comments, todo_id=todo_id)
+
+
+@api.get("/todos/search")
+async def http_search_todos(q: str, k: int = 3, done: bool | None = Query(default=None)) -> dict:
+    return await app.invoke(search_todos, query=q, k=k, done=done)
+
+
+app.mount_asgi(api, attribute="api")

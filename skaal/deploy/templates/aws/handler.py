@@ -14,15 +14,14 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 import $source_module as _user_module
 
-from skaal.plan import PlanFile
+$backend_imports
 from skaal.runtime.local import LocalRuntime
 
-_plan = PlanFile.model_validate_json($plan_json_literal)
-
-_runtime = LocalRuntime.from_plan(
+_runtime = LocalRuntime(
     _user_module.$app_var,
-    _plan,
-    target="$target_name",
+    backend_overrides={
+$backend_overrides
+    },
 )
 
 
@@ -56,12 +55,13 @@ def handler(event, context):
     # ── Normal HTTP invocation via API Gateway ────────────────────────────────
     method = event.get("requestContext", {}).get("http", {}).get("method", "POST")
     path = event.get("rawPath", "/")
+    headers = event.get("headers") or {}
     raw_body = event.get("body") or ""
     if event.get("isBase64Encoded"):
         body = base64.b64decode(raw_body)
     else:
         body = raw_body.encode() if isinstance(raw_body, str) else raw_body
-    result, status = asyncio.run(_runtime._dispatch(method, path, body))
+    result, status = asyncio.run(_runtime._dispatch(method, path, body, headers=headers))
     return {
         "statusCode": status,
         "headers": {"Content-Type": "application/json"},

@@ -20,7 +20,13 @@ class Article(BaseModel):
 async def test_vector_store_add_search_filter_and_delete(tmp_path) -> None:
     app = App("vector-store")
 
-    @app.vector(dim=64, metric="cosine", read_latency="< 25ms", durability="persistent")
+    @app.storage(
+        kind="vector",
+        dim=64,
+        metric="cosine",
+        read_latency="< 25ms",
+        durability="persistent",
+    )
     class Articles(VectorStore[Article]):
         __skaal_vector_text_fields__ = ("title", "body")
 

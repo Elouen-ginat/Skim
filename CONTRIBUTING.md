@@ -53,6 +53,47 @@ mypy skaal tests
 ruff check skaal tests
 ```
 
+### Mesh Development
+
+Most contributors do not need Rust anymore. `uv sync` and `uv sync --group dev`
+set up the Python-only development environment.
+
+If you also need the distributed mesh runtime from a local checkout:
+
+```bash
+uv sync --group dev --extra mesh
+```
+
+Before the mesh wheels are published for a release tag, that extra resolves to
+the local `mesh/` crate and therefore needs a Rust toolchain.
+
+If you are editing code under `mesh/`:
+
+```bash
+# Rebuild the local extension into the active environment
+make build-dev
+
+# Build release wheels locally before pushing
+make build
+```
+
+That local editable build shadows the published wheel in your current virtualenv.
+
+For `skaal build --target local --dev`, Skaal now bundles a prebuilt Linux
+`skaal-mesh` wheel into the Docker artifact when both of these are true:
+
+```toml
+[tool.skaal]
+enable_mesh = true
+```
+
+- A compatible `manylinux` wheel exists under `target/wheels/` or `mesh/dist/`
+- The wheel matches the Docker image architecture (`x86_64` or `aarch64`)
+
+On Windows, `maturin build` produces a Windows wheel, which Docker cannot use
+inside the Linux runtime image. For local Docker mesh testing, download or
+build a Linux `manylinux` wheel first, then run `skaal build --target local --dev`.
+
 ## Workflow
 
 1. Create a feature branch: `git checkout -b feature/my-feature`

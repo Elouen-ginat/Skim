@@ -3,8 +3,8 @@
 Demonstrates:
     - app.mount_wsgi() to register a WSGI app for deploy
     - Store[UserState] for scalable per-user session state
-    - @app.relational(...) for persistent note history
-    - @app.vector(...) for semantic search over those notes
+    - @app.storage(kind="relational", ...) for persistent note history
+    - @app.storage(kind="vector", ...) for semantic search over those notes
     - Sessions.sync_update(...) in Dash's sync callbacks
     - open_relational_session(...) and VectorStore APIs wrapped with asyncio.run(...)
 
@@ -75,7 +75,7 @@ class Sessions(Store[UserState]):
     """Per-user session state, keyed by session ID."""
 
 
-@skaal_app.relational(read_latency="< 20ms", durability="persistent")
+@skaal_app.storage(kind="relational", read_latency="< 20ms", durability="persistent")
 class SessionNotes(SQLModel, table=True):
     """Persistent note history for each Dash session."""
 
@@ -86,7 +86,8 @@ class SessionNotes(SQLModel, table=True):
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
 
-@skaal_app.vector(
+@skaal_app.storage(
+    kind="vector",
     dim=64,
     metric="cosine",
     read_latency="< 30ms",

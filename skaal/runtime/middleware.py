@@ -15,17 +15,23 @@ Rationale:
   holds its slot until it returns.
 - **Rate limit** is innermost so breaker trips (fast) don't consume tokens.
 
-No third-party dependencies; each primitive is ~30 lines.
+Tenacity handles retry orchestration and pybreaker owns the circuit-breaker
+state machine; bulkhead and rate limiting stay local because the runtime needs
+asyncio-native semantics and per-request scope keys.
 """
 
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import inspect
 import random
 import time
-from collections.abc import Awaitable
+from collections.abc import AsyncIterator, Awaitable
 from typing import Any, Callable
+
+import pybreaker
+from tenacity import AsyncRetrying, RetryCallState, retry_if_exception_type, stop_after_attempt
 
 from skaal.errors import SkaalUnavailable
 from skaal.types.compute import (
@@ -39,44 +45,27 @@ from skaal.types.compute import (
 # ── Circuit breaker ──────────────────────────────────────────────────────────
 
 
-class _Breaker:
-    """Per-function circuit breaker with half-open probe semantics."""
-
-    __slots__ = ("policy", "failures", "opened_at", "_lock")
-
-    def __init__(self, policy: CircuitBreaker) -> None:
-        self.policy = policy
-        self.failures = 0
-        self.opened_at: float | None = None
-        self._lock = asyncio.Lock()
-
-    def _state(self) -> str:
-        if self.opened_at is None:
-            return "closed"
-        elapsed_ms = (time.monotonic() - self.opened_at) * 1000
-        return "half-open" if elapsed_ms >= self.policy.recovery_timeout_ms else "open"
-
+class _AsyncCircuitBreaker:
     async def guard(
         self, call: Callable[[], Awaitable[Any]], fallback: Callable[[], Awaitable[Any]] | None
     ) -> Any:
-        state = self._state()
-        if state == "open":
+        try:
+            with self._breaker.calling():
+                return await call()
+        except pybreaker.CircuitBreakerError as exc:
             if fallback is not None:
                 return await fallback()
-            raise SkaalUnavailable("circuit breaker is open")
-        try:
-            result = await call()
-        except Exception:
-            async with self._lock:
-                self.failures += 1
-                if self.failures >= self.policy.failure_threshold:
-                    self.opened_at = time.monotonic()
-            raise
-        else:
-            async with self._lock:
-                self.failures = 0
-                self.opened_at = None
-            return result
+            raise SkaalUnavailable("circuit breaker is open") from exc
+
+    __slots__ = ("_breaker",)
+
+    def __init__(self, policy: CircuitBreaker) -> None:
+        self._breaker = pybreaker.CircuitBreaker(
+            fail_max=policy.failure_threshold,
+            reset_timeout=policy.recovery_timeout_ms / 1000.0,
+            success_threshold=1,
+            throw_new_error_on_trip=False,
+        )
 
 
 # ── Bulkhead (bounded concurrency) ───────────────────────────────────────────
@@ -132,23 +121,6 @@ class _TokenBucket:
             return False
 
 
-RateLimitKeyer = Callable[[dict[str, Any]], str]
-
-
-def _global_rate_limit_key(_kwargs: dict[str, Any]) -> str:
-    return "__global__"
-
-
-def _per_client_rate_limit_key(kwargs: dict[str, Any]) -> str:
-    return str(kwargs.get("client_id") or kwargs.get("client") or "__anon__")
-
-
-_KEYERS: dict[str, RateLimitKeyer] = {
-    "global": _global_rate_limit_key,
-    "per-client": _per_client_rate_limit_key,
-}
-
-
 class _RateLimiter:
     __slots__ = ("policy", "_buckets")
 
@@ -158,9 +130,10 @@ class _RateLimiter:
 
     def _key(self, kwargs: dict[str, Any]) -> str:
         scope = self.policy.scope
-        keyer = _KEYERS.get(scope)
-        if keyer is not None:
-            return keyer(kwargs)
+        if scope == "global":
+            return "__global__"
+        if scope == "per-client":
+            return str(kwargs.get("client_id") or kwargs.get("client") or "__anon__")
         if scope.startswith("per-key:"):
             arg = scope.split(":", 1)[1]
             return str(kwargs.get(arg, "__missing__"))
@@ -186,36 +159,49 @@ class _RateLimiter:
 # ── Retry with jittered backoff ──────────────────────────────────────────────
 
 
-def _delay_seconds(policy: RetryPolicy, attempt: int) -> float:
-    """Return seconds to sleep before *attempt* (1-indexed)."""
-    base = policy.base_delay_ms / 1000.0
-    cap = policy.max_delay_ms / 1000.0
-    if policy.backoff == "fixed":
-        raw = base
-    elif policy.backoff == "linear":
-        raw = base * attempt
-    else:  # "exponential"
-        raw = base * (2 ** (attempt - 1))
-    raw = min(raw, cap)
-    # Full jitter — avoids thundering herd on retry storms.
-    return random.uniform(0, raw)
+_current_attempt: contextvars.ContextVar[int] = contextvars.ContextVar(
+    "skaal_current_attempt", default=1
+)
+
+
+def _retry_wait(policy: RetryPolicy) -> Callable[[RetryCallState], float]:
+    """Build a Tenacity-compatible wait strategy that preserves Skaal jitter semantics."""
+
+    def _wait(retry_state: RetryCallState) -> float:
+        attempt = retry_state.attempt_number
+        base = policy.base_delay_ms / 1000.0
+        cap = policy.max_delay_ms / 1000.0
+        if policy.backoff == "fixed":
+            raw = base
+        elif policy.backoff == "linear":
+            raw = base * attempt
+        else:  # "exponential"
+            raw = base * (2 ** (attempt - 1))
+        raw = min(raw, cap)
+        # Full jitter — avoids thundering herd on retry storms.
+        return random.uniform(0, raw)
+
+    return _wait
 
 
 async def _with_retry(
     policy: RetryPolicy,
     call: Callable[[], Awaitable[Any]],
 ) -> Any:
-    last: BaseException | None = None
-    for attempt in range(1, policy.max_attempts + 1):
+    retrying = AsyncRetrying(
+        reraise=True,
+        stop=stop_after_attempt(policy.max_attempts),
+        wait=_retry_wait(policy),
+        retry=retry_if_exception_type(Exception),
+    )
+    async for attempt in retrying:
+        token = _current_attempt.set(attempt.retry_state.attempt_number)
         try:
-            return await call()
-        except Exception as exc:  # noqa: BLE001
-            last = exc
-            if attempt >= policy.max_attempts:
-                break
-            await asyncio.sleep(_delay_seconds(policy, attempt))
-    assert last is not None  # for type-checkers
-    raise last
+            with attempt:
+                return await call()
+        finally:
+            _current_attempt.reset(token)
+    raise AssertionError("retry loop exited without returning or raising")
 
 
 # ── Public entry point ───────────────────────────────────────────────────────
@@ -238,7 +224,9 @@ class ResilientInvoker:
         self.fn = fn
         self.compute = compute
         self._breaker = (
-            _Breaker(compute.circuit_breaker) if compute and compute.circuit_breaker else None
+            _AsyncCircuitBreaker(compute.circuit_breaker)
+            if compute and compute.circuit_breaker
+            else None
         )
         self._bulkhead = _Bulkhead(compute.bulkhead) if compute and compute.bulkhead else None
         self._ratelimit = (
@@ -254,13 +242,65 @@ class ResilientInvoker:
             self._fallback = fallback_lookup(compute.circuit_breaker.fallback)
 
     async def __call__(self, **kwargs: Any) -> Any:
-        async def _raw() -> Any:
-            if inspect.iscoroutinefunction(self.fn):
-                return await self.fn(**kwargs)
-            return self.fn(**kwargs)
+        return await self.invoke(kwargs=kwargs)
 
+    async def invoke(
+        self,
+        *,
+        kwargs: dict[str, Any] | None = None,
+        before_attempt: Callable[[int, dict[str, Any]], Awaitable[dict[str, Any]]] | None = None,
+    ) -> Any:
+        payload = dict(kwargs or {})
+
+        async def _raw() -> Any:
+            call_kwargs = dict(payload)
+            if before_attempt is not None:
+                call_kwargs = await before_attempt(_current_attempt.get(), call_kwargs)
+            if inspect.iscoroutinefunction(self.fn):
+                return await self.fn(**call_kwargs)
+            return self.fn(**call_kwargs)
+
+        return await self._apply_policies(_raw, payload)
+
+    def invoke_stream(
+        self,
+        *,
+        kwargs: dict[str, Any] | None = None,
+        before_attempt: Callable[[int, dict[str, Any]], Awaitable[dict[str, Any]]] | None = None,
+    ) -> AsyncIterator[Any]:
+        payload = dict(kwargs or {})
+
+        async def _start() -> tuple[bool, Any, AsyncIterator[Any]]:
+            call_kwargs = dict(payload)
+            if before_attempt is not None:
+                call_kwargs = await before_attempt(_current_attempt.get(), call_kwargs)
+            if inspect.iscoroutinefunction(self.fn):
+                result = await self.fn(**call_kwargs)
+            else:
+                result = self.fn(**call_kwargs)
+            iterator = self._ensure_async_iterator(result)
+            try:
+                first_item = await anext(iterator)
+            except StopAsyncIteration:
+                return False, None, iterator
+            return True, first_item, iterator
+
+        async def _stream() -> AsyncIterator[Any]:
+            has_first, first_item, iterator = await self._apply_policies(_start, payload)
+            if has_first:
+                yield first_item
+            async for item in iterator:
+                yield item
+
+        return _stream()
+
+    async def _apply_policies(
+        self,
+        raw_call: Callable[[], Awaitable[Any]],
+        kwargs: dict[str, Any],
+    ) -> Any:
         # innermost → outermost
-        call: Callable[[], Awaitable[Any]] = _raw
+        call: Callable[[], Awaitable[Any]] = raw_call
 
         if self._ratelimit is not None:
             _inner = call
@@ -308,27 +348,22 @@ class ResilientInvoker:
 
         return await call()
 
+    @staticmethod
+    def _ensure_async_iterator(result: Any) -> AsyncIterator[Any]:
+        if inspect.isasyncgen(result):
+            return result
+        if hasattr(result, "__aiter__"):
+            return result
+        raise TypeError("invoke_stream() requires an async iterator result")
+
 
 def wrap_handler(
     fn: Callable[..., Any],
     fallback_lookup: Callable[[str], Callable[..., Any] | None] | None = None,
-) -> Callable[..., Awaitable[Any]]:
+) -> ResilientInvoker:
     """Wrap *fn* with resilience middleware if it declares any policies.
 
-    Returns *fn* unchanged when no policies are attached — the caller can
-    blindly ``await wrap_handler(fn)(**kwargs)`` without paying overhead
-    for handlers that don't opt-in.
+    Returns a callable invoker object for both direct calls and stream calls.
     """
     compute = getattr(fn, "__skaal_compute__", None)
-    if not isinstance(compute, Compute) or not (
-        compute.retry or compute.circuit_breaker or compute.rate_limit or compute.bulkhead
-    ):
-        # No policies — return a thin async adapter so the call shape is uniform.
-        async def _passthrough(**kwargs: Any) -> Any:
-            if inspect.iscoroutinefunction(fn):
-                return await fn(**kwargs)
-            return fn(**kwargs)
-
-        return _passthrough
-
-    return ResilientInvoker(fn, compute, fallback_lookup)
+    return ResilientInvoker(fn, compute if isinstance(compute, Compute) else None, fallback_lookup)

@@ -2,15 +2,30 @@
 
 from __future__ import annotations
 
+import difflib
 import re
 from dataclasses import dataclass
 from enum import Enum
-from typing import Generic, TypeVar
+from typing import Any, Generic, TypeVar
 
 T = TypeVar("T")
 
 
-class Durability(str, Enum):
+class _StrictStrEnum(str, Enum):
+    """str-Enum with a "did you mean…" hook on invalid lookups."""
+
+    @classmethod
+    def _missing_(cls, value: Any) -> None:
+        valid = [m.value for m in cls]  # type: ignore[var-annotated]
+        suggestions = difflib.get_close_matches(str(value), valid, n=1)
+        hint = f" Did you mean {suggestions[0]!r}?" if suggestions else ""
+        raise ValueError(
+            f"{value!r} is not a valid {cls.__name__}.{hint} "
+            f"Valid values: {', '.join(repr(v) for v in valid)}."
+        )
+
+
+class Durability(_StrictStrEnum):
     """Storage durability tier."""
 
     EPHEMERAL = "ephemeral"  # in-memory only, lost on restart
@@ -18,7 +33,7 @@ class Durability(str, Enum):
     DURABLE = "durable"  # replicated, high-availability (e.g. S3 11-nines)
 
 
-class AccessPattern(str, Enum):
+class AccessPattern(_StrictStrEnum):
     """How data is primarily accessed; guides backend selection."""
 
     RANDOM_READ = "random-read"
@@ -33,7 +48,7 @@ class AccessPattern(str, Enum):
     WORM = "worm"  # write-once-read-many (audit logs, compliance)
 
 
-class Consistency(str, Enum):
+class Consistency(_StrictStrEnum):
     """Read consistency model for shared/distributed state."""
 
     EVENTUAL = "eventual"

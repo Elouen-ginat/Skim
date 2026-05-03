@@ -2,16 +2,31 @@
 
 from __future__ import annotations
 
+import io
+import logging
 from pathlib import Path
 from textwrap import dedent
 
 import pytest
 
 from skaal.settings import SkaalSettings, StackProfile
+from skaal.types import StackProfile as DeployStackProfile
 
 
 def _write_pyproject(tmp_path: Path, body: str) -> None:
     (tmp_path / "pyproject.toml").write_text(dedent(body))
+
+
+def _capture_skaal_logs(
+    level: int,
+) -> tuple[io.StringIO, logging.Logger, list[logging.Handler], int]:
+    stream = io.StringIO()
+    logger = logging.getLogger("skaal")
+    previous_handlers = list(logger.handlers)
+    previous_level = logger.level
+    logger.addHandler(logging.StreamHandler(stream))
+    logger.setLevel(level)
+    return stream, logger, previous_handlers, previous_level
 
 
 def test_no_profile_returns_base(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -200,6 +215,26 @@ def test_build_config_overrides_expands_deletion_protection(tmp_path: Path) -> N
     }
 
 
+def test_enable_mesh_resolves_from_stack_profile(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_pyproject(
+        tmp_path,
+        """
+        [tool.skaal]
+        enable_mesh = false
+
+        [tool.skaal.stacks.mesh]
+        enable_mesh = true
+        """,
+    )
+    monkeypatch.chdir(tmp_path)
+
+    base = SkaalSettings()
+    assert base.enable_mesh is False
+    assert base.for_stack("mesh").enable_mesh is True
+
+
 def test_build_config_overrides_explicit_wins_over_shortcut(tmp_path: Path) -> None:
     """An explicit sqlDeletionProtection<Class> in overrides beats the
     deletion_protection shortcut."""
@@ -276,12 +311,12 @@ def test_gcp_pulumi_stack_applies_profile() -> None:
     """env / invokers / labels from the profile land in the right places
     inside the generated Pulumi stack dict."""
     from skaal.app import App
-    from skaal.deploy.builders.gcp_stack import _build_pulumi_stack
+    from skaal.deploy.builders.gcp import build_pulumi_stack
     from skaal.plan import PlanFile
 
     app = App(name="demo")
     plan = PlanFile(app_name="demo", deploy_target="gcp")
-    profile = {
+    profile: DeployStackProfile = {
         "env": {"FEATURE_X": "on", "FEATURE_Y": "off"},
         "invokers": [
             "serviceAccount:alice@example.com",
@@ -290,7 +325,7 @@ def test_gcp_pulumi_stack_applies_profile() -> None:
         "labels": {"env": "prd", "team": "infra"},
     }
 
-    stack = _build_pulumi_stack(app, plan, region="europe-west1", stack_profile=profile)
+    stack = build_pulumi_stack(app, plan, region="europe-west1", stack_profile=profile)
     resources = stack["resources"]
 
     envs = resources["cloud-run-service"]["properties"]["template"]["spec"]["containers"][0]["envs"]
@@ -309,13 +344,13 @@ def test_gcp_pulumi_stack_applies_profile() -> None:
 def test_gcp_pulumi_stack_defaults_to_public_invoker() -> None:
     """With no invokers profile key, the invoker resource stays public."""
     from skaal.app import App
-    from skaal.deploy.builders.gcp_stack import _build_pulumi_stack
+    from skaal.deploy.builders.gcp import build_pulumi_stack
     from skaal.plan import PlanFile
 
     app = App(name="demo")
     plan = PlanFile(app_name="demo", deploy_target="gcp")
 
-    stack = _build_pulumi_stack(app, plan, region="us-central1")
+    stack = build_pulumi_stack(app, plan, region="us-central1")
     assert stack["resources"]["invoker"]["properties"]["member"] == "allUsers"
     assert "invoker-1" not in stack["resources"]
 
@@ -340,43 +375,21 @@ def test_run_hooks_sets_output_env(tmp_path: Path) -> None:
 
 
 def test_run_hooks_propagates_failure(tmp_path: Path) -> None:
-    """A non-zero exit aborts the hook sequence with SkaalHookError."""
+    """A non-zero exit aborts the hook sequence with CalledProcessError."""
+    import subprocess
     import sys
 
     from skaal.api import _run_hooks
-    from skaal.errors import SkaalHookError
 
-    bad = [sys.executable, "-c", "import sys; print('boom'); sys.exit(7)"]
-    with pytest.raises(SkaalHookError) as exc_info:
-        _run_hooks(
-            [bad],
-            cwd=tmp_path,
-            phase="post-deploy",
-            recovery_hint="rerun the hook after fixing the script",
-        )
-
-    message = str(exc_info.value)
-    assert "Post-deploy hook failed." in message
-    assert "Exit code: 7" in message
-    assert "boom" in message
-    assert "rerun the hook after fixing the script" in message
+    bad = [sys.executable, "-c", "import sys; sys.exit(7)"]
+    with pytest.raises(subprocess.CalledProcessError):
+        _run_hooks([bad], cwd=tmp_path)
 
 
-def test_run_hooks_wraps_missing_executable(tmp_path: Path) -> None:
-    """Missing hook executables should surface as SkaalHookError with a hint."""
-    from skaal.api import _run_hooks
-    from skaal.errors import SkaalHookError
-
-    with pytest.raises(SkaalHookError) as exc_info:
-        _run_hooks([["missing-hook-binary"]], cwd=tmp_path, phase="pre-deploy")
-
-    message = str(exc_info.value)
-    assert "Pre-deploy hook failed." in message
-    assert "missing-hook-binary" in message
-    assert "not found on PATH" in message
-
-
-def test_stacks_cli_lists_profiles(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_stacks_cli_lists_profiles(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """`skaal stacks` prints one row per declared profile."""
     from typer.testing import CliRunner
 
@@ -402,10 +415,17 @@ def test_stacks_cli_lists_profiles(tmp_path: Path, monkeypatch: pytest.MonkeyPat
     )
     monkeypatch.chdir(tmp_path)
 
-    result = CliRunner().invoke(stacks_app, [])
+    stream, logger, previous_handlers, previous_level = _capture_skaal_logs(logging.INFO)
+    try:
+        result = CliRunner().invoke(stacks_app, [])
+    finally:
+        logger.handlers = previous_handlers
+        logger.setLevel(previous_level)
+
     assert result.exit_code == 0, result.stdout
-    assert "p-dev" in result.stdout
-    assert "p-prd" in result.stdout
-    assert "dev-proj" in result.stdout
-    assert "prd-proj" in result.stdout
-    assert "europe-west4" in result.stdout
+    output = stream.getvalue()
+    assert "p-dev" in output
+    assert "p-prd" in output
+    assert "dev-proj" in output
+    assert "prd-proj" in output
+    assert "europe-west4" in output

@@ -3,13 +3,28 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timedelta, timezone
 
+import httpx
+import jwt
 import pytest
+from cryptography.hazmat.primitives.asymmetric import rsa
+from jwt.algorithms import RSAAlgorithm
+from opentelemetry.sdk.metrics.export import InMemoryMetricReader
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
-from skaal import App
-from skaal.backends.kv.local_map import LocalMap
+from skaal import APIGateway, App, AuthConfig, Route, TelemetryConfig
+from skaal.backends.file_blob_backend import FileBlobBackend
+from skaal.backends.local_backend import LocalMap
+from skaal.blob import BlobStore
 from skaal.runtime.local import LocalRuntime
+from skaal.runtime.telemetry import RuntimeTelemetry
 from skaal.storage import Store
+
+
+def _invoke_path(app: App, function_name: str) -> str:
+    return f"/_skaal/invoke/{app.name}.{function_name}"
+
 
 # ── Storage tests ──────────────────────────────────────────────────────────────
 
@@ -67,6 +82,75 @@ def _make_counter_app() -> App:
     return app
 
 
+def _make_secured_counter_app(
+    *,
+    required: bool = True,
+    issuer: str = "https://issuer.example.test",
+    captured: dict[str, str | None] | None = None,
+) -> App:
+    app = _make_counter_app()
+    app.attach(
+        APIGateway(
+            "public-api",
+            routes=[Route("/counts/*", target="test-counter.increment")],
+            auth=AuthConfig(
+                provider="jwt",
+                issuer=issuer,
+                audience="skaal-tests",
+                header="Authorization",
+                required=required,
+            ),
+        )
+    )
+
+    if captured is not None:
+
+        @app.add_before_invoke
+        async def _capture(ctx: object) -> None:
+            captured["auth_subject"] = getattr(ctx, "auth_subject", None)
+            captured["trace_id"] = getattr(ctx, "trace_id", None)
+            captured["span_id"] = getattr(ctx, "span_id", None)
+
+    return app
+
+
+def _make_jwt_client(issuer: str) -> tuple[str, httpx.AsyncClient]:
+    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    public_key = private_key.public_key()
+    jwk = json.loads(RSAAlgorithm.to_jwk(public_key))
+    jwk["kid"] = "test-key"
+    token = jwt.encode(
+        {
+            "sub": "user-123",
+            "aud": "skaal-tests",
+            "iss": issuer,
+            "exp": datetime.now(timezone.utc) + timedelta(minutes=5),
+        },
+        private_key,
+        algorithm="RS256",
+        headers={"kid": "test-key"},
+    )
+
+    def _handler(request: httpx.Request) -> httpx.Response:
+        assert str(request.url) == issuer.rstrip("/") + "/.well-known/jwks.json"
+        return httpx.Response(200, json={"keys": [jwk]})
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(_handler))
+    return token, client
+
+
+def _metric_values(metrics_data: object, metric_name: str) -> list[int | float]:
+    values: list[int | float] = []
+    for resource_metric in getattr(metrics_data, "resource_metrics", []):
+        for scope_metric in getattr(resource_metric, "scope_metrics", []):
+            for metric in getattr(scope_metric, "metrics", []):
+                if getattr(metric, "name", None) != metric_name:
+                    continue
+                for point in getattr(metric.data, "data_points", []):
+                    values.append(point.value)
+    return values
+
+
 @pytest.mark.asyncio
 async def test_runtime_index():
     runtime = LocalRuntime(_make_counter_app())
@@ -74,8 +158,8 @@ async def test_runtime_index():
     assert status == 200
     assert "endpoints" in data
     names = [e["function"] for e in data["endpoints"]]
-    assert "increment" in names
-    assert "get_count" in names
+    assert "test-counter.increment" in names
+    assert "test-counter.get_count" in names
 
 
 @pytest.mark.asyncio
@@ -87,17 +171,34 @@ async def test_runtime_health():
 
 
 @pytest.mark.asyncio
+async def test_runtime_ready_distinguishes_startup_from_liveness():
+    runtime = LocalRuntime(_make_counter_app())
+
+    data, status = await runtime._dispatch("GET", "/ready", b"")
+    assert status == 503
+    assert data["status"] == "starting"
+
+    await runtime.ensure_started()
+
+    data, status = await runtime._dispatch("GET", "/ready", b"")
+    assert status == 200
+    assert data["status"] == "ready"
+
+    await runtime.shutdown()
+
+
+@pytest.mark.asyncio
 async def test_runtime_function_call():
     runtime = LocalRuntime(_make_counter_app())
     body = json.dumps({"name": "hits"}).encode()
-    data, status = await runtime._dispatch("POST", "/increment", body)
+    data, status = await runtime._dispatch("POST", _invoke_path(runtime.app, "increment"), body)
     assert status == 200
     assert data["name"] == "hits"
     assert data["value"] == 1
 
     # Increment again by 5
     body2 = json.dumps({"name": "hits", "by": 5}).encode()
-    data2, status2 = await runtime._dispatch("POST", "/increment", body2)
+    data2, status2 = await runtime._dispatch("POST", _invoke_path(runtime.app, "increment"), body2)
     assert status2 == 200
     assert data2["value"] == 6
 
@@ -106,20 +207,45 @@ async def test_runtime_function_call():
 async def test_runtime_storage_persists_across_calls():
     runtime = LocalRuntime(_make_counter_app())
 
-    await runtime._dispatch("POST", "/increment", json.dumps({"name": "a"}).encode())
-    await runtime._dispatch("POST", "/increment", json.dumps({"name": "a"}).encode())
-    await runtime._dispatch("POST", "/increment", json.dumps({"name": "b"}).encode())
+    await runtime._dispatch(
+        "POST", _invoke_path(runtime.app, "increment"), json.dumps({"name": "a"}).encode()
+    )
+    await runtime._dispatch(
+        "POST", _invoke_path(runtime.app, "increment"), json.dumps({"name": "a"}).encode()
+    )
+    await runtime._dispatch(
+        "POST", _invoke_path(runtime.app, "increment"), json.dumps({"name": "b"}).encode()
+    )
 
-    data, status = await runtime._dispatch("POST", "/list_counts", b"")
+    data, status = await runtime._dispatch("POST", _invoke_path(runtime.app, "list_counts"), b"")
     assert status == 200
     assert data["counts"]["a"] == 2
     assert data["counts"]["b"] == 1
 
 
 @pytest.mark.asyncio
+async def test_local_runtime_wires_blob_store(tmp_path):
+    app = App("blob-runtime")
+
+    @app.storage(kind="blob", read_latency="< 50ms", durability="durable")
+    class Uploads(BlobStore):
+        pass
+
+    runtime = LocalRuntime(
+        app,
+        backend_overrides={"Uploads": FileBlobBackend(tmp_path / "runtime-blobs")},
+    )
+
+    assert isinstance(runtime._backends["blob-runtime.Uploads"], FileBlobBackend)
+
+    await Uploads.put_bytes("notes/one.txt", b"hello")
+    assert await Uploads.get_bytes("notes/one.txt") == b"hello"
+
+
+@pytest.mark.asyncio
 async def test_runtime_unknown_function():
     runtime = LocalRuntime(_make_counter_app())
-    data, status = await runtime._dispatch("POST", "/no_such_fn", b"{}")
+    data, status = await runtime._dispatch("POST", "/_skaal/invoke/test-counter.no_such_fn", b"{}")
     assert status == 404
     assert "error" in data
 
@@ -127,7 +253,9 @@ async def test_runtime_unknown_function():
 @pytest.mark.asyncio
 async def test_runtime_invalid_json():
     runtime = LocalRuntime(_make_counter_app())
-    data, status = await runtime._dispatch("POST", "/increment", b"not json")
+    data, status = await runtime._dispatch(
+        "POST", _invoke_path(runtime.app, "increment"), b"not json"
+    )
     assert status == 400
     assert "error" in data
 
@@ -136,7 +264,7 @@ async def test_runtime_invalid_json():
 async def test_runtime_bad_args():
     runtime = LocalRuntime(_make_counter_app())
     # increment() requires 'name', send nothing
-    data, status = await runtime._dispatch("POST", "/increment", b"{}")
+    data, status = await runtime._dispatch("POST", _invoke_path(runtime.app, "increment"), b"{}")
     assert status == 422
     assert "error" in data
 
@@ -144,8 +272,157 @@ async def test_runtime_bad_args():
 @pytest.mark.asyncio
 async def test_runtime_method_not_allowed():
     runtime = LocalRuntime(_make_counter_app())
-    data, status = await runtime._dispatch("DELETE", "/increment", b"")
+    data, status = await runtime._dispatch("DELETE", _invoke_path(runtime.app, "increment"), b"")
     assert status == 405
+
+
+@pytest.mark.asyncio
+async def test_runtime_rejects_missing_jwt_when_required():
+    issuer = "https://issuer.example.test"
+    _, client = _make_jwt_client(issuer)
+    runtime = LocalRuntime(_make_secured_counter_app(issuer=issuer), auth_http_client=client)
+
+    data, status = await runtime._dispatch(
+        "POST",
+        _invoke_path(runtime.app, "increment"),
+        json.dumps({"name": "hits"}).encode(),
+        headers={},
+    )
+
+    assert status == 401
+    assert "Missing Authorization header" in data["error"]
+    await client.aclose()
+    await runtime.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_runtime_optional_jwt_allows_missing_token():
+    issuer = "https://issuer.example.test"
+    _, client = _make_jwt_client(issuer)
+    runtime = LocalRuntime(
+        _make_secured_counter_app(required=False, issuer=issuer),
+        auth_http_client=client,
+    )
+
+    data, status = await runtime._dispatch(
+        "POST",
+        _invoke_path(runtime.app, "increment"),
+        json.dumps({"name": "hits"}).encode(),
+        headers={},
+    )
+
+    assert status == 200
+    assert data["value"] == 1
+    await client.aclose()
+    await runtime.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_runtime_valid_jwt_populates_invoke_context_trace_and_subject():
+    captured: dict[str, str | None] = {}
+    issuer = "https://issuer.example.test"
+    token, client = _make_jwt_client(issuer)
+    telemetry_config: TelemetryConfig = {
+        "exporter": "otlp",
+        "service_name": "test-counter",
+        "service_namespace": "skaal-tests",
+    }
+    telemetry = RuntimeTelemetry(
+        "test-counter",
+        telemetry_config,
+        span_exporter=InMemorySpanExporter(),
+        metric_reader=InMemoryMetricReader(),
+    )
+    runtime = LocalRuntime(
+        _make_secured_counter_app(issuer=issuer, captured=captured),
+        auth_http_client=client,
+        telemetry=telemetry_config,
+        telemetry_runtime=telemetry,
+    )
+
+    data, status = await runtime._dispatch(
+        "POST",
+        _invoke_path(runtime.app, "increment"),
+        json.dumps({"name": "hits"}).encode(),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert status == 200
+    assert data["value"] == 1
+    assert captured["auth_subject"] == "user-123"
+    assert captured["trace_id"] is not None
+    assert captured["span_id"] is not None
+
+    await client.aclose()
+    await runtime.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_runtime_telemetry_emits_spans_and_metrics():
+    span_exporter = InMemorySpanExporter()
+    metric_reader = InMemoryMetricReader()
+    telemetry_config: TelemetryConfig = {
+        "exporter": "otlp",
+        "service_name": "test-counter",
+        "service_namespace": "skaal-tests",
+    }
+    telemetry = RuntimeTelemetry(
+        "test-counter",
+        telemetry_config,
+        span_exporter=span_exporter,
+        metric_reader=metric_reader,
+    )
+    runtime = LocalRuntime(
+        _make_counter_app(),
+        telemetry=telemetry_config,
+        telemetry_runtime=telemetry,
+    )
+
+    _, status = await runtime._dispatch(
+        "POST",
+        _invoke_path(runtime.app, "increment"),
+        json.dumps({"name": "hits"}).encode(),
+    )
+
+    assert status == 200
+    spans = span_exporter.get_finished_spans()
+    assert any(span.name == f"POST {_invoke_path(runtime.app, 'increment')}" for span in spans)
+
+    metrics_data = metric_reader.get_metrics_data()
+    assert any(value >= 1 for value in _metric_values(metrics_data, "skaal.http.requests"))
+
+    await runtime.shutdown()
+
+
+def test_typed_auth_and_telemetry_shapes_are_exported() -> None:
+    auth: dict[str, object] = {
+        "provider": "jwt",
+        "issuer": "https://issuer.example.test",
+        "audience": "skaal-tests",
+        "header": "X-Auth",
+        "required": False,
+    }
+    telemetry: TelemetryConfig = {
+        "exporter": "otlp",
+        "endpoint": "http://localhost:4318",
+        "service_name": "demo",
+        "service_namespace": "skaal",
+        "headers": {"x-test": "1"},
+        "insecure": True,
+    }
+
+    assert auth["header"] == "X-Auth"
+    assert telemetry["exporter"] == "otlp"
+
+
+@pytest.mark.asyncio
+async def test_runtime_legacy_public_function_route_is_gone():
+    runtime = LocalRuntime(_make_counter_app())
+    data, status = await runtime._dispatch(
+        "POST", "/increment", json.dumps({"name": "hits"}).encode()
+    )
+    assert status == 404
+    assert "error" in data
 
 
 # ── End-to-end: actual TCP server ─────────────────────────────────────────────

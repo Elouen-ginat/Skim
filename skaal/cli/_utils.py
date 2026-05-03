@@ -1,9 +1,4 @@
-"""Shared helpers for CLI commands.
-
-The core logic lives in :mod:`skaal.api`.  These helpers only wrap API calls
-with the CLI-specific concerns: turning exceptions into ``typer.Exit(1)`` and
-formatting error messages.
-"""
+"""Shared helpers for CLI commands."""
 
 from __future__ import annotations
 
@@ -21,23 +16,30 @@ def get_app_name() -> str:
 
 
 def load_app(module_app: str) -> "App":
-    """CLI-facing wrapper around :func:`skaal.api.load_app`.
-
-    Converts any import/resolution failure into ``typer.Exit(1)`` with a
-    user-friendly error message.
-    """
-    import typer
+    """CLI-facing wrapper around :func:`skaal.api.load_app`."""
 
     from skaal import api
 
-    try:
-        return api.load_app(module_app)
-    except ValueError as exc:
-        typer.echo(f"Error: {exc}", err=True)
-        raise typer.Exit(1) from exc
-    except ModuleNotFoundError as exc:
-        typer.echo(f"Error: {exc}", err=True)
-        raise typer.Exit(1) from exc
-    except AttributeError as exc:
-        typer.echo(f"Error: {exc}", err=True)
-        raise typer.Exit(1) from exc
+    return api.load_app(module_app)
+
+
+def resolve_app_ref() -> "App":
+    """Resolve and wire the configured app for runtime-aware CLI commands.
+
+    Reads ``MODULE:APP`` from CLI settings (env / pyproject), loads it, and
+    instantiates a :class:`~skaal.runtime.local.LocalRuntime` so storage
+    backends are bound to relational SQLModel classes.
+    """
+    from skaal import api
+    from skaal.cli.config import SkaalSettings
+    from skaal.runtime.local import LocalRuntime
+
+    cfg = SkaalSettings()
+    if cfg.app is None:
+        raise ValueError(
+            "missing MODULE:APP. Set 'app' in [tool.skaal] of pyproject.toml "
+            "or export SKAAL_APP=module:app."
+        )
+    skaal_app = api.resolve_app(cfg.app)
+    LocalRuntime(skaal_app)
+    return skaal_app

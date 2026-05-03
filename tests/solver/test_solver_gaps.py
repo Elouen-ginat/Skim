@@ -13,16 +13,13 @@ Covers:
 
 from __future__ import annotations
 
-import warnings
-
-import pytest
+import io
+import logging
 
 from skaal import App
 from skaal.catalog.loader import load_catalog
 from skaal.decorators import scale
 from skaal.patterns import EventLog, Outbox, Projection, Saga, SagaStep
-from skaal.plan import PatternSpec
-from skaal.solver._pattern_solvers import PatternSolveContext, register_pattern_solver
 from skaal.solver.solver import solve
 from skaal.types import (
     Bulkhead,
@@ -33,6 +30,19 @@ from skaal.types import (
     Scale,
     ScaleStrategy,
 )
+
+
+def _capture_skaal_logs(
+    level: int,
+) -> tuple[io.StringIO, logging.Logger, list[logging.Handler], int]:
+    stream = io.StringIO()
+    logger = logging.getLogger("skaal")
+    previous_handlers = list(logger.handlers)
+    previous_level = logger.level
+    logger.addHandler(logging.StreamHandler(stream))
+    logger.setLevel(level)
+    return stream, logger, previous_handlers, previous_level
+
 
 # ── collocate_with ────────────────────────────────────────────────────────────
 
@@ -88,18 +98,21 @@ def test_solve_compute_collocate_with_emitted():
 
 
 def test_solve_unknown_collocate_target_warns():
-    """Unknown collocate_with target emits a runtime warning."""
+    """Unknown collocate_with target emits a solver warning log."""
     app = App("colo")
 
     @app.storage(read_latency="< 10ms", collocate_with="does_not_exist")
     class Store:
         pass
 
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
+    stream, logger, previous_handlers, previous_level = _capture_skaal_logs(logging.WARNING)
+    try:
         plan = solve(app, load_catalog())
+    finally:
+        logger.handlers = previous_handlers
+        logger.setLevel(previous_level)
 
-    assert any("does_not_exist" in str(w.message) for w in caught)
+    assert "does_not_exist" in stream.getvalue()
     assert plan.storage["colo.Store"].collocate_with is None
 
 
@@ -316,11 +329,14 @@ def test_solve_projection_unknown_handler_warns():
     view_proj = Projection(source=Events, target=View, handler="missing_function")
     app.pattern(view_proj)
 
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
+    stream, logger, previous_handlers, previous_level = _capture_skaal_logs(logging.WARNING)
+    try:
         solve(app, load_catalog())
+    finally:
+        logger.handlers = previous_handlers
+        logger.setLevel(previous_level)
 
-    assert any("missing_function" in str(w.message) for w in caught)
+    assert "missing_function" in stream.getvalue()
 
 
 def test_solve_projection_forces_target_collocation():
@@ -367,12 +383,14 @@ def test_solve_saga_validates_function_references():
     app.pattern(placeorder)
 
     # No warning expected — both names are registered
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
+    stream, logger, previous_handlers, previous_level = _capture_skaal_logs(logging.WARNING)
+    try:
         plan = solve(app, load_catalog())
+    finally:
+        logger.handlers = previous_handlers
+        logger.setLevel(previous_level)
 
-    saga_refs = [w for w in caught if "Saga" in str(w.message)]
-    assert not saga_refs, f"unexpected saga warnings: {saga_refs}"
+    assert "Saga" not in stream.getvalue()
 
     # Saga registers by its .name attribute ("place_order")
     saga_keys = [k for k in plan.patterns if "place_order" in k]
@@ -397,12 +415,14 @@ def test_solve_saga_missing_reference_warns():
     )
     app.pattern(placeorder)
 
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
+    stream, logger, previous_handlers, previous_level = _capture_skaal_logs(logging.WARNING)
+    try:
         plan = solve(app, load_catalog())
+    finally:
+        logger.handlers = previous_handlers
+        logger.setLevel(previous_level)
 
-    saga_warnings = [w for w in caught if "release_inventory" in str(w.message)]
-    assert saga_warnings, "expected a warning about the missing compensate function"
+    assert "release_inventory" in stream.getvalue()
 
     saga_keys = [k for k in plan.patterns if "place_order" in k]
     assert saga_keys, f"no saga pattern in {list(plan.patterns)}"
@@ -438,11 +458,3 @@ def test_solve_outbox_borrows_primary_storage_backend():
     # Outbox backend should match the primary storage backend
     assert spec.backend == plan.storage["ob.Orders"].backend
     assert spec.config["storage"] == "ob.Orders"
-
-
-def test_register_pattern_solver_rejects_duplicates():
-    with pytest.raises(RuntimeError, match="solver already registered"):
-
-        @register_pattern_solver("event-log")
-        def _duplicate(_ctx: PatternSolveContext) -> PatternSpec:
-            raise AssertionError("duplicate registration should fail")

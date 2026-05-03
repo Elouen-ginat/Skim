@@ -7,9 +7,9 @@ import json
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field
 
-from skaal.deploy.dependencies import is_dependency_set_name
+from skaal.types.secret import SecretSpec
 
 PLAN_FILE_NAME = "plan.skaal.lock"
 
@@ -42,42 +42,6 @@ class StorageSpec(BaseModel):
     # Tells deploy generators which Python class to instantiate and how.
     # Not used by the constraint solver.
     wire_params: dict[str, Any] = Field(default_factory=dict)
-
-    @model_validator(mode="before")
-    @classmethod
-    def _normalize_legacy_wire_params(cls, value: Any) -> Any:
-        if not isinstance(value, dict):
-            return value
-
-        raw_wire_params = value.get("wire_params")
-        if not isinstance(raw_wire_params, dict) or "extra_deps" not in raw_wire_params:
-            return value
-
-        wire_params = dict(raw_wire_params)
-        raw_extra_deps = wire_params.pop("extra_deps")
-        if isinstance(raw_extra_deps, str):
-            extra_deps = [raw_extra_deps]
-        else:
-            extra_deps = list(raw_extra_deps or ())
-
-        dependency_sets = list(wire_params.get("dependency_sets", ()))
-        dependencies = list(wire_params.get("dependencies", ()))
-
-        for item in extra_deps:
-            if is_dependency_set_name(item):
-                if item not in dependency_sets:
-                    dependency_sets.append(item)
-            elif item not in dependencies:
-                dependencies.append(item)
-
-        if dependency_sets:
-            wire_params["dependency_sets"] = dependency_sets
-        if dependencies:
-            wire_params["dependencies"] = dependencies
-
-        normalized = dict(value)
-        normalized["wire_params"] = wire_params
-        return normalized
 
 
 class ComputeSpec(BaseModel):
@@ -124,7 +88,7 @@ class ComponentSpec(BaseModel):
     kind: str  # "proxy" | "api-gateway" | "external-storage" | ...
     implementation: str | None = None  # e.g. "traefik", "kong"; None if solver selects
     provisioned: bool = True  # False for ExternalComponent subclasses
-    connection_env: str | None = None  # env var carrying the DSN (external only)
+    secret_name: str | None = None  # references PlanFile.secrets[<name>] (external only)
     config: dict[str, Any] = Field(default_factory=dict)
     reason: str = ""
 
@@ -143,6 +107,7 @@ class PlanFile(BaseModel):
     compute: dict[str, ComputeSpec] = Field(default_factory=dict)
     components: dict[str, ComponentSpec] = Field(default_factory=dict)
     patterns: dict[str, PatternSpec] = Field(default_factory=dict)
+    secrets: dict[str, SecretSpec] = Field(default_factory=dict)
     # Topological order of resources produced by the dependency graph — used
     # by deploy generators to respect collocate_with ordering at provision time.
     resource_order: list[str] = Field(default_factory=list)

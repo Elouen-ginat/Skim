@@ -4,29 +4,24 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-from skaal.app import App
 from skaal.components import APIGateway, AuthConfig, Proxy, Route
-from skaal.deploy.builders.gcp_stack import (
-    _add_gcp_api_gateway,
-    _build_pulumi_stack,
-    _gcp_openapi_path,
-)
-from skaal.plan import PlanFile, StorageSpec
+from skaal.deploy.builders.apigw import add_gcp_api_gateway, gcp_openapi_path
+from skaal.plan import PlanFile
 from skaal.solver.components import encode_component
 
 # ── Path conversion ───────────────────────────────────────────────────────────
 
 
 def test_gcp_openapi_path_wildcard():
-    assert _gcp_openapi_path("/api/*") == "/api/{proxy}"
+    assert gcp_openapi_path("/api/*") == "/api/{proxy}"
 
 
 def test_gcp_openapi_path_root_wildcard():
-    assert _gcp_openapi_path("/*") == "/{proxy}"
+    assert gcp_openapi_path("/*") == "/{proxy}"
 
 
 def test_gcp_openapi_path_exact():
-    assert _gcp_openapi_path("/health") == "/health"
+    assert gcp_openapi_path("/health") == "/health"
 
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
@@ -51,7 +46,7 @@ def test_no_gateway_resources_when_no_component():
     app = _make_app()
     resources: dict = {}
     outputs: dict = {}
-    _add_gcp_api_gateway(app, plan, resources, outputs)
+    add_gcp_api_gateway(app, plan, resources, outputs)
 
     assert resources == {}
     assert outputs == {}
@@ -67,7 +62,7 @@ def test_proxy_emits_api_gateway_resources():
     app = _make_app()
     resources: dict = {}
     outputs: dict = {}
-    _add_gcp_api_gateway(app, plan, resources, outputs)
+    add_gcp_api_gateway(app, plan, resources, outputs)
 
     assert "api-gateway-api" in resources
     assert "api-gateway-config" in resources
@@ -82,7 +77,7 @@ def test_gateway_api_config_has_openapi_doc():
     app = _make_app()
     resources: dict = {}
     outputs: dict = {}
-    _add_gcp_api_gateway(app, plan, resources, outputs)
+    add_gcp_api_gateway(app, plan, resources, outputs)
 
     cfg = resources["api-gateway-config"]
     assert cfg["type"] == "gcp:apigateway:ApiConfig"
@@ -102,7 +97,7 @@ def test_openapi_includes_cloud_run_url_ref():
     app = _make_app()
     resources: dict = {}
     outputs: dict = {}
-    _add_gcp_api_gateway(app, plan, resources, outputs)
+    add_gcp_api_gateway(app, plan, resources, outputs)
 
     parts = resources["api-gateway-config"]["properties"]["openapiDocuments"][0]["document"][
         "contents"
@@ -129,7 +124,7 @@ def test_openapi_jwt_security_definition():
     app = _make_app()
     resources: dict = {}
     outputs: dict = {}
-    _add_gcp_api_gateway(app, plan, resources, outputs)
+    add_gcp_api_gateway(app, plan, resources, outputs)
 
     parts = resources["api-gateway-config"]["properties"]["openapiDocuments"][0]["document"][
         "contents"
@@ -150,7 +145,7 @@ def test_mount_routes_fallback():
     app = _make_app(mounts={"auth": "/auth"})
     resources: dict = {}
     outputs: dict = {}
-    _add_gcp_api_gateway(app, plan, resources, outputs)
+    add_gcp_api_gateway(app, plan, resources, outputs)
 
     parts = resources["api-gateway-config"]["properties"]["openapiDocuments"][0]["document"][
         "contents"
@@ -169,90 +164,6 @@ def test_api_gateway_config_depends_on_cloud_run():
     app = _make_app()
     resources: dict = {}
     outputs: dict = {}
-    _add_gcp_api_gateway(app, plan, resources, outputs)
+    add_gcp_api_gateway(app, plan, resources, outputs)
 
     assert "${cloud-run-service}" in resources["api-gateway-config"]["options"]["dependsOn"]
-
-
-def test_cloud_run_private_service_omits_public_invoker() -> None:
-    app = App(name="demo")
-    plan = PlanFile(
-        app_name="demo",
-        deploy_target="gcp",
-        deploy_config={"allow_public_invoker": False},
-    )
-
-    stack = _build_pulumi_stack(app, plan, region="us-central1")
-
-    assert "invoker" not in stack["resources"]
-
-
-def test_cloud_run_uses_configured_vpc_connector_values() -> None:
-    app = App(name="demo")
-    plan = PlanFile(
-        app_name="demo",
-        deploy_target="gcp",
-        deploy_config={
-            "vpc_connector_network": "shared-vpc",
-            "vpc_connector_cidr": "10.42.0.0/28",
-        },
-        storage={
-            "demo.User": StorageSpec(
-                variable_name="demo.User",
-                backend="cloud-sql-postgres",
-                kind="relational",
-                deploy_params={},
-                wire_params={
-                    "class_name": "PostgresBackend",
-                    "module": "skaal.backends.kv.postgres",
-                    "env_prefix": "SKAAL_DB_DSN",
-                    "uses_namespace": True,
-                    "requires_vpc": True,
-                },
-            ),
-        },
-    )
-
-    stack = _build_pulumi_stack(app, plan, region="us-central1")
-    props = stack["resources"]["vpc-connector"]["properties"]
-
-    assert props["network"] == "shared-vpc"
-    assert props["ipCidrRange"] == "10.42.0.0/28"
-
-
-def test_cloud_run_can_reuse_existing_vpc_connector() -> None:
-    app = App(name="demo")
-    plan = PlanFile(
-        app_name="demo",
-        deploy_target="gcp",
-        deploy_config={
-            "vpc_connector_name": "projects/demo/locations/us-central1/connectors/shared",
-            "vpc_connector_egress": "all-traffic",
-        },
-        storage={
-            "demo.User": StorageSpec(
-                variable_name="demo.User",
-                backend="cloud-sql-postgres",
-                kind="relational",
-                deploy_params={},
-                wire_params={
-                    "class_name": "PostgresBackend",
-                    "module": "skaal.backends.kv.postgres",
-                    "env_prefix": "SKAAL_DB_DSN",
-                    "uses_namespace": True,
-                    "requires_vpc": True,
-                },
-            ),
-        },
-    )
-
-    stack = _build_pulumi_stack(app, plan, region="us-central1")
-
-    assert "vpc-connector" not in stack["resources"]
-    annotations = stack["resources"]["cloud-run-service"]["properties"]["template"]["metadata"][
-        "annotations"
-    ]
-    assert annotations["run.googleapis.com/vpc-access-connector"] == (
-        "projects/demo/locations/us-central1/connectors/shared"
-    )
-    assert annotations["run.googleapis.com/vpc-access-egress"] == "all-traffic"

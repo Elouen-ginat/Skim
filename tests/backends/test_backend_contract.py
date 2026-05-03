@@ -14,8 +14,9 @@ from typing import Any, AsyncIterator, Callable
 import pytest
 
 from skaal.backends.base import StorageBackend
-from skaal.backends.kv.local_map import LocalMap
-from skaal.backends.kv.sqlite import SqliteBackend
+from skaal.backends.local_backend import LocalMap
+from skaal.backends.sqlite_backend import SqliteBackend
+from skaal.types.storage import SecondaryIndex
 
 # ── Helpers for skipping server-backed backends when the server is down ───────
 
@@ -69,7 +70,7 @@ async def _redis_factory(tmp_path: Path) -> AsyncIterator[Any]:
     try:
         import redis.asyncio  # noqa: F401
 
-        from skaal.backends.kv.redis import RedisBackend
+        from skaal.backends.redis_backend import RedisBackend
     except ImportError:
         pytest.skip("redis not installed")
 
@@ -133,13 +134,18 @@ class TestStorageBackendProtocol:
             "set",
             "delete",
             "list",
+            "list_page",
             "scan",
+            "scan_page",
+            "query_index",
             "increment_counter",
             "atomic_update",
             "close",
         }
         missing: dict[str, set[str]] = {}
         for name, cls in registered.items():
+            if not any(callable(getattr(cls, m, None)) for m in ("get", "set", "list")):
+                continue
             have = {m for m in required if callable(getattr(cls, m, None))}
             gap = required - have
             if gap:
@@ -185,6 +191,35 @@ class TestCRUDContract:
             assert hits == {"event:1": {"t": "click"}, "event:2": {"t": "hover"}}
 
     @pytest.mark.asyncio
+    async def test_list_page(self, backend_factory: Any, tmp_path: Path) -> None:
+        async with backend_factory(tmp_path) as b:
+            await b.set("a", 1)
+            await b.set("b", 2)
+            await b.set("c", 3)
+            page = await b.list_page(limit=2, cursor=None)
+            assert [key for key, _ in page.items] == ["a", "b"]
+            assert page.has_more is True
+
+    @pytest.mark.asyncio
+    async def test_query_index(self, backend_factory: Any, tmp_path: Path) -> None:
+        async with backend_factory(tmp_path) as b:
+            setattr(
+                b,
+                "_skaal_secondary_indexes",
+                {
+                    "by_team": SecondaryIndex(
+                        name="by_team",
+                        partition_key="team",
+                        sort_key="score",
+                    )
+                },
+            )
+            await b.set("m1", {"team": "alpha", "score": 10})
+            await b.set("m2", {"team": "alpha", "score": 2})
+            result = await b.query_index("by_team", "alpha", limit=10, cursor=None)
+            assert [item["score"] for item in result.items] == [2, 10]
+
+    @pytest.mark.asyncio
     async def test_increment_counter(self, backend_factory: Any, tmp_path: Path) -> None:
         async with backend_factory(tmp_path) as b:
             assert await b.increment_counter("c", delta=1) == 1
@@ -217,22 +252,18 @@ class TestPluginRegistry:
         """Every built-in backend name is resolvable via the plugin registry."""
         from skaal.plugins import get_backend
 
-        for name in ("local", "sqlite", "redis", "postgres", "dynamodb", "firestore"):
+        for name in (
+            "local",
+            "local-blob",
+            "sqlite",
+            "redis",
+            "postgres",
+            "dynamodb",
+            "firestore",
+            "s3",
+            "gcs",
+        ):
             assert get_backend(name) is not None
-
-    def test_in_process_registration_overrides_entry_point(self) -> None:
-        """register_backend() takes precedence over installed entry points."""
-        from skaal.plugins import get_backend, register_backend
-
-        sentinel = object()
-        register_backend("local", sentinel)  # type: ignore[arg-type]
-        try:
-            assert get_backend("local") is sentinel
-        finally:
-            # Restore: register_backend doesn't expose a remove; clear the dict.
-            from skaal.plugins import _backends
-
-            _backends.pop("local", None)
 
     def test_unknown_backend_raises_plugin_error(self) -> None:
         from skaal.errors import SkaalPluginError

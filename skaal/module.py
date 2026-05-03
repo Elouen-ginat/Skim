@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
+import weakref
+from collections.abc import AsyncIterator, Mapping
+from types import SimpleNamespace
+
 # TYPE_CHECKING import to avoid circular deps at runtime
-from typing import TYPE_CHECKING, Any, Callable, Literal, TypeVar, overload
+from typing import TYPE_CHECKING, Any, Callable, Literal, TypeVar, cast, overload
 
 from skaal.types import (
     AccessPattern,
+    BeforeInvoke,
     Bulkhead,
     CircuitBreaker,
     Compute,
@@ -16,6 +21,8 @@ from skaal.types import (
     RateLimitPolicy,
     RetryPolicy,
     Scale,
+    SecondaryIndex,
+    SecretRef,
     Throughput,
 )
 
@@ -24,7 +31,7 @@ if TYPE_CHECKING:
 
 F = TypeVar("F", bound=Callable[..., Any])
 C = TypeVar("C", bound=type)
-BucketName = Literal["storage", "agents", "functions", "channels"]
+StorageKind = Literal["kv", "blob", "relational", "vector"]
 
 
 class ModuleExport:
@@ -100,47 +107,34 @@ class Module:
         self._patterns: dict[str, Any] = {}
         self._components: dict[str, Any] = {}
         self._schedules: dict[str, Any] = {}
+        self._secrets: dict[str, SecretRef] = {}
         self._exports: set[str] = set()
         self._submodules: dict[str, Module] = {}  # namespace → mounted module
+        self._before_invoke: list[BeforeInvoke] = []
+        self._runtime_ref: weakref.ReferenceType[Any] | None = None
 
     # ── Registration decorators ────────────────────────────────────────────
-
-    def _register_storage(
-        self,
-        decorator_fn: Callable[..., Callable[[C], C]],
-        cls_to_decorate: C | None,
-        **kwargs: Any,
-    ) -> C | Callable[[C], C]:
-        """Build the outer decorator from *decorator_fn*, register the result
-        in ``self._storage``, and apply the dual ``@app.storage`` /
-        ``@app.storage(...)`` calling convention."""
-        outer = decorator_fn(**kwargs)
-
-        def decorator(cls: C) -> C:
-            annotated = outer(cls)
-            self._storage[cls.__name__] = annotated
-            return annotated
-
-        if cls_to_decorate is None:
-            return decorator
-        return decorator(cls_to_decorate)
 
     @overload
     def storage(
         self,
         cls_to_decorate: C,
         *,
+        kind: StorageKind | str = ...,
+        dim: int | None = ...,
+        metric: str = ...,
         read_latency: Latency | str | None = ...,
         write_latency: Latency | str | None = ...,
         durability: Durability | str = ...,
         size_hint: str | None = ...,
-        access_pattern: AccessPattern | str = ...,
+        access_pattern: AccessPattern | str | None = ...,
         write_throughput: Throughput | str | None = ...,
         residency: str | None = ...,
         retention: str | None = ...,
         auto_optimize: bool = ...,
         decommission_policy: DecommissionPolicy | None = ...,
         collocate_with: str | None = ...,
+        indexes: list[SecondaryIndex] | None = ...,
     ) -> C: ...
 
     @overload
@@ -148,34 +142,42 @@ class Module:
         self,
         cls_to_decorate: None = ...,
         *,
+        kind: StorageKind | str = ...,
+        dim: int | None = ...,
+        metric: str = ...,
         read_latency: Latency | str | None = ...,
         write_latency: Latency | str | None = ...,
         durability: Durability | str = ...,
         size_hint: str | None = ...,
-        access_pattern: AccessPattern | str = ...,
+        access_pattern: AccessPattern | str | None = ...,
         write_throughput: Throughput | str | None = ...,
         residency: str | None = ...,
         retention: str | None = ...,
         auto_optimize: bool = ...,
         decommission_policy: DecommissionPolicy | None = ...,
         collocate_with: str | None = ...,
+        indexes: list[SecondaryIndex] | None = ...,
     ) -> Callable[[C], C]: ...
 
     def storage(
         self,
         cls_to_decorate: C | None = None,
         *,
+        kind: StorageKind | str = "kv",
+        dim: int | None = None,
+        metric: str = "cosine",
         read_latency: Latency | str | None = None,
         write_latency: Latency | str | None = None,
         durability: Durability | str = Durability.PERSISTENT,
         size_hint: str | None = None,
-        access_pattern: AccessPattern | str = AccessPattern.RANDOM_READ,
+        access_pattern: AccessPattern | str | None = None,
         write_throughput: Throughput | str | None = None,
         residency: str | None = None,
         retention: str | None = None,
         auto_optimize: bool = False,
         decommission_policy: DecommissionPolicy | None = None,
         collocate_with: str | None = None,
+        indexes: list[SecondaryIndex] | None = None,
     ) -> C | Callable[[C], C]:
         """Register a storage class with infrastructure constraints.
 
@@ -189,9 +191,11 @@ class Module:
         """
         from skaal.decorators import storage as _storage_dec
 
-        return self._register_storage(
-            _storage_dec,
-            cls_to_decorate,
+        storage_decorator = cast(Callable[..., Any], _storage_dec)
+        outer = storage_decorator(
+            kind=kind,
+            dim=dim,
+            metric=metric,
             read_latency=read_latency,
             write_latency=write_latency,
             durability=durability,
@@ -203,141 +207,17 @@ class Module:
             auto_optimize=auto_optimize,
             decommission_policy=decommission_policy,
             collocate_with=collocate_with,
+            indexes=indexes,
         )
 
-    @overload
-    def relational(
-        self,
-        cls_to_decorate: C,
-        *,
-        read_latency: Latency | str | None = ...,
-        write_latency: Latency | str | None = ...,
-        durability: Durability | str = ...,
-        size_hint: str | None = ...,
-        write_throughput: Throughput | str | None = ...,
-        residency: str | None = ...,
-        auto_optimize: bool = ...,
-        decommission_policy: DecommissionPolicy | None = ...,
-        collocate_with: str | None = ...,
-    ) -> C: ...
+        def decorator(cls: C) -> C:
+            annotated = outer(cls)
+            self._storage[cls.__name__] = annotated
+            return annotated
 
-    @overload
-    def relational(
-        self,
-        cls_to_decorate: None = ...,
-        *,
-        read_latency: Latency | str | None = ...,
-        write_latency: Latency | str | None = ...,
-        durability: Durability | str = ...,
-        size_hint: str | None = ...,
-        write_throughput: Throughput | str | None = ...,
-        residency: str | None = ...,
-        auto_optimize: bool = ...,
-        decommission_policy: DecommissionPolicy | None = ...,
-        collocate_with: str | None = ...,
-    ) -> Callable[[C], C]: ...
-
-    def relational(
-        self,
-        cls_to_decorate: C | None = None,
-        *,
-        read_latency: Latency | str | None = None,
-        write_latency: Latency | str | None = None,
-        durability: Durability | str = Durability.PERSISTENT,
-        size_hint: str | None = None,
-        write_throughput: Throughput | str | None = None,
-        residency: str | None = None,
-        auto_optimize: bool = False,
-        decommission_policy: DecommissionPolicy | None = None,
-        collocate_with: str | None = None,
-    ) -> C | Callable[[C], C]:
-        """Register a SQLModel relational table with infrastructure constraints."""
-        from skaal.decorators import relational as _relational_dec
-
-        return self._register_storage(
-            _relational_dec,
-            cls_to_decorate,
-            read_latency=read_latency,
-            write_latency=write_latency,
-            durability=durability,
-            size_hint=size_hint,
-            write_throughput=write_throughput,
-            residency=residency,
-            auto_optimize=auto_optimize,
-            decommission_policy=decommission_policy,
-            collocate_with=collocate_with,
-        )
-
-    @overload
-    def vector(
-        self,
-        cls_to_decorate: C,
-        *,
-        dim: int,
-        metric: str = ...,
-        read_latency: Latency | str | None = ...,
-        write_latency: Latency | str | None = ...,
-        durability: Durability | str = ...,
-        size_hint: str | None = ...,
-        write_throughput: Throughput | str | None = ...,
-        residency: str | None = ...,
-        auto_optimize: bool = ...,
-        decommission_policy: DecommissionPolicy | None = ...,
-        collocate_with: str | None = ...,
-    ) -> C: ...
-
-    @overload
-    def vector(
-        self,
-        cls_to_decorate: None = ...,
-        *,
-        dim: int,
-        metric: str = ...,
-        read_latency: Latency | str | None = ...,
-        write_latency: Latency | str | None = ...,
-        durability: Durability | str = ...,
-        size_hint: str | None = ...,
-        write_throughput: Throughput | str | None = ...,
-        residency: str | None = ...,
-        auto_optimize: bool = ...,
-        decommission_policy: DecommissionPolicy | None = ...,
-        collocate_with: str | None = ...,
-    ) -> Callable[[C], C]: ...
-
-    def vector(
-        self,
-        cls_to_decorate: C | None = None,
-        *,
-        dim: int,
-        metric: str = "cosine",
-        read_latency: Latency | str | None = None,
-        write_latency: Latency | str | None = None,
-        durability: Durability | str = Durability.PERSISTENT,
-        size_hint: str | None = None,
-        write_throughput: Throughput | str | None = None,
-        residency: str | None = None,
-        auto_optimize: bool = False,
-        decommission_policy: DecommissionPolicy | None = None,
-        collocate_with: str | None = None,
-    ) -> C | Callable[[C], C]:
-        """Register a typed vector store with infrastructure constraints."""
-        from skaal.decorators import vector as _vector_dec
-
-        return self._register_storage(
-            _vector_dec,
-            cls_to_decorate,
-            dim=dim,
-            metric=metric,
-            read_latency=read_latency,
-            write_latency=write_latency,
-            durability=durability,
-            size_hint=size_hint,
-            write_throughput=write_throughput,
-            residency=residency,
-            auto_optimize=auto_optimize,
-            decommission_policy=decommission_policy,
-            collocate_with=collocate_with,
-        )
+        if cls_to_decorate is None:
+            return decorator
+        return decorator(cls_to_decorate)
 
     @overload
     def agent(self, cls_to_decorate: C, *, persistent: bool = ...) -> C: ...
@@ -382,6 +262,7 @@ class Module:
         circuit_breaker: CircuitBreaker | None = ...,
         rate_limit: RateLimitPolicy | None = ...,
         bulkhead: Bulkhead | None = ...,
+        secrets: list[SecretRef] | None = ...,
     ) -> F: ...
 
     @overload
@@ -395,6 +276,7 @@ class Module:
         circuit_breaker: CircuitBreaker | None = ...,
         rate_limit: RateLimitPolicy | None = ...,
         bulkhead: Bulkhead | None = ...,
+        secrets: list[SecretRef] | None = ...,
     ) -> Callable[[F], F]: ...
 
     def function(
@@ -407,6 +289,7 @@ class Module:
         circuit_breaker: CircuitBreaker | None = None,
         rate_limit: RateLimitPolicy | None = None,
         bulkhead: Bulkhead | None = None,
+        secrets: list[SecretRef] | None = None,
     ) -> F | Callable[[F], F]:
         """Register a compute function with optional constraints and resilience policies.
 
@@ -415,7 +298,7 @@ class Module:
             def my_func(): ...
 
         Or:
-            @app.function(compute=...)
+            @app.function(compute=..., secrets=[Secret("DB_DSN")])
             def my_func(): ...
         """
 
@@ -432,6 +315,10 @@ class Module:
             setattr(fn, "__skaal_compute__", _compute)
             if scale is not None:
                 setattr(fn, "__skaal_scale__", scale)
+            if secrets:
+                setattr(fn, "__skaal_secrets__", tuple(secrets))
+                for ref in secrets:
+                    self.secret(ref)
             self._functions[fn.__name__] = fn
             return fn
 
@@ -480,9 +367,33 @@ class Module:
         return decorator
 
     def attach(self, component: Any) -> Any:
-        """Attach an external or provisioned component to this module."""
+        """Attach an external or provisioned component to this module.
+
+        If the component carries a :class:`~skaal.types.SecretRef`
+        (e.g. ``ExternalStorage(secret=...)``) the secret is auto-declared
+        so the runtime registry resolves it without a separate
+        ``app.secret(...)`` call.
+        """
         self._components[component.name] = component
+        secret = getattr(component, "secret", None)
+        if secret is not None and isinstance(secret, SecretRef):
+            self.secret(secret)
         return component
+
+    def secret(self, ref: SecretRef) -> SecretRef:
+        """Declare a secret consumed by this module's functions and agents.
+
+        The declaration is collected into ``PlanFile.secrets`` at plan time and
+        resolved by the runtime :class:`~skaal.secrets.SecretRegistry` at boot.
+        """
+        existing = self._secrets.get(ref.name)
+        if existing is not None and existing != ref:
+            raise ValueError(
+                f"Secret {ref.name!r} re-declared with different parameters: "
+                f"{existing} vs {ref}"
+            )
+        self._secrets[ref.name] = ref
+        return ref
 
     @overload
     def schedule(
@@ -572,6 +483,23 @@ class Module:
         self._patterns[name] = p
         return p
 
+    def add_before_invoke(self, hook: BeforeInvoke) -> BeforeInvoke:
+        """Register a hook that runs before every resilience-wrapped invocation."""
+        self._before_invoke.append(hook)
+        return hook
+
+    async def invoke(self, fn: str | Callable[..., Any], **kwargs: Any) -> Any:
+        """Invoke a registered function through the active runtime's resilience stack."""
+        function_name, _ = self._resolve_invokable(fn)
+        runtime = self._require_runtime()
+        return await runtime.invoke(function_name, kwargs)
+
+    def invoke_stream(self, fn: str | Callable[..., Any], **kwargs: Any) -> AsyncIterator[Any]:
+        """Invoke a registered async iterator function through the active runtime."""
+        function_name, _ = self._resolve_invokable(fn)
+        runtime = self._require_runtime()
+        return runtime.invoke_stream(function_name, kwargs)
+
     # ── Export / import API ────────────────────────────────────────────────
 
     def export(self, *symbols: Any) -> ModuleExport:
@@ -584,18 +512,17 @@ class Module:
 
         Returns a ``ModuleExport`` handle for cross-module references.
         """
-        registered: dict[BucketName, dict[str, Any]] = {
+        registered: dict[str, dict[str, Any]] = {
             "storage": self._storage,
             "agents": self._agents,
             "functions": self._functions,
             "channels": self._channels,
         }
-        exports: dict[BucketName, dict[str, Any]] = {
-            "storage": {},
-            "agents": {},
-            "functions": {},
-            "channels": {},
-        }
+
+        exp_storage: dict[str, Any] = {}
+        exp_agents: dict[str, Any] = {}
+        exp_functions: dict[str, Any] = {}
+        exp_channels: dict[str, Any] = {}
 
         for sym in symbols:
             sym_name = getattr(sym, "__name__", repr(sym))
@@ -604,7 +531,14 @@ class Module:
                 if sym_name in bucket:
                     self._exports.add(sym_name)
                     found = True
-                    exports[bucket_name][sym_name] = sym
+                    if bucket_name == "storage":
+                        exp_storage[sym_name] = sym
+                    elif bucket_name == "agents":
+                        exp_agents[sym_name] = sym
+                    elif bucket_name == "functions":
+                        exp_functions[sym_name] = sym
+                    elif bucket_name == "channels":
+                        exp_channels[sym_name] = sym
                     break
             if not found:
                 raise ValueError(
@@ -613,10 +547,10 @@ class Module:
                 )
 
         return ModuleExport(
-            storage=exports["storage"],
-            agents=exports["agents"],
-            functions=exports["functions"],
-            channels=exports["channels"],
+            storage=exp_storage,
+            agents=exp_agents,
+            functions=exp_functions,
+            channels=exp_channels,
             namespace=self.name,
         )
 
@@ -728,6 +662,103 @@ class Module:
 
         return result
 
+    def _collect_secrets(self) -> dict[str, SecretRef]:
+        """Recursively collect declared secrets from this module and submodules.
+
+        Secrets are *not* namespaced: the runtime registry keys on the
+        logical name so callers can write ``app.secrets.get("DB_DSN")``
+        regardless of which submodule declared it.  Re-declarations with
+        identical parameters are de-duplicated; conflicting declarations
+        raise.
+        """
+        out: dict[str, SecretRef] = {}
+
+        def _merge(src: dict[str, SecretRef]) -> None:
+            for name, ref in src.items():
+                existing = out.get(name)
+                if existing is not None and existing != ref:
+                    raise ValueError(
+                        f"Secret {name!r} re-declared with different parameters: "
+                        f"{existing} vs {ref}"
+                    )
+                out[name] = ref
+
+        _merge(self._secrets)
+        for sub in self._submodules.values():
+            _merge(sub._collect_secrets())
+        return out
+
+    def _bind_runtime(self, runtime: Any) -> None:
+        self._runtime_ref = weakref.ref(runtime)
+        for submodule in self._submodules.values():
+            submodule._bind_runtime(runtime)
+
+    def _unbind_runtime(self, runtime: Any) -> None:
+        if self._runtime_ref is not None and self._runtime_ref() is runtime:
+            self._runtime_ref = None
+        for submodule in self._submodules.values():
+            submodule._unbind_runtime(runtime)
+
+    def _require_runtime(self) -> Any:
+        runtime = self._runtime_ref() if self._runtime_ref is not None else None
+        if runtime is None:
+            raise RuntimeError(
+                "No active Skaal runtime is bound to this app. "
+                "Start or construct a runtime before calling app.invoke(...)."
+            )
+        return runtime
+
+    async def _prepare_invoke_kwargs(
+        self,
+        function_name: str,
+        kwargs: dict[str, Any],
+        *,
+        is_stream: bool,
+        attempt: int,
+        headers: Mapping[str, str] | None = None,
+        auth_claims: Mapping[str, Any] | None = None,
+        auth_subject: str | None = None,
+        trace_id: str | None = None,
+        span_id: str | None = None,
+    ) -> dict[str, Any]:
+        ctx = SimpleNamespace(
+            function_name=function_name,
+            kwargs=dict(kwargs),
+            is_stream=is_stream,
+            attempt=attempt,
+            headers=dict(headers or {}),
+            auth_claims=dict(auth_claims or {}) or None,
+            auth_subject=auth_subject,
+            trace_id=trace_id,
+            span_id=span_id,
+        )
+        for hook in self._before_invoke:
+            await hook(ctx)
+        return ctx.kwargs
+
+    def _resolve_invokable(self, fn: str | Callable[..., Any]) -> tuple[str, Callable[..., Any]]:
+        invokables = {
+            name: obj
+            for name, obj in self._collect_all().items()
+            if callable(obj)
+            and (hasattr(obj, "__skaal_compute__") or hasattr(obj, "__skaal_schedule__"))
+        }
+
+        if isinstance(fn, str):
+            direct = invokables.get(fn)
+            if direct is not None:
+                return fn, direct
+            for function_name, obj in invokables.items():
+                if getattr(obj, "__name__", None) == fn:
+                    return function_name, obj
+            raise KeyError(f"No invokable function named {fn!r}")
+
+        for function_name, obj in invokables.items():
+            if obj is fn:
+                return function_name, obj
+
+        raise KeyError(f"Callable {fn!r} is not registered with module {self.name!r}")
+
     # ── Introspection ──────────────────────────────────────────────────────
 
     def describe(self) -> dict[str, Any]:
@@ -741,6 +772,7 @@ class Module:
             "patterns": list(self._patterns.keys()),
             "schedules": list(self._schedules.keys()),
             "components": list(self._components.keys()),
+            "secrets": list(self._secrets.keys()),
             "submodules": {k: v.describe() for k, v in self._submodules.items()},
             "exports": list(self._exports),
         }

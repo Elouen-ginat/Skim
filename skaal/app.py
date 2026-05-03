@@ -53,8 +53,7 @@ class App(Module):
 
         ``skaal run`` uses *wsgi_app* directly — it serves via uvicorn +
         starlette ``WSGIMiddleware`` so the full Dash/Flask UI is available
-        at ``http://localhost:<port>`` while Skaal function endpoints stay
-        reachable under ``/_skaal/*``.
+        at ``http://localhost:<port>``.
 
         ``skaal deploy`` uses *attribute* to generate the correct entry point:
 
@@ -101,10 +100,6 @@ class App(Module):
             attribute: Dotted attribute path used by deploy generators in the
                        generated entry-point files, e.g. ``"fastapi_app"``.
 
-        When served through ``skaal run`` the mounted app stays at ``/`` and
-        Skaal function endpoints move under ``/_skaal/*`` so both surfaces stay
-        reachable.
-
         Example::
 
             from fastapi import FastAPI
@@ -142,12 +137,15 @@ class App(Module):
             app.mount(auth, prefix="/auth")
             # auth's functions are now accessible at /auth/*
         """
+        normalized = prefix if prefix.startswith("/") else f"/{prefix}"
+        if normalized == "/_skaal" or normalized.startswith("/_skaal/"):
+            raise ValueError("The /_skaal prefix is reserved for Skaal runtime endpoints")
         exports = self.use(module)
         # Record the prefix mapping for the deploy engine
         ns = exports.namespace or module.name
         if not hasattr(self, "_mounts"):
             self._mounts: dict[str, str] = {}
-        self._mounts[ns] = prefix
+        self._mounts[ns] = normalized
         return exports
 
     # ── Introspection ──────────────────────────────────────────────────────

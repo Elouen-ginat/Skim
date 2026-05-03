@@ -8,7 +8,7 @@ import time
 import pytest
 
 from skaal.errors import SkaalUnavailable
-from skaal.runtime.middleware import ResilientInvoker, _RateLimiter, wrap_handler
+from skaal.runtime.middleware import ResilientInvoker, wrap_handler
 from skaal.types.compute import (
     Bulkhead,
     CircuitBreaker,
@@ -156,22 +156,6 @@ async def test_rate_limit_token_bucket() -> None:
     assert await wrapped() == "ok"
     with pytest.raises(SkaalUnavailable):
         await wrapped()
-
-
-def test_rate_limit_per_client_scope_uses_client_identifier() -> None:
-    limiter = _RateLimiter(RateLimitPolicy(requests_per_second=1.0, burst=1, scope="per-client"))
-
-    assert limiter._key({"client_id": "abc"}) == "abc"
-    assert limiter._key({"client": "fallback"}) == "fallback"
-
-
-def test_rate_limit_per_key_scope_uses_named_argument() -> None:
-    limiter = _RateLimiter(
-        RateLimitPolicy(requests_per_second=1.0, burst=1, scope="per-key:tenant")
-    )
-
-    assert limiter._key({"tenant": "blue"}) == "blue"
-    assert limiter._key({}) == "__missing__"
 
 
 # ── Composition ─────────────────────────────────────────────────────────────

@@ -2,71 +2,76 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
 import typer
+
+from skaal.cli._errors import cli_error_boundary
 
 if TYPE_CHECKING:
     from skaal.api import PlanDiff
     from skaal.plan import PlanFile
 
 app = typer.Typer(help="Show what changes between plan versions.")
+log = logging.getLogger("skaal.cli")
 
 _PLAN_DEFAULT = "plan.skaal.lock"
 
 
 def _print_plan_summary(plan: "PlanFile") -> None:
     """Pretty-print a plan file without a second plan to diff against."""
-    typer.echo(f"Plan: {plan.app_name}  (version {plan.version}, target={plan.deploy_target})")
-    typer.echo("")
+    log.info("Plan: %s  (version %s, target=%s)", plan.app_name, plan.version, plan.deploy_target)
+    log.info("")
 
     if plan.storage:
-        typer.echo("Storage:")
+        log.info("Storage:")
         for name, spec in sorted(plan.storage.items()):
             prev = f"  [was: {spec.previous_backend}]" if spec.previous_backend else ""
-            typer.echo(f"  ~ {name:<40} backend={spec.backend}{prev}")
+            log.info("  ~ %-40s backend=%s%s", name, spec.backend, prev)
     else:
-        typer.echo("Storage: (none)")
+        log.info("Storage: (none)")
 
-    typer.echo("")
+    log.info("")
 
     if plan.compute:
-        typer.echo("Compute:")
+        log.info("Compute:")
         for name, cspec in sorted(plan.compute.items()):
             prev = (
                 f"  [was: {cspec.previous_instance_type}]" if cspec.previous_instance_type else ""
             )
-            typer.echo(f"  ~ {name:<40} instance={cspec.instance_type}{prev}")
+            log.info("  ~ %-40s instance=%s%s", name, cspec.instance_type, prev)
     else:
-        typer.echo("Compute: (none)")
+        log.info("Compute: (none)")
 
 
 def _print_diff(plan_diff: "PlanDiff") -> None:
     """Print a structured diff between two plans."""
     old, new = plan_diff.old, plan_diff.new
-    typer.echo(f"Diff: {old.app_name} v{old.version} → {new.app_name} v{new.version}")
-    typer.echo("")
+    log.info("Diff: %s v%s → %s v%s", old.app_name, old.version, new.app_name, new.version)
+    log.info("")
 
     for section, entries, key in (
         ("Storage", plan_diff.storage, "backend"),
         ("Compute", plan_diff.compute, "instance"),
     ):
-        typer.echo(f"{section}:")
+        log.info("%s:", section)
         if not entries:
-            typer.echo("  (no changes)")
+            log.info("  (no changes)")
         else:
             for entry in entries:
                 if entry.change == "added":
-                    typer.echo(f"  + {entry.name:<40} {key}={entry.after}")
+                    log.info("  + %-40s %s=%s", entry.name, key, entry.after)
                 elif entry.change == "removed":
-                    typer.echo(f"  - {entry.name:<40} {key}={entry.before}")
+                    log.info("  - %-40s %s=%s", entry.name, key, entry.before)
                 else:  # modified
-                    typer.echo(f"  ~ {entry.name:<40} {key}: {entry.before} → {entry.after}")
-        typer.echo("")
+                    log.info("  ~ %-40s %s: %s → %s", entry.name, key, entry.before, entry.after)
+        log.info("")
 
 
 @app.callback(invoke_without_command=True)
+@cli_error_boundary
 def diff(
     module_app: Optional[str] = typer.Argument(
         None,
@@ -87,22 +92,12 @@ def diff(
     """
     from skaal import api
 
-    try:
-        if module_app is None:
-            from skaal.plan import PlanFile
+    if module_app is None:
+        from skaal.plan import PlanFile
 
-            _print_plan_summary(PlanFile.read(Path(plan)))
-            return
+        _print_plan_summary(PlanFile.read(Path(plan)))
+        return
 
-        plan_diff = api.diff(old_plan=plan, app=module_app)
-    except FileNotFoundError as exc:
-        typer.echo(f"Error: plan file not found: {exc}", err=True)
-        raise typer.Exit(1) from exc
-    except (ValueError, ModuleNotFoundError, AttributeError) as exc:
-        typer.echo(f"Error: {exc}", err=True)
-        raise typer.Exit(1) from exc
-    except Exception as exc:  # noqa: BLE001
-        typer.echo(f"Error solving plan: {exc}", err=True)
-        raise typer.Exit(1) from exc
+    plan_diff = api.diff(old_plan=plan, app=module_app)
 
     _print_diff(plan_diff)

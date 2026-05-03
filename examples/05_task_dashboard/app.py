@@ -5,10 +5,12 @@ Demonstrates most Skaal features in one realistic application:
 
   Storage
   -------
-    - Sessions   Store[SessionState]   ephemeral, random-read (Redis / Memorystore)
-    - Users      Store[User]           persistent, collocated with Tasks
-    - Tasks      Store[Task]           persistent, random-read
-    - Stats      Store[StatsView]      persistent, write-heavy (aggregations)
+    - Sessions      Store[SessionState]        ephemeral, random-read (Redis / Memorystore)
+    - Users         Store[User]                persistent, collocated with Tasks
+    - Tasks         Store[Task]                persistent, random-read
+    - Stats         Store[StatsView]           persistent, write-heavy (aggregations)
+    - TaskComments  TaskComments (relational)  persistent, transactional SQL (collocated with Tasks)
+    - TaskSearch    TaskSearchIndex (vector)   persistent, 64-dim cosine semantic search
 
   Patterns
   --------
@@ -60,6 +62,8 @@ import dash
 import dash_bootstrap_components as dbc
 from dash import Input, Output, State, callback, dcc, html
 from pydantic import BaseModel, Field
+from sqlmodel import Field as SqlField
+from sqlmodel import SQLModel, select
 
 from skaal import (
     App,
@@ -74,6 +78,9 @@ from skaal import (
     SagaStep,
     ScheduleContext,
     Store,
+    VectorStore,
+    open_relational_session,
+    sync_run,
 )
 from skaal.agent import Agent
 from skaal.decorators import handler
@@ -141,6 +148,16 @@ class StatsView(BaseModel):
     cancelled_tasks: int = 0
     critical_open: int = 0
     last_updated: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+
+class TaskSearchDocument(BaseModel):
+    """Flattened task document indexed in the vector store for semantic search."""
+
+    id: str
+    title: str
+    content: str  # description + space-joined tags
+    priority: str = "medium"
+    status: str = "open"
 
 
 # ── Skaal app declaration ─────────────────────────────────────────────────────
@@ -238,6 +255,58 @@ class RecentAuditEvents(Store[AuditEvent]):
     """
 
 
+# ── Relational ────────────────────────────────────────────────────────────────
+
+
+@skaal_app.storage(
+    kind="relational",
+    read_latency="< 20ms",
+    durability="persistent",
+    collocate_with="task-dashboard.Tasks",
+)
+class TaskComments(SQLModel, table=True):
+    """
+    Structured per-task comments in the relational tier.
+
+    Solver maps to:
+      - SQLite locally (--persist flag)
+      - Aurora Serverless on aws-lambda target
+      - Cloud Spanner on gcp target
+    """
+
+    __tablename__ = "task_comments"  # type: ignore[override]
+
+    id: int | None = SqlField(default=None, primary_key=True)
+    task_id: str = SqlField(index=True)
+    author: str
+    body: str
+    created_at: str = SqlField(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+
+# ── Vector ────────────────────────────────────────────────────────────────────
+
+
+@skaal_app.storage(
+    kind="vector",
+    dim=64,
+    metric="cosine",
+    read_latency="< 30ms",
+    durability="persistent",
+    collocate_with="task-dashboard.Tasks",
+)
+class TaskSearchIndex(VectorStore[TaskSearchDocument]):
+    """
+    Semantic search index over task titles, descriptions, and tags.
+
+    Solver maps to:
+      - In-process numpy index locally
+      - Amazon OpenSearch Serverless on aws-lambda target
+      - Vertex AI Matching Engine on gcp target
+    """
+
+    __skaal_vector_text_fields__ = ("title", "content")
+
+
 # ── Channel ───────────────────────────────────────────────────────────────────
 
 
@@ -327,6 +396,26 @@ async def daily_task_report(ctx: ScheduleContext) -> None:
     )
 
 
+# ── Internal helpers (vector sync) ───────────────────────────────────────────
+
+
+def _task_to_search_doc(task: Task) -> TaskSearchDocument:
+    content_parts = [task.description, " ".join(task.tags)]
+    return TaskSearchDocument(
+        id=task.id,
+        title=task.title,
+        content="\n".join(p for p in content_parts if p),
+        priority=task.priority,
+        status=task.status,
+    )
+
+
+async def _sync_task_search(task: Task) -> None:
+    """Upsert a task document in the vector index."""
+    await TaskSearchIndex.delete([task.id])
+    await TaskSearchIndex.add([_task_to_search_doc(task)])
+
+
 # ── Compute functions ─────────────────────────────────────────────────────────
 
 
@@ -352,6 +441,7 @@ async def create_task(
         owner_id=owner_id,
     )
     await Tasks.set(task_id, task)
+    await _sync_task_search(task)
 
     await _record_audit(
         AuditEvent(
@@ -429,6 +519,7 @@ async def delete_task(task_id: str, user_id: str | None = None) -> dict:
     if task is None:
         return {"error": f"Task {task_id!r} not found"}
     await Tasks.delete(task_id)
+    await TaskSearchIndex.delete([task_id])
     await _record_audit(AuditEvent(event_type="deleted", task_id=task_id, user_id=user_id))
     await _refresh_stats()
     return {"ok": True, "deleted": task_id}
@@ -478,6 +569,52 @@ async def list_users() -> dict:
     entries = await Users.list()
     users = [u.model_dump() for _, u in entries]
     return {"users": users, "count": len(users)}
+
+
+@skaal_app.function()
+async def add_task_comment(task_id: str, author: str, body: str) -> dict:
+    """Insert a structured comment for a task using relational storage."""
+    if await Tasks.get(task_id) is None:
+        return {"error": f"Task {task_id!r} not found"}
+
+    async with open_relational_session(TaskComments) as session:
+        comment = TaskComments(task_id=task_id, author=author, body=body)
+        session.add(comment)
+        await session.commit()
+        await session.refresh(comment)
+    return comment.model_dump()
+
+
+@skaal_app.function()
+async def list_task_comments(task_id: str) -> dict:
+    """List all structured comments for a task from the relational store."""
+    async with open_relational_session(TaskComments) as session:
+        result = await session.exec(
+            select(TaskComments).where(TaskComments.task_id == task_id).order_by(TaskComments.id)
+        )
+        comments = list(result.all())
+    return {"comments": [c.model_dump() for c in comments], "count": len(comments)}
+
+
+@skaal_app.function()
+async def search_tasks(query: str, k: int = 5, status: TaskStatus | None = None) -> dict:
+    """Semantic task lookup backed by the vector store."""
+    results = await TaskSearchIndex.similarity_search(
+        query,
+        k=k,
+        filter={"status": status} if status is not None else None,
+    )
+    tasks: list[dict] = []
+    seen: set[str] = set()
+    for result in results:
+        if result.id in seen:
+            continue
+        task = await Tasks.get(result.id)
+        if task is None:
+            continue
+        seen.add(result.id)
+        tasks.append(task.model_dump())
+    return {"tasks": tasks, "count": len(tasks)}
 
 
 # ── Internal helper (not exposed as a Skaal function) ────────────────────────
@@ -623,10 +760,28 @@ def _task_row(task: dict, users: list[dict]) -> dbc.ListGroupItem:
     # Build user options for the assign dropdown
     user_options = [{"label": u["name"], "value": u["id"]} for u in users]
 
+    task_id = task["id"]
+
     return dbc.ListGroupItem(
         dbc.Row(
             [
-                dbc.Col(html.Strong(task["title"]), width=3),
+                dbc.Col(
+                    [
+                        html.Strong(task["title"]),
+                        html.Br(),
+                        dcc.Clipboard(
+                            content=task_id,
+                            title="Copy task ID",
+                            style={"display": "inline", "cursor": "pointer", "color": "#6c757d"},
+                        ),
+                        html.Code(
+                            task_id,
+                            style={"fontSize": "0.7rem", "marginLeft": "4px"},
+                            className="text-muted",
+                        ),
+                    ],
+                    width=3,
+                ),
                 dbc.Col(
                     dbc.Badge(task["priority"], color=PRIORITY_COLORS[task["priority"]]), width=1
                 ),
@@ -677,6 +832,87 @@ def _task_row(task: dict, users: list[dict]) -> dbc.ListGroupItem:
                 ),
             ],
             align="center",
+        ),
+    )
+
+
+# ── Seed data ─────────────────────────────────────────────────────────────────
+
+_SEED_USER_ALICE = "seed-user-alice"
+_SEED_USER_BOB = "seed-user-bob"
+_SEED_TASK_1 = "seed-task-001"
+_SEED_TASK_2 = "seed-task-002"
+_SEED_TASK_3 = "seed-task-003"
+
+
+def _seed_demo_data() -> None:
+    """Populate demo users, tasks, and comments if the store is empty."""
+    if Tasks.sync_list():
+        return  # already seeded
+
+    # Users
+    alice = User(id=_SEED_USER_ALICE, name="Alice", email="alice@example.com")
+    bob = User(id=_SEED_USER_BOB, name="Bob", email="bob@example.com")
+    Users.sync_set(alice.id, alice)
+    Users.sync_set(bob.id, bob)
+
+    # Tasks (KV store — always works locally)
+    t1 = Task(
+        id=_SEED_TASK_1,
+        title="Migrate auth service to mTLS",
+        description="Replace API-key auth with mutual TLS across all internal services.",
+        priority="critical",
+        status="open",
+        tags=["security", "infrastructure"],
+    )
+    t2 = Task(
+        id=_SEED_TASK_2,
+        title="Add pagination to task list",
+        description="The task list has no pagination; it breaks at ~500 rows.",
+        priority="high",
+        status="in_progress",
+        owner_id=_SEED_USER_ALICE,
+        tags=["frontend", "performance"],
+    )
+    t3 = Task(
+        id=_SEED_TASK_3,
+        title="Write onboarding docs",
+        description="Cover local setup, skaal run, and the plan/deploy workflow.",
+        priority="medium",
+        status="done",
+        owner_id=_SEED_USER_BOB,
+        tags=["docs"],
+    )
+    for task in (t1, t2, t3):
+        Tasks.sync_set(task.id, task)
+
+    # Vector index — best-effort (requires skaal[vector])
+    try:
+        for task in (t1, t2, t3):
+            sync_run(_sync_task_search(task))
+    except Exception:
+        logger.debug("Vector index seed skipped (skaal[vector] not installed)")
+
+    # Relational comments — best-effort (requires --persist or a relational backend)
+    try:
+        sync_run(
+            add_task_comment(
+                _SEED_TASK_1, "Alice", "Confirmed: all services still use API keys. Priority: P0."
+            )
+        )
+        sync_run(
+            add_task_comment(
+                _SEED_TASK_1, "Bob", "Started cert rotation plan — draft PR up for review."
+            )
+        )
+    except Exception:
+        logger.debug("Relational comment seed skipped (no relational backend available)")
+
+    # Stats
+    Stats.sync_update(
+        "global",
+        lambda _: StatsView(
+            total_tasks=3, open_tasks=1, in_progress_tasks=1, done_tasks=1, critical_open=1
         ),
     )
 
@@ -935,6 +1171,90 @@ dash_app.layout = dbc.Container(
                         html.Div(id="health-panel"),
                     ],
                 ),
+                # ── Tab 5: Search & Comments ───────────────────────────
+                dbc.Tab(
+                    label="Search & Comments",
+                    tab_id="tab-search",
+                    children=dbc.Row(
+                        [
+                            # ── Semantic search column ─────────────────
+                            dbc.Col(
+                                [
+                                    html.H5("Semantic Search", className="mt-3"),
+                                    html.P(
+                                        'Backed by @app.storage(kind="vector") — cosine similarity over '
+                                        "task titles, descriptions, and tags.",
+                                        className="text-muted small",
+                                    ),
+                                    dbc.InputGroup(
+                                        [
+                                            dbc.Input(
+                                                id="inp-search",
+                                                placeholder="e.g. urgent infrastructure work",
+                                            ),
+                                            dbc.Button(
+                                                "Search",
+                                                id="btn-search",
+                                                color="primary",
+                                            ),
+                                        ],
+                                        className="mb-2",
+                                    ),
+                                    html.Div(id="search-results"),
+                                ],
+                                width=6,
+                            ),
+                            # ── Comments column ────────────────────────
+                            dbc.Col(
+                                [
+                                    html.H5("Task Comments", className="mt-3"),
+                                    html.P(
+                                        'Backed by @app.storage(kind="relational") — SQL rows '
+                                        "collocated with Tasks.",
+                                        className="text-muted small",
+                                    ),
+                                    dbc.Input(
+                                        id="inp-comment-task",
+                                        placeholder="Task ID",
+                                        className="mb-2",
+                                    ),
+                                    dbc.Input(
+                                        id="inp-comment-author",
+                                        placeholder="Author",
+                                        className="mb-2",
+                                    ),
+                                    dbc.Textarea(
+                                        id="inp-comment-body",
+                                        placeholder="Comment…",
+                                        rows=2,
+                                        className="mb-2",
+                                    ),
+                                    dbc.Button(
+                                        "Add Comment",
+                                        id="btn-add-comment",
+                                        color="secondary",
+                                        className="w-100 mb-3",
+                                    ),
+                                    html.Div(id="comment-feedback"),
+                                    html.Hr(),
+                                    dbc.Input(
+                                        id="inp-list-task",
+                                        placeholder="Task ID to list comments",
+                                        className="mb-2",
+                                    ),
+                                    dbc.Button(
+                                        "Load Comments",
+                                        id="btn-list-comments",
+                                        color="outline-secondary",
+                                        size="sm",
+                                    ),
+                                    html.Div(id="comment-list", className="mt-2"),
+                                ],
+                                width=6,
+                            ),
+                        ]
+                    ),
+                ),
             ],
         ),
     ],
@@ -946,11 +1266,14 @@ dash_app.layout = dbc.Container(
 
 @callback(
     Output("session-id", "data"),
+    Output("action-result", "data", allow_duplicate=True),
     Input("boot", "n_intervals"),
     State("session-id", "data"),
+    prevent_initial_call="initial_duplicate",
 )
-def init_session(_, existing_id: str | None) -> str:
-    """Assign a stable session ID on first load."""
+def init_session(_, existing_id: str | None):
+    """Assign a stable session ID on first load and seed demo data."""
+    _seed_demo_data()
     if existing_id:
         Sessions.sync_update(
             existing_id,
@@ -959,10 +1282,10 @@ def init_session(_, existing_id: str | None) -> str:
                 | {"last_seen": datetime.now(timezone.utc).isoformat()}
             ),
         )
-        return existing_id
+        return existing_id, {"op": "boot"}
     sid = str(uuid.uuid4())
     Sessions.sync_set(sid, SessionState(session_id=sid))
-    return sid
+    return sid, {"op": "boot"}
 
 
 @callback(
@@ -1324,7 +1647,7 @@ def trigger_scheduled_job(*_):
     opening a second loop via asyncio.run() causes
     "Future attached to a different loop" errors.
     Using sync_* methods instead spawns a fresh OS thread per call (via
-    _sync_run), each with its own event loop, so no loop is shared.
+    sync_run), each with its own event loop, so no loop is shared.
     """
     ctx = dash.callback_context
     if not ctx.triggered:
@@ -1465,6 +1788,107 @@ def refresh_health(active_tab, _):
             ],
             color="warning",
         )
+
+
+@callback(
+    Output("search-results", "children"),
+    Input("btn-search", "n_clicks"),
+    State("inp-search", "value"),
+    prevent_initial_call=True,
+)
+def handle_search(_, query):
+    """Run semantic search via the vector store and render matching tasks."""
+    if not query:
+        return dbc.Alert("Enter a search query.", color="warning")
+
+    try:
+        result = sync_run(search_tasks(query, k=5))
+        tasks = result.get("tasks", [])
+        if not tasks:
+            return dbc.Alert("No matching tasks found.", color="light")
+        return dbc.ListGroup(
+            [
+                dbc.ListGroupItem(
+                    dbc.Row(
+                        [
+                            dbc.Col(html.Strong(t["title"]), width=6),
+                            dbc.Col(
+                                dbc.Badge(t["priority"], color=PRIORITY_COLORS[t["priority"]]),
+                                width=2,
+                            ),
+                            dbc.Col(
+                                dbc.Badge(t["status"], color=STATUS_COLORS[t["status"]]),
+                                width=2,
+                            ),
+                            dbc.Col(t["id"][:8] + "…", width=2, className="text-muted small"),
+                        ],
+                        align="center",
+                    )
+                )
+                for t in tasks
+            ]
+        )
+    except Exception as exc:
+        return dbc.Alert(f"Search error: {exc}", color="danger")
+
+
+@callback(
+    Output("comment-feedback", "children"),
+    Output("comment-list", "children"),
+    Input("btn-add-comment", "n_clicks"),
+    Input("btn-list-comments", "n_clicks"),
+    State("inp-comment-task", "value"),
+    State("inp-comment-author", "value"),
+    State("inp-comment-body", "value"),
+    State("inp-list-task", "value"),
+    prevent_initial_call=True,
+)
+def handle_comments(add_clicks, list_clicks, task_id, author, body, list_task_id):
+    """Add or list task comments via the relational store."""
+    ctx = dash.callback_context
+    if not ctx.triggered:
+        return dash.no_update, dash.no_update
+
+    trigger = ctx.triggered[0]["prop_id"].split(".")[0]
+
+    if trigger == "btn-add-comment":
+        if not task_id or not author or not body:
+            return dbc.Alert(
+                "Task ID, author, and body are required.", color="warning"
+            ), dash.no_update
+        try:
+            result = sync_run(add_task_comment(task_id, author, body))
+            if "error" in result:
+                return dbc.Alert(result["error"], color="danger"), dash.no_update
+            return dbc.Alert(
+                f"Comment added by {author}.", color="success", duration=4000
+            ), dash.no_update
+        except Exception as exc:
+            return dbc.Alert(f"Error: {exc}", color="danger"), dash.no_update
+
+    if trigger == "btn-list-comments":
+        if not list_task_id:
+            return dash.no_update, dbc.Alert("Enter a Task ID to load comments.", color="warning")
+        try:
+            result = sync_run(list_task_comments(list_task_id))
+            comments = result.get("comments", [])
+            if not comments:
+                return dash.no_update, dbc.Alert("No comments for this task.", color="light")
+            items = [
+                dbc.ListGroupItem(
+                    [
+                        html.Strong(c["author"]),
+                        html.Span(f" · {c['created_at'][:16]}", className="text-muted small ms-2"),
+                        html.P(c["body"], className="mb-0 mt-1"),
+                    ]
+                )
+                for c in comments
+            ]
+            return dash.no_update, dbc.ListGroup(items)
+        except Exception as exc:
+            return dash.no_update, dbc.Alert(f"Error: {exc}", color="danger")
+
+    return dash.no_update, dash.no_update
 
 
 # ── Wire Dash into Skaal ──────────────────────────────────────────────────────

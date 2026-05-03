@@ -32,9 +32,13 @@ Quick-start::
     state = mesh.start_migration("counter.Counts", "sqlite", "redis")
     print(state.stage_name)  # "shadow_write"
 
-Build the native extension before using::
+Install the published mesh wheel before using::
 
-    maturin develop --manifest-path mesh/Cargo.toml
+    pip install "skaal[mesh]"
+
+If you are editing the Rust crate locally::
+
+    make build-dev
 """
 
 from skaal.mesh.client import MeshClient

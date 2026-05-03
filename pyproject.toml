@@ -8,7 +8,7 @@ version = "0.2.0"
 description = "Infrastructure as Constraints — write it once, scale it with a word."
 readme = "README.md"
 license = { file = "LICENSE" }
-requires-python = ">=3.11,<3.13"
+requires-python = ">=3.11"
 keywords = ["infrastructure", "constraints", "cloud", "deployment", "z3", "solver"]
 classifiers = [
     "Development Status :: 3 - Alpha",
@@ -18,7 +18,6 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
-    "Typing :: Typed",
     "Topic :: Software Development :: Libraries :: Application Frameworks",
     "Topic :: System :: Systems Administration",
 ]
@@ -26,15 +25,17 @@ dependencies = [
     "z3-solver>=4.12",
     "pydantic>=2.0",
     "sqlmodel>=0.0.22",
+    "alembic>=1.13",
     "pydantic-settings>=2.0",
     "typer>=0.12",
     "rich>=13.0",
     "redis>=5.0",
     "aiosqlite>=0.19",
-    "uvicorn>=0.29",
-    "starlette>=0.34",
     "httpx>=0.27",
-    "apscheduler>=3.10,<4.0",
+    "tenacity>=9.1.4",
+    "pybreaker>=1.4.1",
+    "langgraph>=1.1.10",
+    "fsspec>=2025.3.0",
 ]
 
 [project.urls]
@@ -43,18 +44,36 @@ Repository = "https://github.com/Elouen-ginat/Skaal"
 Issues = "https://github.com/Elouen-ginat/Skaal/issues"
 
 [project.optional-dependencies]
+serve = [
+    "uvicorn>=0.29",
+    "starlette>=0.34",
+    "watchfiles>=0.22",
+]
+runtime = [
+    "apscheduler>=3.10",
+    "PyJWT[crypto]>=2.9",
+    "opentelemetry-api>=1.27",
+    "opentelemetry-sdk>=1.27",
+    "opentelemetry-exporter-otlp-proto-http>=1.27",
+]
+deploy = [
+    "docker>=7.1",
+    "pulumi>=3.0",
+    "pulumi-docker>=4.9",
+]
 aws = [
     "boto3>=1.34",
-    "pulumi>=3.0",
+    "s3fs>=2025.3.0",
     "pulumi-aws>=6.0",
     "asyncpg>=0.29",
 ]
 gcp = [
+    "google-auth>=2.32",
     "google-cloud-firestore>=2.16",
     "google-cloud-storage>=2.16",
+    "gcsfs>=2025.3.0",
     "asyncpg>=0.29",
     "cloud-sql-python-connector[asyncpg]>=1.9",
-    "pulumi>=3.0",
     "pulumi-gcp>=7.0",
 ]
 vector = [
@@ -64,30 +83,57 @@ vector = [
     "chromadb>=1.5",
     "psycopg[binary]>=3.3",
 ]
-mesh = [
-    # Rust mesh extension — compiled from source via maturin on `uv sync`
-    "skaal-mesh",
+fastapi = [
+    "fastapi",
+    "python-multipart>=0.0.5",
 ]
-
-[dependency-groups]
-dev = [
-    "pytest>=8.0",
-    "pytest-asyncio>=0.23",
-    "pytest-httpx>=0.30",
-    "ruff>=0.4",
-    "mypy>=1.8",
-    "types-redis>=4.6",
-    "hatchling",
-    "maturin>=1.4",
-    "build>=1.0",
-    "pre-commit>=3.6",
-    # Rust mesh extension — compiled from source via maturin on `uv sync`
-    "skaal-mesh",
+dash = [
+    "dash",
+    "dash-bootstrap-components>=1.0",
 ]
 examples = [
     "dash",
     "fastapi",
     "dash-bootstrap-components>=1.0",
+    "python-multipart>=0.0.5",
+]
+mesh = [
+    "skaal-mesh==0.2.0",
+]
+secrets-aws = [
+    "aioboto3>=12.0",
+]
+secrets-gcp = [
+    "google-cloud-secret-manager>=2.18",
+]
+
+[dependency-groups]
+test = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "pytest-httpx>=0.30",
+]
+lint = [
+    "ruff>=0.4",
+    "pre-commit>=3.6",
+]
+typecheck = [
+    "mypy>=1.8",
+    "types-redis>=4.6",
+]
+build = [
+    "hatchling",
+    "build>=1.0",
+]
+release = [
+    "maturin>=1.4",
+]
+dev = [
+    { include-group = "test" },
+    { include-group = "lint" },
+    { include-group = "typecheck" },
+    { include-group = "build" },
+    { include-group = "release" },
 ]
 
 [project.scripts]
@@ -99,34 +145,36 @@ skaal = "skaal.cli.main:app"
 # so the discovery path is exercised in-tree and third-party packages can
 # register additional implementations the same way.
 
-[project.entry-points."skaal.backend_specs"]
-local-map = "skaal.backends.kv.local_map:LOCAL_MAP_SPEC"
-sqlite = "skaal.backends.kv.sqlite:SQLITE_SPEC"
-local-redis = "skaal.backends.kv.redis:LOCAL_REDIS_SPEC"
-memorystore-redis = "skaal.backends.kv.redis:MEMORYSTORE_REDIS_SPEC"
-rds-postgres = "skaal.backends.kv.postgres:RDS_POSTGRES_SPEC"
-cloud-sql-postgres = "skaal.backends.kv.postgres:CLOUD_SQL_POSTGRES_SPEC"
-chroma-local = "skaal.backends.vector.chroma:CHROMA_LOCAL_SPEC"
-rds-pgvector = "skaal.backends.vector.pgvector:RDS_PGVECTOR_SPEC"
-cloud-sql-pgvector = "skaal.backends.vector.pgvector:CLOUD_SQL_PGVECTOR_SPEC"
-dynamodb = "skaal.backends.kv.dynamodb:DYNAMODB_SPEC"
-firestore = "skaal.backends.kv.firestore:FIRESTORE_SPEC"
+[project.entry-points."skaal.backends"]
+local = "skaal.backends.local_backend:LocalMap"
+sqlite = "skaal.backends.sqlite_backend:SqliteBackend"
+local-blob = "skaal.backends.file_blob_backend:FileBlobBackend"
+redis = "skaal.backends.redis_backend:RedisBackend"
+postgres = "skaal.backends.postgres_backend:PostgresBackend"
+chroma = "skaal.backends.chroma_backend:ChromaVectorBackend"
+pgvector = "skaal.backends.pgvector_backend:PgVectorBackend"
+dynamodb = "skaal.backends.dynamodb_backend:DynamoBackend"
+firestore = "skaal.backends.firestore_backend:FirestoreBackend"
+s3 = "skaal.backends.s3_blob_backend:S3BlobBackend"
+gcs = "skaal.backends.gcs_blob_backend:GCSBlobBackend"
 
 [project.entry-points."skaal.channels"]
-local = "skaal.backends.channels.local:wire_local"
-redis = "skaal.backends.channels.redis:wire_redis"
+local = "skaal.channel:wire_local"
+redis = "skaal.channel:wire_redis"
 
 [tool.uv.sources]
-skaal-mesh = { path = "mesh", editable = true }
+# Local checkouts can still resolve the unpublished mesh package when the
+# mesh extra is requested explicitly. CI uses `--no-sources --find-links` to
+# validate the wheel path instead of this source fallback.
+skaal-mesh = { path = "mesh" }
 
 [tool.hatch.build.targets.wheel]
 packages = ["skaal"]
 # Include non-Python template files (Dockerfile, Pulumi.yaml, etc.)
 artifacts = [
-    "skaal/py.typed",
     "skaal/deploy/templates/**",
-    "skaal/deploy/data/**",
     "skaal/catalog/data/**",
+    "skaal/cli/templates/**",
 ]
 
 [tool.ruff]
@@ -160,3 +208,24 @@ testpaths = ["tests"]
 # catalog     = "catalogs/aws.toml"         # path to catalog TOML
 # stack       = "dev"                       # Pulumi stack name
 # gcp_project = "my-gcp-project"            # GCP only
+
+[tool.skaal.build.modules."examples.07_file_upload_api.app"]
+dependencies = ["python-multipart>=0.0.5"]
+
+[tool.skaal.build.targets.local]
+dependencies = ["skaal[serve,runtime]", "gunicorn>=22.0"]
+
+[tool.skaal.build.targets.gcp]
+dependencies = ["skaal[serve,runtime,gcp]"]
+
+[tool.skaal.build.targets.gcp.variants.wsgi]
+dependencies = ["gunicorn>=22.0"]
+
+[tool.skaal.build.targets.aws]
+dependencies = ["skaal[runtime,aws]"]
+
+[tool.skaal.build.targets.aws.variants.wsgi]
+dependencies = ["mangum>=0.17"]
+
+[tool.skaal.build.features.mesh]
+dependencies = ["skaal-mesh"]

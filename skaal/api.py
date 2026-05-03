@@ -36,22 +36,24 @@ from __future__ import annotations
 import asyncio
 import importlib
 import json
-import subprocess
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, Union
+from typing import TYPE_CHECKING, Any, Iterable, Literal, Union
 
-from skaal.errors import SkaalHookError
 from skaal.plan import PLAN_FILE_NAME, ComputeSpec, PlanFile, StorageSpec
 from skaal.settings import SkaalSettings
-from skaal.types.runtime import RuntimeInstance, RuntimePlanSource
+from skaal.types import StackProfile
 
 if TYPE_CHECKING:
     from skaal.app import App
     from skaal.catalog.models import Catalog
-    from skaal.deploy.reporting import DeployReporter
     from skaal.migrate.engine import MigrationStage, MigrationState
+    from skaal.types.relational import (
+        RelationalMigrationPlan,
+        RelationalMigrationStatus,
+        RelationalRevision,
+    )
 
 __all__ = [
     # Types
@@ -79,6 +81,15 @@ __all__ = [
     "migrate_rollback",
     "migrate_status",
     "migrate_list",
+    "relational_autogenerate",
+    "relational_check",
+    "relational_current",
+    "relational_downgrade",
+    "relational_history",
+    "relational_plan_downgrade",
+    "relational_plan_upgrade",
+    "relational_stamp",
+    "relational_upgrade",
 ]
 
 # ── Types ──────────────────────────────────────────────────────────────────────
@@ -322,19 +333,14 @@ def plan(
 # ── build ─────────────────────────────────────────────────────────────────────
 
 
-def _coerce_plan(value: RuntimePlanSource | None) -> PlanFile:
+def _coerce_plan(value: PlanFile | Path | str | None) -> PlanFile:
     """Return a :class:`PlanFile` from a plan object, a path, or the default."""
     if isinstance(value, PlanFile):
         return value
-    if value is None:
-        path = Path(PLAN_FILE_NAME)
-    elif isinstance(value, (str, Path)):
-        path = Path(value)
-    else:
-        return PlanFile.model_validate(value)
+    path = Path(value) if value is not None else Path(PLAN_FILE_NAME)
     if not path.exists():
         raise FileNotFoundError(
-            f"Plan file not found at {path}. " "Run `skaal.api.plan(app, target=...)` first."
+            f"Plan file not found at {path}. Run `skaal.api.plan(app, target=...)` first."
         )
     return PlanFile.read(path)
 
@@ -376,7 +382,7 @@ def build(
         ValueError:        If the plan references an unknown deploy target or
                            has no source module and *app* was not provided.
     """
-    from skaal.deploy import build_artifacts
+    from skaal.deploy import get_target
 
     cfg = SkaalSettings().for_stack(stack)
     resolved_out = Path(output_dir) if output_dir is not None else cfg.out
@@ -399,7 +405,9 @@ def build(
             )
         skaal_app = load_app(f"{plan_file.source_module}:{plan_file.app_var}")
 
-    return build_artifacts(
+    target_adapter = get_target(plan_file.deploy_target)
+
+    return target_adapter.generate_artifacts(
         app=skaal_app,
         plan=plan_file,
         output_dir=resolved_out,
@@ -411,13 +419,15 @@ def build(
     )
 
 
-def _build_stack_profile(cfg: SkaalSettings) -> dict[str, Any]:
+def _build_stack_profile(cfg: SkaalSettings) -> StackProfile:
     """Extract the stack-profile fields that build generators consume.
 
     Returns only the non-empty fields so tests and generators can use the
     truthiness of the dict to decide whether to emit stack-specific config.
     """
-    profile: dict[str, Any] = {}
+    profile: StackProfile = {}
+    if cfg.enable_mesh:
+        profile["enable_mesh"] = True
     if cfg.env:
         profile["env"] = dict(cfg.env)
     if cfg.invokers:
@@ -437,9 +447,6 @@ def deploy(
     region: str | None = None,
     gcp_project: str | None = None,
     yes: bool = True,
-    local_detach: bool = False,
-    local_follow_logs: bool = False,
-    reporter: "DeployReporter | None" = None,
 ) -> dict[str, str]:
     """Package and deploy previously-built artifacts via Pulumi.
 
@@ -448,7 +455,6 @@ def deploy(
 
     Returns:
         Dict of Pulumi stack outputs (e.g. ``{"apiUrl": "https://..."}``).
-        Empty dict for the local target.
 
     Raises:
         FileNotFoundError: If *artifacts_dir* does not exist or is missing
@@ -456,27 +462,24 @@ def deploy(
         ValueError:        If the target is unknown or required settings (e.g.
                            ``gcp_project`` for GCP) are missing.
     """
-    from skaal.deploy import deploy_artifacts
-    from skaal.deploy.push import read_meta
+    from skaal.deploy import package_and_push
+    from skaal.deploy.pulumi.meta import read_meta
 
     base = SkaalSettings()
-    resolved_stack = stack or base.stack
+    resolved_dir = Path(artifacts_dir).resolve()
+    if not resolved_dir.is_dir():
+        raise FileNotFoundError(
+            f"Artifacts directory {resolved_dir} does not exist. Run `skaal.api.build(...)` first."
+        )
+
+    meta = read_meta(resolved_dir)
+    resolved_stack = stack or ("local" if meta.get("target") == "local" else base.stack)
     cfg = base.for_stack(resolved_stack)
     resolved_region = region or cfg.region
     resolved_gcp_project = gcp_project or cfg.gcp_project
 
-    resolved_dir = Path(artifacts_dir).resolve()
-    if not resolved_dir.is_dir():
-        raise FileNotFoundError(
-            f"Artifacts directory {resolved_dir} does not exist. "
-            "Run `skaal.api.build(...)` first."
-        )
-
     if resolved_gcp_project is None:
-        try:
-            target = read_meta(resolved_dir).get("target")
-        except FileNotFoundError:
-            target = None
+        target = meta.get("target")
         if target in ("gcp", "gcp-cloudrun"):
             known = sorted(base.stacks)
             hint = (
@@ -492,39 +495,60 @@ def deploy(
 
     config_overrides = _build_config_overrides(cfg, resolved_dir)
 
-    _run_hooks(
-        cfg.pre_deploy,
-        cwd=resolved_dir.parent,
-        phase="pre-deploy",
-        recovery_hint="Fix the hook command and rerun `skaal deploy`; no infrastructure changes were applied.",
-    )
+    _run_hooks(cfg.pre_deploy, cwd=resolved_dir.parent)
 
-    outputs = deploy_artifacts(
+    outputs = package_and_push(
         artifacts_dir=resolved_dir,
         stack=resolved_stack,
         region=resolved_region,
         gcp_project=resolved_gcp_project,
         yes=yes,
         config_overrides=config_overrides or None,
-        runtime_options={
-            "detach": local_detach,
-            "follow_logs": local_follow_logs,
-        },
-        reporter=reporter,
     )
 
     _run_hooks(
         cfg.post_deploy,
         cwd=resolved_dir.parent,
         extra_env={f"SKAAL_OUTPUT_{k.upper()}": v for k, v in outputs.items()},
-        phase="post-deploy",
-        recovery_hint=(
-            "The infrastructure deploy already completed. Fix the hook command and rerun `skaal deploy`, "
-            "or run the post-deploy step manually using the exported SKAAL_OUTPUT_* values."
-        ),
     )
 
     return outputs
+
+
+def destroy(
+    artifacts_dir: Path | str = "artifacts",
+    *,
+    stack: str | None = None,
+    yes: bool = True,
+) -> None:
+    """Destroy previously-deployed artifacts via Pulumi.
+
+    Equivalent to ``skaal destroy``. Reads ``skaal-meta.json`` from
+    *artifacts_dir* to detect the target platform.
+
+    Raises:
+        FileNotFoundError: If *artifacts_dir* does not exist or is missing
+                           ``skaal-meta.json``.
+        ValueError:        If the target is unknown.
+    """
+    from skaal.deploy import destroy_stack
+    from skaal.deploy.pulumi.meta import read_meta
+
+    base = SkaalSettings()
+    resolved_dir = Path(artifacts_dir).resolve()
+    if not resolved_dir.is_dir():
+        raise FileNotFoundError(
+            f"Artifacts directory {resolved_dir} does not exist. Run `skaal.api.build(...)` first."
+        )
+
+    meta = read_meta(resolved_dir)
+    resolved_stack = stack or ("local" if meta.get("target") == "local" else base.stack)
+
+    destroy_stack(
+        artifacts_dir=resolved_dir,
+        stack=resolved_stack,
+        yes=yes,
+    )
 
 
 def _run_hooks(
@@ -532,16 +556,15 @@ def _run_hooks(
     *,
     cwd: Path,
     extra_env: dict[str, str] | None = None,
-    phase: str = "deploy",
-    recovery_hint: str | None = None,
 ) -> None:
     """Run each argv in *commands* sequentially with :mod:`subprocess`.
 
-    Raises :class:`~skaal.errors.SkaalHookError` on the first failure so a
+    Raises :class:`subprocess.CalledProcessError` on the first failure so a
     failing pre-deploy hook aborts the deploy before it touches Pulumi, and a
-    failing post-deploy hook surfaces with an explicit recovery boundary.
+    failing post-deploy hook surfaces as a non-zero exit from ``skaal deploy``.
     """
     import os
+    import subprocess
 
     if not commands:
         return
@@ -553,52 +576,7 @@ def _run_hooks(
     for argv in commands:
         if not argv:
             continue
-        try:
-            result = subprocess.run(
-                argv,
-                cwd=cwd,
-                env=env,
-                check=False,
-                capture_output=True,
-                text=True,
-            )
-        except FileNotFoundError as exc:
-            raise SkaalHookError(
-                f"{phase.capitalize()} hook failed.\n"
-                f"  Command: {subprocess.list2cmdline([str(part) for part in argv])}\n"
-                f"  Working directory: {cwd}\n"
-                "  Output:\n"
-                f"    Executable {argv[0]!r} was not found on PATH.\n"
-                f"  Recovery: {recovery_hint or f'Install {argv[0]!r} and make sure it is available on PATH.'}"
-            ) from exc
-
-        if result.stdout:
-            sys.stdout.write(result.stdout)
-            if not result.stdout.endswith("\n"):
-                sys.stdout.write("\n")
-            sys.stdout.flush()
-        if result.stderr:
-            sys.stderr.write(result.stderr)
-            if not result.stderr.endswith("\n"):
-                sys.stderr.write("\n")
-            sys.stderr.flush()
-
-        if result.returncode != 0:
-            output_parts = [
-                part.strip() for part in (result.stdout, result.stderr) if part and part.strip()
-            ]
-            output = "\n".join(output_parts) or "Hook exited without producing output."
-            lines = [
-                f"{phase.capitalize()} hook failed.",
-                f"  Command: {subprocess.list2cmdline([str(part) for part in argv])}",
-                f"  Working directory: {cwd}",
-                f"  Exit code: {result.returncode}",
-                "  Output:",
-                *[f"    {line}" for line in output.splitlines()],
-            ]
-            if recovery_hint:
-                lines.append(f"  Recovery: {recovery_hint}")
-            raise SkaalHookError("\n".join(lines))
+        subprocess.run(argv, cwd=cwd, env=env, check=True)
 
 
 def _build_config_overrides(
@@ -646,8 +624,8 @@ def build_runtime(
     persist: bool = False,
     db: str | Path = "skaal_local.db",
     distributed: bool = False,
-    plan: RuntimePlanSource | None = None,
-) -> RuntimeInstance:
+    node_id: str = "node-0",
+) -> Any:
     """Construct a runtime for *app*.
 
     Returns a :class:`~skaal.runtime.local.LocalRuntime` by default, or a
@@ -660,22 +638,13 @@ def build_runtime(
     """
     skaal_app = resolve_app(app)
 
-    if plan is not None and (redis or persist):
-        raise ValueError("plan cannot be combined with redis or persist runtime shortcuts.")
-
-    plan_file = _coerce_plan(plan) if plan is not None else None
-
     if distributed:
         from skaal.runtime.mesh_runtime import MeshRuntime
 
-        if plan_file is not None:
-            return MeshRuntime.from_plan(skaal_app, plan_file, host=host, port=port, target="local")
-        return MeshRuntime(skaal_app, host=host, port=port)
+        return MeshRuntime(skaal_app, host=host, port=port, node_id=node_id)
 
     from skaal.runtime.local import LocalRuntime
 
-    if plan_file is not None:
-        return LocalRuntime.from_plan(skaal_app, plan_file, host=host, port=port, target="local")
     if redis:
         return LocalRuntime.from_redis(skaal_app, redis_url=redis, host=host, port=port)
     if persist:
@@ -692,7 +661,7 @@ async def serve_async(
     persist: bool = False,
     db: str | Path = "skaal_local.db",
     distributed: bool = False,
-    plan: RuntimePlanSource | None = None,
+    node_id: str = "node-0",
 ) -> None:
     """Async variant of :func:`run` — await inside an existing event loop."""
     runtime = build_runtime(
@@ -703,7 +672,7 @@ async def serve_async(
         persist=persist,
         db=db,
         distributed=distributed,
-        plan=plan,
+        node_id=node_id,
     )
     await runtime.serve()
 
@@ -717,7 +686,7 @@ def run(
     persist: bool = False,
     db: str | Path = "skaal_local.db",
     distributed: bool = False,
-    plan: RuntimePlanSource | None = None,
+    node_id: str = "node-0",
 ) -> None:
     """Run a Skaal app locally, blocking until the server is stopped.
 
@@ -737,7 +706,7 @@ def run(
                 persist=persist,
                 db=db,
                 distributed=distributed,
-                plan=plan,
+                node_id=node_id,
             )
         )
     except KeyboardInterrupt:
@@ -835,12 +804,12 @@ def diff(
         new = old
 
     return PlanDiff(
-        old,
-        new,
-        _diff_specs(old.storage, new.storage, "backend"),
-        _diff_specs(old.compute, new.compute, "instance_type"),
-        _diff_specs(old.components, new.components, "implementation"),
-        _diff_specs(old.patterns, new.patterns, "backend"),
+        old=old,
+        new=new,
+        storage=_diff_specs(old.storage, new.storage, "backend"),
+        compute=_diff_specs(old.compute, new.compute, "instance_type"),
+        components=_diff_specs(old.components, new.components, "implementation"),
+        patterns=_diff_specs(old.patterns, new.patterns, "backend"),
     )
 
 
@@ -989,7 +958,12 @@ def migrate_status(
 
 def migrate_list(app_name: str | None = None) -> list["MigrationState"]:
     """Return every in-progress migration (optionally filtered to one app)."""
-    from skaal.migrate.engine import MigrationEngine, MigrationState
+    from skaal.migrate.engine import (
+        MigrationEngine,
+        MigrationKind,
+        MigrationState,
+        state_dir,
+    )
 
     if app_name is not None:
         return MigrationEngine(app_name, "").list_all()
@@ -1000,10 +974,133 @@ def migrate_list(app_name: str | None = None) -> list["MigrationState"]:
 
     states: list[MigrationState] = []
     for app_dir in sorted(p for p in base_dir.iterdir() if p.is_dir()):
-        for path in sorted(app_dir.glob("*.json")):
+        data_dir = state_dir(app_dir.name, MigrationKind.DATA)
+        if not data_dir.exists():
+            continue
+        for path in sorted(data_dir.glob("*.json")):
             try:
                 data = json.loads(path.read_text())
                 states.append(MigrationState(**data))
             except Exception:  # noqa: BLE001
                 continue
     return states
+
+
+# ── relational migrations ─────────────────────────────────────────────────────
+
+
+async def relational_autogenerate(
+    app: "App",
+    *,
+    message: str,
+    backend_name: str | None = None,
+) -> dict[str, "RelationalRevision | None"]:
+    """Diff registered SQLModels against the live DB and write a new revision."""
+    from skaal.migrate import relational
+
+    return await relational.autogenerate(app, message=message, backend_name=backend_name)
+
+
+async def relational_upgrade(
+    app: "App",
+    *,
+    target: str = "head",
+    backend_name: str | None = None,
+) -> dict[str, "RelationalMigrationStatus"]:
+    """Apply pending migrations up to *target* on each selected backend."""
+    from skaal.migrate import relational
+
+    return await relational.upgrade(app, target=target, backend_name=backend_name)
+
+
+async def relational_downgrade(
+    app: "App",
+    *,
+    target: str,
+    backend_name: str | None = None,
+) -> dict[str, "RelationalMigrationStatus"]:
+    """Roll the selected backends back to *target*."""
+    from skaal.migrate import relational
+
+    return await relational.downgrade(app, target=target, backend_name=backend_name)
+
+
+async def relational_plan_upgrade(
+    app: "App",
+    *,
+    target: str = "head",
+    backend_name: str | None = None,
+) -> dict[str, "RelationalMigrationPlan"]:
+    """Render the SQL of an upgrade without applying it."""
+    from skaal.migrate import relational
+
+    return await relational.plan_upgrade(app, target=target, backend_name=backend_name)
+
+
+async def relational_plan_downgrade(
+    app: "App",
+    *,
+    target: str,
+    backend_name: str | None = None,
+) -> dict[str, "RelationalMigrationPlan"]:
+    """Render the SQL of a downgrade without applying it."""
+    from skaal.migrate import relational
+
+    return await relational.plan_downgrade(app, target=target, backend_name=backend_name)
+
+
+async def relational_current(
+    app: "App",
+    *,
+    backend_name: str | None = None,
+) -> dict[str, "RelationalMigrationStatus"]:
+    """Return live current/head/applied/pending state per backend."""
+    from skaal.migrate import relational
+
+    return await relational.current(app, backend_name=backend_name)
+
+
+async def relational_history(
+    app: "App",
+    *,
+    backend_name: str | None = None,
+) -> dict[str, list["RelationalRevision"]]:
+    """Return every revision in versions/ per backend, newest first."""
+    from skaal.migrate import relational
+
+    return await relational.history(app, backend_name=backend_name)
+
+
+async def relational_stamp(
+    app: "App",
+    *,
+    target: str,
+    backend_name: str | None = None,
+) -> dict[str, "RelationalMigrationStatus"]:
+    """Mark the alembic_version table at *target* without running migrations."""
+    from skaal.migrate import relational
+
+    return await relational.stamp(app, target=target, backend_name=backend_name)
+
+
+async def relational_check(
+    app: "App",
+    *,
+    backend_name: str | None = None,
+) -> dict[str, "RelationalMigrationPlan"]:
+    """Detect drift between the live schema and the registered SQLModels."""
+    from skaal.migrate import relational
+
+    return await relational.check(app, backend_name=backend_name)
+
+
+# ── Helpers exposed for the CLI layer ─────────────────────────────────────────
+
+
+def iter_plan_files(root: Path | None = None) -> Iterable[Path]:
+    """Yield every ``plan.skaal.lock`` file found under *root*.
+
+    Convenience helper for tooling built on top of the Python API.
+    """
+    base = Path(root) if root is not None else Path.cwd()
+    yield from base.rglob(PLAN_FILE_NAME)

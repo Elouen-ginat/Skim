@@ -5,7 +5,7 @@ artifacts directory (default: ``artifacts/``) containing:
 
   AWS   — ``handler.py``, ``Pulumi.yaml``, ``pyproject.toml``, ``skaal-meta.json``
   GCP   — ``main.py``, ``Dockerfile``, ``Pulumi.yaml``, ``pyproject.toml``, ``skaal-meta.json``
-  local — ``main.py``, ``Dockerfile``, ``docker-compose.yml``, ``pyproject.toml``, ``skaal-meta.json``
+    local — ``main.py``, ``Dockerfile``, ``Pulumi.yaml``, ``pyproject.toml``, ``skaal-meta.json``
 
 Run ``skaal plan MODULE:APP --target TARGET`` first to produce the lock file,
 then ``skaal deploy`` afterwards to push to the cloud.
@@ -13,17 +13,21 @@ then ``skaal deploy`` afterwards to push to the cloud.
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Optional
 
 import typer
 
+from skaal.cli._errors import cli_error_boundary
 from skaal.cli.config import SkaalSettings
 
 app = typer.Typer(help="Generate deployment artifacts from plan.skaal.lock.")
+log = logging.getLogger("skaal.cli")
 
 
 @app.callback(invoke_without_command=True)
+@cli_error_boundary
 def build(
     region: Optional[str] = typer.Option(
         None,
@@ -68,11 +72,11 @@ def build(
     \b
       aws   — AWS Lambda + DynamoDB + API Gateway (Pulumi YAML)
       gcp   — GCP Cloud Run + Firestore/Redis/Postgres (Pulumi YAML + Dockerfile)
-      local — Docker Compose (for local testing)
+            local — Docker + Pulumi (for local testing)
     """
     from skaal import api
-    from skaal.deploy.registry import get_target
-    from skaal.plan import PLAN_FILE_NAME
+    from skaal.deploy import get_target
+    from skaal.plan import PLAN_FILE_NAME, PlanFile
 
     cfg = SkaalSettings().for_stack(stack)
     resolved_region = region or cfg.region
@@ -80,14 +84,11 @@ def build(
 
     plan_path = Path(PLAN_FILE_NAME)
     if not plan_path.exists():
-        typer.echo(
-            f"Error: {PLAN_FILE_NAME} not found.\n"
-            "  Run `skaal plan MODULE:APP --target TARGET` first.",
-            err=True,
+        raise FileNotFoundError(
+            f"{PLAN_FILE_NAME} not found.\n" "  Run `skaal plan MODULE:APP --target TARGET` first."
         )
-        raise typer.Exit(1)
 
-    typer.echo(f"Building from {plan_path} ...")
+    log.info("Building from %s ...", plan_path)
 
     try:
         generated = api.build(
@@ -97,38 +98,28 @@ def build(
             stack=stack,
             dev=dev,
         )
-    except FileNotFoundError as exc:
-        typer.echo(f"Error: {exc}", err=True)
-        raise typer.Exit(1) from exc
     except ValueError as exc:
-        # Unknown deploy target or missing source_module in the lock file.
-        msg = str(exc)
-        if "source_module" in msg:
-            typer.echo(
-                f"Error: {PLAN_FILE_NAME} is missing source_module — it was created by an "
-                "older version of skaal.\n"
-                "  Re-run `skaal plan MODULE:APP --target TARGET` to regenerate it.",
-                err=True,
-            )
-        else:
-            typer.echo(f"Error: {exc}", err=True)
-        raise typer.Exit(1) from exc
+        if "source_module" in str(exc):
+            raise ValueError(
+                f"{PLAN_FILE_NAME} is missing source_module — it was created by an older "
+                "version of skaal.\n"
+                "  Re-run `skaal plan MODULE:APP --target TARGET` to regenerate it."
+            ) from exc
+        raise
     except Exception as exc:  # noqa: BLE001
-        typer.echo(f"Error: could not build from {PLAN_FILE_NAME}: {exc}", err=True)
-        raise typer.Exit(1) from exc
-
-    # Read the plan once more just to show the deploy target in the banner.
-    from skaal.plan import PlanFile
+        raise ValueError(f"could not build from {PLAN_FILE_NAME}: {exc}") from exc
 
     plan_file = PlanFile.read(plan_path)
 
-    typer.echo(f"Generating artifacts in {resolved_out}/ ...")
-    typer.echo(f"\nGenerated {len(generated)} files:")
+    log.info("Generating artifacts in %s/ ...", resolved_out)
+    log.info("")
+    log.info("Generated %s files:", len(generated))
     for path in generated:
-        typer.echo(f"  {path}")
+        log.info("  %s", path)
 
     target_adapter = get_target(plan_file.deploy_target)
+    log.info("")
     if target_adapter.name == "local":
-        typer.echo("\nRun `skaal deploy` to start the local stack.")
+        log.info("Run `skaal deploy` to start the local stack.")
     else:
-        typer.echo(f"\nRun `skaal deploy` to push to {plan_file.deploy_target.upper()}.")
+        log.info("Run `skaal deploy` to push to %s.", plan_file.deploy_target.upper())

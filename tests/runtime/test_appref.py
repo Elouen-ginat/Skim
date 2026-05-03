@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from skaal import Secret
 from skaal.components import AppRef
 
 # ── _resolve_base_url ──────────────────────────────────────────────────────────
@@ -21,19 +22,19 @@ def test_resolve_base_url_strips_trailing_slash():
 
 def test_resolve_base_url_env_var(monkeypatch):
     monkeypatch.setenv("PAYMENTS_URL", "https://payments.internal")
-    ref = AppRef("svc", base_url_env="PAYMENTS_URL")
+    ref = AppRef("svc", base_url_secret=Secret("PAYMENTS_URL"))
     assert ref._resolve_base_url() == "https://payments.internal"
 
 
 def test_resolve_base_url_env_var_strips_slash(monkeypatch):
     monkeypatch.setenv("SVC_URL", "https://svc.internal/")
-    ref = AppRef("svc", base_url_env="SVC_URL")
+    ref = AppRef("svc", base_url_secret=Secret("SVC_URL"))
     assert ref._resolve_base_url() == "https://svc.internal"
 
 
 def test_resolve_base_url_raises_when_neither_set(monkeypatch):
     monkeypatch.delenv("MISSING_URL", raising=False)
-    ref = AppRef("svc", base_url_env="MISSING_URL")
+    ref = AppRef("svc", base_url_secret=Secret("MISSING_URL"))
     with pytest.raises(RuntimeError, match="MISSING_URL"):
         ref._resolve_base_url()
 
@@ -138,7 +139,7 @@ async def test_proxy_uses_env_var_url(httpx_mock, monkeypatch):
     monkeypatch.setenv("PAY_URL", "http://pay:9000")
     httpx_mock.add_response(json={"ok": True})
 
-    ref = AppRef("payments", base_url_env="PAY_URL")
+    ref = AppRef("payments", base_url_secret=Secret("PAY_URL"))
     await ref.refund(order_id="abc")
 
     request = httpx_mock.get_requests()[0]

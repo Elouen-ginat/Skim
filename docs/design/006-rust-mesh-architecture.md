@@ -29,9 +29,9 @@ for tight integration.
 **Positive:**
 - Sub-millisecond dispatch overhead in production.
 - Memory-safe, fearless concurrency for the control plane.
-- Rust and Python share the same package (maturin builds both).
+- Runtime installs consume published `skaal-mesh` wheels instead of compiling Rust on the target host.
 
 **Negative:**
-- Rust build dependency increases CI time.
-- Developers need Rust toolchain installed for mesh development.
+- Release CI now builds and publishes a full platform wheel matrix for `skaal-mesh`.
+- Developers only need a Rust toolchain when they are actively editing `mesh/`.
 - gRPC schema must be kept in sync with Python stubs.

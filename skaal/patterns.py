@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from typing import Any, AsyncIterator, Generic, Literal, Protocol, TypeVar, runtime_checkable
+from typing import Any, AsyncIterator, Generic, Literal, TypeVar
 
 from skaal.types import Consistency, Durability, Throughput
 
@@ -22,17 +22,10 @@ TView = TypeVar("TView")
 T = TypeVar("T")
 
 
-@runtime_checkable
-class Pattern(Protocol):
-    """Structural marker shared by all Skaal patterns."""
-
-    __skaal_pattern__: dict[str, object]
-
-
 # ── EventLog ──────────────────────────────────────────────────────────────
 
 
-class EventLog(Pattern, Generic[T]):
+class EventLog(Generic[T]):
     """
     Append-only, ordered, replayable typed event log (Event Sourcing).
 
@@ -80,7 +73,7 @@ class EventLog(Pattern, Generic[T]):
         if actual_backend is not None:
             self._backend = actual_backend
         else:
-            from skaal.backends.kv.local_map import LocalMap
+            from skaal.backends.local_backend import LocalMap
 
             self._backend = LocalMap()
 
@@ -192,14 +185,12 @@ class Projection(Generic[TSource, TView]):
         handler: str,
         consistency: Consistency | str = Consistency.EVENTUAL,
         checkpoint_every: int = 100,
-        strict: bool = False,
     ) -> None:
         self.source = source
         self.target = target
         self.handler = handler
         self.consistency = Consistency(consistency) if isinstance(consistency, str) else consistency
         self.checkpoint_every = checkpoint_every
-        self.strict = strict
 
         self.__skaal_pattern__ = {
             "pattern_type": "projection",
@@ -208,7 +199,6 @@ class Projection(Generic[TSource, TView]):
             "handler": handler,
             "consistency": self.consistency,
             "checkpoint_every": checkpoint_every,
-            "strict": strict,
         }
 
     def __repr__(self) -> str:
@@ -231,7 +221,7 @@ class SagaStep:
     timeout_ms: int | None = None
 
 
-class Saga(Pattern):
+class Saga:
     """
     Multi-step distributed transaction with compensating actions.
 

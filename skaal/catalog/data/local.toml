@@ -3,9 +3,11 @@
 # All backends map to local equivalents for zero-setup development.
 
 [storage.local-map.wire]
-class_name     = "LocalMap"
-module         = "skaal.backends.kv.local_map"
-uses_namespace = false
+class_name     = "SqliteBackend"
+module         = "sqlite_backend"
+uses_namespace = true
+path_default   = "skaal_local.db"
+extra_deps     = ["aiosqlite"]
 # No env_prefix — path is hardcoded; all workers share the same file.
 
 [storage.local-map]
@@ -23,7 +25,7 @@ notes = "Pure in-process Python dict. Used by LocalRuntime automatically."
 
 [storage.sqlite.wire]
 class_name      = "SqliteBackend"
-module          = "skaal.backends.kv.sqlite"
+module          = "sqlite_backend"
 env_prefix      = "SKAAL_SQLITE_PATH"
 local_env_value = "/app/data/skaal.db"
 
@@ -31,7 +33,7 @@ local_env_value = "/app/data/skaal.db"
 display_name = "SQLite (local file)"
 read_latency  = { min = 0.1, max = 10.0, unit = "ms" }
 write_latency = { min = 0.5, max = 20.0, unit = "ms" }
-durability    = ["persistent"]
+durability    = ["persistent", "durable"]
 max_size_gb   = 500
 storage_kinds = ["kv", "relational"]
 access_patterns = ["random-read", "random-write", "transactional", "sequential"]
@@ -40,7 +42,7 @@ notes = "Persistent local storage via aiosqlite. Use `skaal run --persist`."
 
 [storage.local-redis.wire]
 class_name      = "RedisBackend"
-module          = "skaal.backends.kv.redis"
+module          = "redis_backend"
 env_prefix      = "SKAAL_REDIS_URL"
 uses_namespace  = true
 local_service   = "redis"
@@ -60,7 +62,7 @@ notes = "Local Redis instance. Use `skaal run --redis redis://localhost:6379`."
 
 [storage.chroma-local.wire]
 class_name     = "ChromaVectorBackend"
-module         = "skaal.backends.vector.chroma"
+module         = "chroma_backend"
 uses_namespace = true
 path_default   = "skaal_chroma"
 extra_deps     = ["langchain-chroma>=1.1", "chromadb>=1.5"]
@@ -69,12 +71,29 @@ extra_deps     = ["langchain-chroma>=1.1", "chromadb>=1.5"]
 display_name = "Chroma (local file)"
 read_latency  = { min = 1.0, max = 20.0, unit = "ms" }
 write_latency = { min = 2.0, max = 40.0, unit = "ms" }
-durability    = ["persistent"]
+durability    = ["persistent", "durable"]
 max_size_gb   = 500
 storage_kinds = ["vector"]
 access_patterns = ["random-read", "bulk-read"]
 cost_per_gb_month = 0.0
 notes = "Persistent local vector storage via Chroma."
+
+[storage.local-blob.wire]
+class_name     = "FileBlobBackend"
+module         = "file_blob_backend"
+uses_namespace = true
+path_default   = "/app/data/blobs"
+
+[storage.local-blob]
+display_name = "Local filesystem blob storage"
+read_latency  = { min = 0.5, max = 20.0, unit = "ms" }
+write_latency = { min = 1.0, max = 50.0, unit = "ms" }
+durability    = ["persistent", "durable"]
+max_size_gb   = 500
+storage_kinds = ["blob"]
+access_patterns = ["bulk-read", "append-only", "worm"]
+cost_per_gb_month = 0.0
+notes = "Blob storage backed by the local filesystem. Local planning treats it as durable for single-node development."
 
 [compute.local-process]
 display_name = "Local Python process"

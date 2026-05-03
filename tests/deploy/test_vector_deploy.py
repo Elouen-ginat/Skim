@@ -3,16 +3,16 @@
 from __future__ import annotations
 
 from skaal.app import App
-from skaal.deploy.builders.aws_stack import _build_pulumi_stack as build_aws_stack
-from skaal.deploy.builders.gcp_stack import _build_pulumi_stack as build_gcp_stack
-from skaal.deploy.wiring import build_runtime_wiring
+from skaal.deploy.backends.wiring import build_wiring, build_wiring_aws
+from skaal.deploy.builders.aws import build_pulumi_stack as build_aws_stack
+from skaal.deploy.builders.gcp import build_pulumi_stack as build_gcp_stack
 from skaal.plan import PlanFile, StorageSpec
 
 
 def _pgvector_wire() -> dict[str, object]:
     return {
         "class_name": "PgVectorBackend",
-        "module": "skaal.backends.vector.pgvector",
+        "module": "pgvector_backend",
         "env_prefix": "SKAAL_DB_DSN",
         "uses_namespace": True,
         "requires_vpc": True,
@@ -55,15 +55,15 @@ def test_local_build_falls_back_to_chroma_for_cloud_vector_backend() -> None:
         },
     )
 
-    imports, overrides = build_runtime_wiring(plan, target="local")
+    imports, overrides = build_wiring(plan, local=True)
 
-    assert "from skaal.backends.vector.chroma import ChromaVectorBackend" in imports
+    assert "from skaal.backends.chroma_backend import ChromaVectorBackend" in imports
     assert (
         '"Knowledge": ChromaVectorBackend("/app/data/chroma", namespace="Knowledge"),' in overrides
     )
 
 
-def test_build_runtime_wiring_aws_uses_pgvector_backend() -> None:
+def test_build_wiring_aws_uses_pgvector_backend() -> None:
     plan = PlanFile(
         app_name="demo",
         storage={
@@ -76,9 +76,9 @@ def test_build_runtime_wiring_aws_uses_pgvector_backend() -> None:
         },
     )
 
-    imports, overrides = build_runtime_wiring(plan, target="aws")
+    imports, overrides = build_wiring_aws(plan)
 
-    assert "from skaal.backends.vector.pgvector import PgVectorBackend" in imports
+    assert "from skaal.backends.pgvector_backend import PgVectorBackend" in imports
     assert (
         '"Knowledge": PgVectorBackend(os.environ["SKAAL_DB_DSN_KNOWLEDGE"], namespace="Knowledge"),'
         in overrides

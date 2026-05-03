@@ -18,7 +18,7 @@ class Passage(BaseModel):
 def _make_vector_app() -> App:
     app = App("vector-solver")
 
-    @app.vector(dim=64, read_latency="< 60ms", durability="persistent")
+    @app.storage(kind="vector", dim=64, read_latency="< 60ms", durability="persistent")
     class Knowledge(VectorStore[Passage]):
         __skaal_vector_text_fields__ = ("title", "content")
 

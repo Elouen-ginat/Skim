@@ -2,8 +2,11 @@
 
 Requires the ``mesh`` extra::
 
-    maturin build --manifest-path mesh/Cargo.toml --release
-    pip install target/wheels/skaal-*.whl
+    pip install "skaal[mesh]"
+
+If you are editing the Rust crate locally::
+
+    make build-dev
 
 Usage::
 
@@ -17,164 +20,183 @@ Or via the CLI::
 
 from __future__ import annotations
 
-import importlib
 import json
-from dataclasses import asdict
-from typing import Any, cast
+import logging
+from typing import TYPE_CHECKING, Any, cast
 
-from skaal.plan import PlanFile
-from skaal.runtime._observer import InMemoryRuntimeObserver
-from skaal.runtime._services import MeshAgentsService, MeshStateService
-from skaal.types.runtime import (
-    AsyncClosable,
-    BackendOverrides,
-    RuntimeApp,
-    RuntimePayload,
-    RuntimePlanSource,
-)
-from skaal.types.runtime import (
-    MeshClient as MeshClientProtocol,
-)
+from skaal.runtime.base import _SKAAL_INVOKE_PREFIX, BaseRuntime
 
-from ._core import _RuntimeCoreMixin
-from ._dispatch import _RuntimeDispatchMixin
-from ._lifecycle import _RuntimeLifecycleMixin
-from ._local_scheduler import _SchedulerMixin
-from ._local_server import _StarletteServerMixin
-from ._planning import (
-    build_backend_overrides,
-    build_development_plan,
-    coerce_runtime_plan,
-)
-from ._transport import _RuntimeHttpTransportMixin
+if TYPE_CHECKING:
+    import httpx
+
+    from skaal.runtime.telemetry import RuntimeTelemetry
+    from skaal.types import TelemetryConfig
+
+_MAX_BODY_SIZE = 10 * 1024 * 1024
+log = logging.getLogger("skaal.runtime")
 
 
-class MeshRuntime(
-    _RuntimeCoreMixin,
-    _RuntimeDispatchMixin,
-    _RuntimeHttpTransportMixin,
-    _StarletteServerMixin,
-    _SchedulerMixin,
-    _RuntimeLifecycleMixin,
-):
+def _format_banner(title: str, lines: list[str]) -> str:
+    return "\n".join(["", title, *lines, ""])
+
+
+class MeshRuntime(BaseRuntime):
     """Distributed runtime that delegates agent routing and channels to the Rust mesh.
 
-    The mesh layer currently shares the same local HTTP dispatch and channel
-    wiring path as :class:`~skaal.runtime.local.LocalRuntime`. The distributed
-    behavior today comes from the Rust mesh bridge APIs and health snapshot:
+    The HTTP server / dispatch path mirrors :class:`~skaal.runtime.local.LocalRuntime`
+    so existing Starlette / uvicorn plumbing is reused.  The mesh layer adds:
 
     - **Agent placement**: :meth:`route_agent` wraps
       ``SkaalMesh.route_agent_call`` so agent calls resolve to a live instance.
+    - **Distributed channels**: :meth:`channel_publish` forwards to
+      ``SkaalMesh.publish`` (``tokio::sync::broadcast``-backed pub/sub).
     - **Health**: :meth:`health` returns the mesh's aggregated health snapshot
       (agents, state, migrations, channels).
     """
 
     def __init__(
         self,
-        app: RuntimeApp,
+        app: Any,
         *,
         host: str = "127.0.0.1",
         port: int = 8000,
         plan_json: str = "",
-        backend_overrides: BackendOverrides | None = None,
-        runtime_plan: RuntimePlanSource | None = None,
-        target: str | None = None,
+        node_id: str | None = None,
+        backend_overrides: dict[str, Any] | None = None,
+        telemetry: "TelemetryConfig | None" = None,
+        telemetry_runtime: "RuntimeTelemetry | None" = None,
+        auth_http_client: "httpx.AsyncClient | None" = None,
     ) -> None:
-        if backend_overrides is not None and runtime_plan is not None:
-            raise ValueError("Pass either backend_overrides or runtime_plan, not both.")
-
         try:
-            importlib.import_module("skaal_mesh")
+            import skaal_mesh
         except ImportError as exc:
             raise ImportError(
                 "MeshRuntime requires the skaal_mesh native extension.\n"
-                "Build it with: maturin build --manifest-path mesh/Cargo.toml --release\n"
-                "Then:          pip install target/wheels/skaal-*.whl"
+                'Install it with: pip install "skaal[mesh]"\n'
+                "If you are editing the Rust crate locally, run: make build-dev"
             ) from exc
 
-        from skaal.mesh import MeshClient as SkaalMeshClient
-
-        self.app = app
-        self.host = host
-        self.port = port
-        self._runtime_plan: PlanFile | None
-        if runtime_plan is not None:
-            self._runtime_plan = coerce_runtime_plan(runtime_plan)
-            self._backend_overrides = build_backend_overrides(
-                app,
-                self._runtime_plan,
-                target=target,
-            )
-            if not plan_json:
-                plan_json = self._runtime_plan.model_dump_json()
-        elif backend_overrides is not None:
-            self._runtime_plan = None
-            self._backend_overrides = backend_overrides
-        else:
-            self._runtime_plan = build_development_plan(app, mode="memory")
-            self._backend_overrides = build_backend_overrides(app, self._runtime_plan)
-
-        plan_dict: dict[str, object] | None = None
         if plan_json:
-            loaded_plan = cast(dict[str, object], json.loads(plan_json))
-            loaded_plan.setdefault("app_name", app.name)
-            plan_dict = loaded_plan
+            plan_dict = json.loads(plan_json)
+            plan_dict.setdefault("app_name", app.name)
+            plan_json = json.dumps(plan_dict)
+        self._mesh = cast(Any, skaal_mesh).SkaalMesh(app.name, plan_json)
+        super().__init__(
+            app,
+            host=host,
+            port=port,
+            backend_overrides=backend_overrides,
+            telemetry=telemetry,
+            telemetry_runtime=telemetry_runtime,
+            auth_http_client=auth_http_client,
+        )
 
-        mesh_client = cast(MeshClientProtocol, SkaalMeshClient(app.name, plan=plan_dict))
+    def _default_kv_backend(self, namespace: str) -> Any:
+        from skaal.backends.local_backend import LocalMap
 
-        self._mesh = mesh_client
-        self.state = MeshStateService(mesh_client)
-        self.observer = InMemoryRuntimeObserver()
-        self.agents = MeshAgentsService(mesh_client)
-        self._backends: dict[str, AsyncClosable] = {}
-        self._patch_storage()
-        self._patch_channels()
-        self._initialize_runtime_state()
+        del namespace
+        return LocalMap()
 
-    # ── Setup (mirrors LocalRuntime) ──────────────────────────────────────────
+    def _default_relational_backend(self, namespace: str) -> Any:
+        from skaal.backends.sqlite_backend import SqliteBackend
 
-    def _patch_storage(self) -> None:
-        self._patch_storage_backends()
+        return SqliteBackend("skaal_local.db", namespace=namespace)
 
-    def _patch_channels(self) -> None:
-        self._wire_local_channels()
+    def _default_vector_backend(self, namespace: str) -> Any:
+        from skaal.backends.chroma_backend import ChromaVectorBackend
 
-    @classmethod
-    def from_plan(
-        cls,
-        app: RuntimeApp,
-        plan: RuntimePlanSource,
-        *,
-        target: str | None = None,
-        host: str = "127.0.0.1",
-        port: int = 8000,
-    ) -> "MeshRuntime":
-        return cls(app, host=host, port=port, runtime_plan=plan, target=target)
+        return ChromaVectorBackend("skaal_chroma", namespace=namespace)
 
-    def _runtime_label(self) -> str:
-        return "mesh"
+    def _default_blob_backend(self, namespace: str) -> Any:
+        from skaal.backends.file_blob_backend import FileBlobBackend
 
-    def _index_payload(self) -> RuntimePayload:
-        return {"mesh": self.health()}
+        return FileBlobBackend(".skaal/blobs", namespace=namespace)
 
-    def _health_payload(self) -> RuntimePayload:
-        return {"mesh": self.health()}
+    def _wire_channel_instance(self, channel_obj: Any) -> None:
+        from skaal.channel import wire_local
+
+        wire_local(channel_obj)
+
+    def _root_payload(self) -> dict[str, Any]:
+        public = sorted(self._public_functions())
+        return {
+            "app": self.app.name,
+            "endpoints": [
+                {"path": f"{_SKAAL_INVOKE_PREFIX}{name}", "function": name} for name in public
+            ],
+            "storage": list(self._backends.keys()),
+            "mesh": json.loads(self._mesh.health_snapshot()),
+        }
+
+    def _health_payload(self) -> dict[str, Any]:
+        return {
+            "status": "ok",
+            "app": self.app.name,
+            "mesh": json.loads(self._mesh.health_snapshot()),
+        }
+
+    def _augment_readiness_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
+        payload["mesh"] = json.loads(self._mesh.health_snapshot())
+        return payload
+
+    # ── Serve (mirrors LocalRuntime._serve_skaal) ─────────────────────────────
+
+    async def serve(self) -> None:
+        await self.ensure_started()
+        try:
+            await self._serve_skaal()
+        finally:
+            await self.shutdown()
+
+    async def _serve_skaal(self) -> None:
+        try:
+            import uvicorn
+            from starlette.applications import Starlette
+            from starlette.requests import Request as StarletteRequest
+            from starlette.responses import JSONResponse
+            from starlette.routing import Route
+        except ImportError as exc:
+            raise RuntimeError(
+                "MeshRuntime requires uvicorn and starlette.\n"
+                "Install them with:  pip install uvicorn starlette\n"
+                f"Missing: {exc}"
+            ) from exc
+
+        public_fns = sorted(self._public_functions())
+        banner_lines = [f"  http://{self.host}:{self.port}", ""]
+        for name in public_fns:
+            banner_lines.append(f"    POST {_SKAAL_INVOKE_PREFIX}{name}")
+        log.info(_format_banner(f"  Skaal mesh runtime — {self.app.name}", banner_lines))
+
+        async def _handle(request: StarletteRequest) -> JSONResponse:
+            body = await request.body()
+            result, status = await self._dispatch(
+                request.method,
+                request.url.path,
+                body,
+                headers=dict(request.headers.items()),
+            )
+            return JSONResponse(result, status_code=status)
+
+        asgi_app = Starlette(
+            routes=[
+                Route("/", _handle, methods=["GET"]),
+                Route("/health", _handle, methods=["GET"]),
+                Route("/ready", _handle, methods=["GET"]),
+                Route("/{path:path}", _handle, methods=["GET", "POST"]),
+            ]
+        )
+
+        config = uvicorn.Config(asgi_app, host=self.host, port=self.port, log_level="info")
+        await uvicorn.Server(config).serve()
 
     # ── Mesh bridge API (used by engines / agents) ────────────────────────────
 
-    async def route_agent(
-        self,
-        agent_type: str,
-        agent_id: str,
-        method: str,
-        args: RuntimePayload,
-    ) -> object:
-        return await self.agents.route(agent_type, agent_id, method, args)
+    def route_agent(self, agent_type: str, agent_id: str, method: str, args: dict[str, Any]) -> str:
+        return self._mesh.route_agent_call(agent_type, agent_id, method, json.dumps(args))
 
-    def channel_publish(self, topic: str, message: object) -> int:
-        return self._mesh.publish(topic, message)
+    def channel_publish(self, topic: str, message: Any) -> int:
+        return self._mesh.publish(topic, json.dumps(message))
 
-    def health(self) -> RuntimePayload:
-        snapshot = cast(RuntimePayload, asdict(cast(Any, self._mesh.health_snapshot())))
-        snapshot["observer"] = self.observer.snapshot()
-        return snapshot
+    def health(self) -> dict[str, Any]:
+        return json.loads(self._mesh.health_snapshot())

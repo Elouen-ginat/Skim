@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from skaal.backends.kv.sqlite import SqliteBackend
+from skaal.backends.sqlite_backend import SqliteBackend
+from skaal.types.storage import SecondaryIndex
 
 
 @pytest.mark.asyncio
@@ -152,5 +153,79 @@ async def test_json_types(tmp_path):
 
         for key, expected in cases.items():
             assert await backend.get(key) == expected, f"Mismatch for {key}"
+    finally:
+        await backend.close()
+
+
+@pytest.mark.asyncio
+async def test_list_page_scan_page_and_query_index(tmp_path):
+    db_file = tmp_path / "paged.db"
+    backend = SqliteBackend(db_file, namespace="paged")
+    setattr(
+        backend,
+        "_skaal_secondary_indexes",
+        {
+            "by_team": SecondaryIndex(name="by_team", partition_key="team", sort_key="score"),
+        },
+    )
+    try:
+        await backend.set("m1", {"team": "alpha", "score": 10})
+        await backend.set("m2", {"team": "alpha", "score": 2})
+        await backend.set("m3", {"team": "beta", "score": 5})
+
+        list_page = await backend.list_page(limit=2, cursor=None)
+        assert [key for key, _ in list_page.items] == ["m1", "m2"]
+        assert list_page.has_more is True
+        assert list_page.next_cursor is not None
+
+        next_list_page = await backend.list_page(limit=2, cursor=list_page.next_cursor)
+        assert [key for key, _ in next_list_page.items] == ["m3"]
+        assert next_list_page.has_more is False
+
+        scan_page = await backend.scan_page("m", limit=2, cursor=None)
+        assert [key for key, _ in scan_page.items] == ["m1", "m2"]
+        assert scan_page.has_more is True
+        assert scan_page.next_cursor is not None
+
+        next_scan_page = await backend.scan_page("m", limit=2, cursor=scan_page.next_cursor)
+        assert [key for key, _ in next_scan_page.items] == ["m3"]
+        assert next_scan_page.has_more is False
+
+        index_page = await backend.query_index("by_team", "alpha", limit=2, cursor=None)
+        assert [item["score"] for item in index_page.items] == [2, 10]
+        assert index_page.has_more is False
+    finally:
+        await backend.close()
+
+
+@pytest.mark.asyncio
+async def test_query_index_pages_sorted_results(tmp_path):
+    db_file = tmp_path / "indexed.db"
+    backend = SqliteBackend(db_file, namespace="indexed")
+    setattr(
+        backend,
+        "_skaal_secondary_indexes",
+        {
+            "by_team": SecondaryIndex(name="by_team", partition_key="team", sort_key="score"),
+        },
+    )
+    try:
+        await backend.set("m1", {"team": "alpha", "score": 10})
+        await backend.set("m2", {"team": "alpha", "score": 2})
+        await backend.set("m3", {"team": "alpha", "score": 30})
+
+        first_page = await backend.query_index("by_team", "alpha", limit=2, cursor=None)
+        assert [item["score"] for item in first_page.items] == [2, 10]
+        assert first_page.has_more is True
+        assert first_page.next_cursor is not None
+
+        second_page = await backend.query_index(
+            "by_team",
+            "alpha",
+            limit=2,
+            cursor=first_page.next_cursor,
+        )
+        assert [item["score"] for item in second_page.items] == [30]
+        assert second_page.has_more is False
     finally:
         await backend.close()

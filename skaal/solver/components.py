@@ -128,7 +128,8 @@ def encode_component(
       an implementation via :func:`_resolve_provisioned_impl` and returns a
       spec with ``provisioned=True``.
     - **ExternalComponent**: returns a pass-through spec with
-      ``provisioned=False`` and the ``connection_env`` forwarded as-is.
+      ``provisioned=False`` and the ``secret_name`` (if any) referencing an
+      entry in :attr:`PlanFile.secrets`.
 
     Args:
         name:      The component's ``.name`` attribute.
@@ -152,7 +153,7 @@ def encode_component(
             kind=kind,
             implementation=None,
             provisioned=False,
-            connection_env=comp_meta.get("connection_env"),
+            secret_name=comp_meta.get("secret_name"),
             config=extra_config,
             reason="external component — not provisioned by Skaal",
         )
@@ -163,7 +164,7 @@ def encode_component(
         kind=kind,
         implementation=impl,
         provisioned=True,
-        connection_env=None,
+        secret_name=None,
         config=extra_config,
         reason=reason,
     )

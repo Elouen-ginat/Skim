@@ -2,15 +2,18 @@
 
 from __future__ import annotations
 
-from types import ModuleType, SimpleNamespace
-from unittest.mock import AsyncMock, Mock
-
 import pytest
 
 from skaal import App
 from skaal.components import ScheduleTrigger
 from skaal.runtime.local import LocalRuntime
-from skaal.schedule import Cron, Every, ScheduleContext
+from skaal.schedule import (
+    Cron,
+    Every,
+    ScheduleContext,
+    build_apscheduler_trigger,
+    build_scheduled_job,
+)
 
 # ── Every — interval parsing ───────────────────────────────────────────────────
 
@@ -121,6 +124,27 @@ def test_schedule_context_frozen():
     ctx = ScheduleContext(fired_at=datetime.now(timezone.utc))
     with pytest.raises(Exception):
         ctx.fired_at = datetime.now(timezone.utc)  # type: ignore[misc]
+
+
+def test_build_apscheduler_trigger_interval() -> None:
+    from apscheduler.triggers.interval import IntervalTrigger
+
+    trigger = build_apscheduler_trigger(Every(interval="5m"), timezone="UTC")
+    assert isinstance(trigger, IntervalTrigger)
+
+
+@pytest.mark.asyncio
+async def test_build_scheduled_job_injects_context() -> None:
+    received: list[ScheduleContext] = []
+
+    async def scheduled(ctx: ScheduleContext) -> None:
+        received.append(ctx)
+
+    job = build_scheduled_job(scheduled, name="scheduled")
+    await job()
+
+    assert len(received) == 1
+    assert isinstance(received[0], ScheduleContext)
 
 
 # ── @app.schedule() decorator ─────────────────────────────────────────────────
@@ -292,65 +316,3 @@ async def test_dispatch_index_excludes_scheduled_fns():
     endpoints = [e["function"] for e in result["endpoints"]]
     assert "public_fn" in endpoints
     assert "bg" not in endpoints
-
-
-def test_mesh_runtime_uses_shared_scheduler_and_server_mixins():
-    from skaal.runtime._local_scheduler import _SchedulerMixin
-    from skaal.runtime._local_server import _StarletteServerMixin
-    from skaal.runtime.mesh_runtime import MeshRuntime
-
-    assert issubclass(MeshRuntime, _SchedulerMixin)
-    assert issubclass(MeshRuntime, _StarletteServerMixin)
-
-
-@pytest.mark.asyncio
-async def test_mesh_runtime_serve_runtime_prefers_mounted_asgi_app() -> None:
-    from skaal.runtime.mesh_runtime import MeshRuntime
-
-    runtime = object.__new__(MeshRuntime)
-    runtime.app = SimpleNamespace(name="mesh-test", _asgi_app=object(), _wsgi_app=None)
-    runtime.host = "127.0.0.1"
-    runtime.port = 8000
-    runtime._serve_asgi = AsyncMock()
-    runtime._serve_wsgi = AsyncMock()
-    runtime._serve_skaal = AsyncMock()
-
-    await runtime._serve_runtime()
-
-    runtime._serve_asgi.assert_awaited_once_with(runtime.app._asgi_app)
-    runtime._serve_wsgi.assert_not_called()
-    runtime._serve_skaal.assert_not_called()
-
-
-@pytest.mark.asyncio
-async def test_mesh_runtime_serve_runtime_runs_scheduler_when_jobs_exist(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from skaal.runtime.mesh_runtime import MeshRuntime
-
-    runtime = object.__new__(MeshRuntime)
-    runtime.app = SimpleNamespace(name="mesh-test", _asgi_app=None, _wsgi_app=None)
-    runtime.host = "127.0.0.1"
-    runtime.port = 8000
-    runtime._serve_skaal = AsyncMock()
-    runtime._collect_schedules = Mock(return_value={"job": AsyncMock()})
-    runtime._register_schedules = Mock()
-
-    scheduler = Mock()
-
-    async_module = ModuleType("apscheduler.schedulers.asyncio")
-    async_module.AsyncIOScheduler = Mock(return_value=scheduler)
-    monkeypatch.setitem(__import__("sys").modules, "apscheduler", ModuleType("apscheduler"))
-    monkeypatch.setitem(
-        __import__("sys").modules, "apscheduler.schedulers", ModuleType("apscheduler.schedulers")
-    )
-    monkeypatch.setitem(__import__("sys").modules, "apscheduler.schedulers.asyncio", async_module)
-
-    await runtime._serve_runtime()
-
-    runtime._register_schedules.assert_called_once_with(
-        scheduler, {"job": runtime._collect_schedules.return_value["job"]}, log_runs=False
-    )
-    scheduler.start.assert_called_once_with()
-    runtime._serve_skaal.assert_awaited_once_with()
-    scheduler.shutdown.assert_called_once_with(wait=False)

@@ -129,19 +129,25 @@ def test_encode_component_api_gateway():
 
 def test_encode_component_external_storage():
     """ExternalStorage passes through as not-provisioned."""
+    from skaal import Secret
+
     ext = ExternalStorage(
         "legacy-db",
-        connection_env="DATABASE_URL",
+        secret=Secret("DATABASE_URL"),
         latency="< 20ms",
     )
     spec = encode_component("legacy-db", ext, _EMPTY_CATALOG)
     assert spec.provisioned is False
-    assert spec.connection_env == "DATABASE_URL"
+    assert spec.secret_name == "DATABASE_URL"
     assert "external" in spec.reason
 
 
 def test_encode_component_external_observability():
-    prom = ExternalObservability("prometheus", provider="prometheus", endpoint_env="PROM_URL")
+    from skaal import Secret
+
+    prom = ExternalObservability(
+        "prometheus", provider="prometheus", endpoint_secret=Secret("PROM_URL")
+    )
     spec = encode_component("prometheus", prom, _EMPTY_CATALOG)
     assert spec.provisioned is False
     assert spec.kind == "external-observability"

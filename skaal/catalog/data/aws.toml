@@ -41,7 +41,7 @@ deletion_protection       = false
 
 [storage.rds-postgres.wire]
 class_name      = "PostgresBackend"
-module          = "skaal.backends.kv.postgres"
+module          = "postgres_backend"
 env_prefix      = "SKAAL_DB_DSN"
 uses_namespace  = true
 requires_vpc    = true
@@ -75,7 +75,7 @@ deletion_protection       = false
 
 [storage.rds-pgvector.wire]
 class_name      = "PgVectorBackend"
-module          = "skaal.backends.vector.pgvector"
+module          = "pgvector_backend"
 env_prefix      = "SKAAL_DB_DSN"
 uses_namespace  = true
 requires_vpc    = true
@@ -89,11 +89,18 @@ read_latency  = { min = 50, max = 500, unit = "ms" }
 write_latency = { min = 100, max = 2000, unit = "ms" }
 durability    = ["durable"]   # 11 nines
 max_size_gb   = 0             # unlimited (0 = no limit)
-storage_kinds = ["kv"]
-access_patterns = ["append-only", "bulk-read", "worm", "event-log"]
+storage_kinds = ["blob"]
+access_patterns = ["append-only", "bulk-read", "worm"]
 cost_per_gb_month = 0.023
 regions = ["all"]
-notes = "Cold/archival storage; preferred for size_hint > 100GB + durable"
+notes = "Managed object storage for file and blob workloads."
+
+[storage.s3.wire]
+class_name      = "S3BlobBackend"
+module          = "s3_blob_backend"
+env_prefix      = "SKAAL_S3_BUCKET"
+uses_namespace  = true
+extra_deps      = ["boto3>=1.34"]
 
 [storage.elasticache-memcached]
 display_name = "Amazon ElastiCache (Memcached)"
@@ -128,7 +135,7 @@ hash_key_type  = "S"
 
 [storage.dynamodb.wire]
 class_name  = "DynamoBackend"
-module      = "skaal.backends.kv.dynamodb"
+module      = "dynamodb_backend"
 env_prefix  = "SKAAL_TABLE"
 
 [storage.msk-kafka]

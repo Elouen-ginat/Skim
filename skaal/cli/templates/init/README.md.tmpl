@@ -1,0 +1,17 @@
+# {name}
+
+A Skaal app.
+
+## Quickstart
+
+```sh
+pip install -e .
+skaal run
+```
+
+The server hot-reloads on edits. Hit it:
+
+```sh
+curl -s -X POST localhost:8000/increment -d '{{"name":"hits"}}'
+curl -s -X POST localhost:8000/get_count  -d '{{"name":"hits"}}'
+```

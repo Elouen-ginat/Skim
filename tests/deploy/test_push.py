@@ -1,154 +1,224 @@
-"""Tests for deploy subprocess orchestration helpers."""
+"""Tests for deploy helper integration points."""
 
 from __future__ import annotations
 
-import importlib
-import subprocess
+from pathlib import Path
+from unittest.mock import MagicMock
 
-import pytest
-
-from skaal.deploy.registry import get_target
-
-pulumi_client = importlib.import_module("skaal.deploy.pulumi.client")
-local_compose_module = importlib.import_module("skaal.deploy.targets.local_compose")
-
-
-def test_run_command_wraps_missing_tool_with_deploy_context(tmp_path) -> None:
-    """Missing executables should surface as DeployCommandError with recovery help."""
-    with pytest.raises(pulumi_client.DeployCommandError) as exc_info:
-        pulumi_client.run_command(
-            ["skaal-tool-that-does-not-exist"],
-            cwd=tmp_path,
-            stage="probe deploy tool",
-        )
-
-    message = str(exc_info.value)
-    assert "Deployment step failed: probe deploy tool" in message
-    assert "not found on PATH" in message
-    assert "Recovery:" in message
+from skaal.deploy.packaging.docker_builder import build_image
+from skaal.deploy.packaging.gcp_push import build_and_push_image
+from skaal.deploy.packaging.local import build_local_image
+from skaal.deploy.pulumi import DeploymentContext, RunnerPlan
+from skaal.deploy.pulumi.automation import read_stack_spec, workspace_options, write_stack_spec
+from skaal.deploy.pulumi.env import pulumi_env
+from skaal.deploy.pulumi.runner import AutomationRunner
 
 
-def test_pulumi_client_select_or_init_initializes_missing_stack(
-    tmp_path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A missing stack should trigger `pulumi stack init`, not fail immediately."""
-    calls: list[tuple[list[str], str, bool, bool]] = []
-
-    def _fake_run(
-        cmd: list[str],
-        cwd=None,
-        *,
-        stage: str,
-        capture: bool = False,
-        check: bool = True,
-        recovery_hint: str | None = None,
-    ) -> subprocess.CompletedProcess[str]:
-        calls.append((cmd, stage, capture, check))
-        if cmd[:3] == ["pulumi", "stack", "select"]:
-            return subprocess.CompletedProcess(cmd, 255, "", "error: no stack named dev")
-        return subprocess.CompletedProcess(cmd, 0, "", "")
-
-    monkeypatch.setattr(pulumi_client, "run_command", _fake_run)
-
-    pulumi_client.PulumiClient(tmp_path).select_or_init_stack("dev")
-
-    assert calls[0][0] == ["pulumi", "stack", "select", "dev"]
-    assert calls[1][0] == ["pulumi", "stack", "init", "dev"]
+def test_pulumi_env_injects_blank_pulumi_passphrase(monkeypatch):
+    monkeypatch.delenv("PULUMI_CONFIG_PASSPHRASE", raising=False)
+    env = pulumi_env()
+    assert env["PULUMI_CONFIG_PASSPHRASE"] == ""
 
 
-def test_pulumi_client_select_or_init_preserves_real_select_failure(
-    tmp_path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Non-missing-stack failures should not be turned into stack init attempts."""
-    calls: list[list[str]] = []
-
-    def _fake_run(
-        cmd: list[str],
-        cwd=None,
-        *,
-        stage: str,
-        capture: bool = False,
-        check: bool = True,
-        recovery_hint: str | None = None,
-    ) -> subprocess.CompletedProcess[str]:
-        calls.append(cmd)
-        return subprocess.CompletedProcess(cmd, 255, "", "backend is offline")
-
-    monkeypatch.setattr(pulumi_client, "run_command", _fake_run)
-
-    with pytest.raises(pulumi_client.DeployCommandError) as exc_info:
-        pulumi_client.PulumiClient(tmp_path).select_or_init_stack("dev")
-
-    assert calls == [["pulumi", "stack", "select", "dev"]]
-    assert "backend is offline" in str(exc_info.value)
+def test_pulumi_env_preserves_existing_pulumi_passphrase(monkeypatch):
+    monkeypatch.setenv("PULUMI_CONFIG_PASSPHRASE", "secret")
+    env = pulumi_env()
+    assert env["PULUMI_CONFIG_PASSPHRASE"] == "secret"
 
 
-def test_local_target_detach_and_follow_logs(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Local deploy runtime options should switch compose into detached log-follow mode."""
-    calls: list[list[str]] = []
+def test_write_stack_spec_round_trips(tmp_path: Path):
+    spec = {
+        "name": "skaal-demo",
+        "runtime": "yaml",
+        "config": {"localImageRef": {"type": "string", "default": "skaal-demo:local"}},
+        "resources": {},
+        "outputs": {"appUrl": "http://localhost:8000"},
+    }
 
-    def _fake_run(
-        cmd: list[str],
-        cwd=None,
-        *,
-        stage: str,
-        capture: bool = False,
-        check: bool = True,
-        recovery_hint: str | None = None,
-    ) -> subprocess.CompletedProcess[str]:
-        calls.append(cmd)
-        return subprocess.CompletedProcess(cmd, 0, "", "")
+    path = write_stack_spec(tmp_path, spec)
 
-    monkeypatch.setattr(local_compose_module, "run_command", _fake_run)
+    assert path.name == "skaal-stack.json"
+    assert read_stack_spec(tmp_path) == spec
 
-    get_target("local").deploy(
-        tmp_path,
-        stack="dev",
-        region=None,
-        gcp_project=None,
-        yes=True,
-        project_root=tmp_path,
-        source_module="examples.counter",
-        app_name="demo",
-        runtime_options={"detach": True, "follow_logs": True},
+
+def test_workspace_options_creates_state_dir(tmp_path: Path):
+    spec = {
+        "name": "skaal-demo",
+        "runtime": "yaml",
+        "config": {},
+        "resources": {},
+        "outputs": {},
+    }
+
+    options = workspace_options(tmp_path, spec)
+
+    assert (tmp_path / ".pulumi-state").is_dir()
+    assert options.work_dir == str(tmp_path)
+
+
+def test_build_local_image_uses_docker_builder(monkeypatch, tmp_path: Path):
+    calls: list[tuple[Path, str]] = []
+
+    def fake_build_image(*, context_dir: Path, tag: str, progress=None):
+        del progress
+        calls.append((context_dir, tag))
+        return "sha256:test-image"
+
+    monkeypatch.setattr("skaal.deploy.packaging.local.build_image", fake_build_image)
+
+    image_ref = build_local_image(tmp_path, "skaal-test:local")
+
+    assert image_ref == "sha256:test-image"
+    assert calls == [(tmp_path.resolve(), "skaal-test:local")]
+
+
+def test_build_image_uses_high_level_decoded_log_stream(monkeypatch, tmp_path: Path):
+    chunks: list[dict[str, object]] = []
+    captured_kwargs: dict[str, object] = {}
+
+    class _FakeImages:
+        def build(self, **kwargs):
+            captured_kwargs.update(kwargs)
+            return MagicMock(id="sha256:test-image"), iter(
+                [
+                    {"stream": "Step 1/2"},
+                    {"stream": "Step 2/2"},
+                ]
+            )
+
+    class _FakeClient:
+        def __init__(self) -> None:
+            self.images = _FakeImages()
+
+        def close(self) -> None:
+            return None
+
+    monkeypatch.setattr(
+        "skaal.deploy.packaging.docker_builder.docker.from_env", lambda: _FakeClient()
     )
 
+    image_ref = build_image(
+        context_dir=tmp_path,
+        tag="skaal-test:local",
+        progress=chunks.append,
+    )
+
+    assert image_ref == "sha256:test-image"
+    assert captured_kwargs == {
+        "path": str(tmp_path),
+        "tag": "skaal-test:local",
+        "rm": True,
+        "forcerm": True,
+    }
+    assert chunks == [{"stream": "Step 1/2"}, {"stream": "Step 2/2"}]
+
+
+def test_gcp_push_uses_google_auth_and_docker_builder(monkeypatch, tmp_path: Path):
+    calls: list[tuple[str, object]] = []
+
+    class _FakeCredentials:
+        token: str | None = None
+
+        def refresh(self, request) -> None:
+            calls.append(("refresh", request))
+            self.token = "test-token"
+
+    monkeypatch.setattr(
+        "skaal.deploy.packaging.gcp_push.google.auth.default",
+        lambda *, scopes: (_FakeCredentials(), "demo-project"),
+    )
+    monkeypatch.setattr("skaal.deploy.packaging.gcp_push.Request", lambda: "request")
+    monkeypatch.setattr(
+        "skaal.deploy.packaging.gcp_push.login_registry",
+        lambda **kwargs: calls.append(("login", kwargs)),
+    )
+    monkeypatch.setattr(
+        "skaal.deploy.packaging.gcp_push.build_image",
+        lambda **kwargs: calls.append(("build", kwargs)) or "sha256:test-image",
+    )
+    monkeypatch.setattr(
+        "skaal.deploy.packaging.gcp_push.push_image",
+        lambda **kwargs: calls.append(("push", kwargs)),
+    )
+
+    build_and_push_image(tmp_path, "demo-project", "us-central1", "repo-name", "demo-app")
+
     assert calls == [
-        ["docker", "compose", "up", "--build", "--detach"],
-        ["docker", "compose", "logs", "--follow"],
+        ("refresh", "request"),
+        (
+            "login",
+            {
+                "registry": "us-central1-docker.pkg.dev",
+                "username": "oauth2accesstoken",
+                "password": "test-token",
+            },
+        ),
+        (
+            "build",
+            {
+                "context_dir": tmp_path.resolve(),
+                "tag": "us-central1-docker.pkg.dev/demo-project/repo-name/demo-app:latest",
+                "progress": None,
+            },
+        ),
+        (
+            "push",
+            {
+                "repository": "us-central1-docker.pkg.dev/demo-project/repo-name/demo-app",
+                "tag": "latest",
+                "progress": None,
+            },
+        ),
     ]
 
 
-def test_local_target_attached_mode_ignores_follow_logs(
-    tmp_path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Attached mode should keep the single blocking `docker compose up` behavior."""
-    calls: list[list[str]] = []
+def test_automation_runner_applies_package_config(monkeypatch):
+    stack_ref = MagicMock()
+    stack_ref.outputs.return_value = {"appUrl": MagicMock(value="http://localhost:8000")}
 
-    def _fake_run(
-        cmd: list[str],
-        cwd=None,
-        *,
-        stage: str,
-        capture: bool = False,
-        check: bool = True,
-        recovery_hint: str | None = None,
-    ) -> subprocess.CompletedProcess[str]:
-        calls.append(cmd)
-        return subprocess.CompletedProcess(cmd, 0, "", "")
-
-    monkeypatch.setattr(local_compose_module, "run_command", _fake_run)
-
-    get_target("local").deploy(
-        tmp_path,
-        stack="dev",
-        region=None,
-        gcp_project=None,
-        yes=True,
-        project_root=tmp_path,
-        source_module="examples.counter",
-        app_name="demo",
-        runtime_options={"detach": False, "follow_logs": True},
+    monkeypatch.setattr(
+        "skaal.deploy.pulumi.runner.read_stack_spec",
+        lambda artifacts_dir: {
+            "name": "skaal-test",
+            "runtime": "yaml",
+            "config": {},
+            "resources": {},
+            "outputs": {"appUrl": "http://localhost:8000"},
+        },
+    )
+    monkeypatch.setattr(
+        "skaal.deploy.pulumi.runner.workspace_options",
+        lambda artifacts_dir, spec: MagicMock(),
+    )
+    monkeypatch.setattr(
+        "skaal.deploy.pulumi.runner.auto.create_or_select_stack",
+        lambda **kwargs: stack_ref,
     )
 
-    assert calls == [["docker", "compose", "up", "--build"]]
+    runner = AutomationRunner()
+    outputs = runner.deploy(
+        RunnerPlan(
+            context=DeploymentContext(
+                target="local",
+                artifacts_dir=Path("artifacts"),
+                stack="local",
+                region=None,
+                gcp_project=None,
+                yes=True,
+                project_root=Path("."),
+                source_module="examples.counter",
+                app_name="Test App",
+            ),
+            config={"customConfig": "enabled"},
+            package=lambda context: {"localImageRef": "sha256:local-image"},
+            output_keys=("appUrl",),
+        )
+    )
+
+    assert outputs == {"appUrl": "http://localhost:8000"}
+    applied = {(call.args[0], call.args[1].value) for call in stack_ref.set_config.call_args_list}
+    assert applied == {
+        ("customConfig", "enabled"),
+        ("localImageRef", "sha256:local-image"),
+    }
+    stack_ref.up.assert_called_once()
