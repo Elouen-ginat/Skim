@@ -27,7 +27,7 @@ ADR 014 removed public HTTP routing/streaming from the "what Skaal should build 
 7. **Secret injection at deploy / runtime** — there is still no Skaal-level Secrets Manager / Secret Manager surface. P0. ([§B.6](#b6-compute--functions))
 8. **Examples ladder and testing story** — the examples still do not cover agents, schedules, patterns, or test fixtures. P1. ([§A.2](#a2-testing-story), [§A.8](#a8-examples-dont-progress-and-miss-common-patterns))
 9. **Backend-native cursor/index optimization** — the new `Store[T]` surface is present, but the built-in backends still materialize pages/index queries rather than mapping to native cursor or secondary-index primitives. P1 scalability gap. ([§B.2](#b2-kv-store-and-storage-tiers))
-10. **Per-row TTL / cache semantics** — `retention` still influences planning rather than runtime expiry behavior. P0 for session/cache workloads. ([§B.2](#b2-kv-store-and-storage-tiers))
+10. **Per-row TTL / cache semantics** — `retention` still influences planning rather than runtime expiry behavior. P0 for session/cache workloads. ([§B.2](#b2-kv-store-and-storage-tiers), [ADR 025](./design/025-per-row-ttl-implementation-plan.md))
 
 ---
 
@@ -206,7 +206,7 @@ Update: ADR 015 landed a first coherent `Store[T]` surface for cursor pagination
 | ------------------------------------------ | ----------------------------------------------------------------------------------------------------------- | ------ |
 | Pagination / cursor on `Store[T]`          | `Store.list_page(...)` and `scan_page(...)` now exist, but the bundled backends still materialize pages rather than using native cursor primitives. | P1 |
 | Secondary indexes on `Store[T]`            | `SecondaryIndex(...)` and `Store.query_index(...)` now exist, but the bundled backends still evaluate declared indexes generically rather than provisioning native DB indexes. | P1 |
-| Per-row TTL (`@storage(retention=...)`)    | `retention` is parsed and consumed by the solver for catalog matching (`solver/storage.py:78`) but no backend implements per-row expiry — the SQLite/Postgres/Local KV backends have no TTL fields. | **P0** for session stores |
+| Per-row TTL (`@storage(retention=...)`)    | `retention` is parsed and consumed by the solver for catalog matching (`solver/storage.py:78`) but no backend implements per-row expiry — the SQLite/Postgres/Local KV backends have no TTL fields. Tracked in [ADR 025](./design/025-per-row-ttl-implementation-plan.md): replace the dead categorical check with a `supports_ttl` capability check, add `Duration` / `TTL` / `Retention` types, add a `ttl=` keyword to `Store.set`/`add`/`update`, and wire native expiry on every bundled KV backend. | **P0** for session stores |
 | Blob / object tier                         | No `@app.blob`, no S3 / GCS backend in `skaal/backends/` or `pyproject.toml` plugin entry points. Tracked in [ADR 016](./design/016-blob-storage-tier-implementation-plan.md). | **P0** |
 | Cache layer (Redis-as-cache, not KV store) | Redis backend is a KV store; no TTL on `set`, no eviction policy plumbed.                                   | P1     |
 | Cross-tier transactions                    | `Store.update()` is atomic within KV; relational session is atomic; no cross-tier primitive. Outbox covers the channel→storage case. | P1 |
