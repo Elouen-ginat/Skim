@@ -6,7 +6,7 @@ import base64
 import json
 from typing import TYPE_CHECKING, Any
 
-from skaal.deploy.backends import DefaultExternalProvisioner, get_handler
+from skaal.deploy.backends import get_handler
 from skaal.deploy.builders.apigw import add_gcp_api_gateway
 from skaal.deploy.builders.common import resource_slug
 from skaal.deploy.config import (
@@ -14,6 +14,7 @@ from skaal.deploy.config import (
     CloudSQLDeployConfig,
     MemorystoreRedisDeployConfig,
 )
+from skaal.deploy.secrets import GcpSecretInjector
 from skaal.types import AppLike, PulumiStack, StackProfile
 
 if TYPE_CHECKING:
@@ -130,10 +131,42 @@ def build_pulumi_stack(
                 {"name": env_var, "value": f"redis://${{{resource_key}.host}}:6379"}
             )
 
+    secret_injector = GcpSecretInjector()
+    sentinel = secret_injector.SECRET_SENTINEL
     existing = {entry["name"] for entry in container_envs}
-    for name, source in DefaultExternalProvisioner().env_vars(plan).items():
-        if name not in existing:
+    for name, source in secret_injector.env_vars(plan).items():
+        if name in existing:
+            continue
+        if source.startswith(sentinel):
+            container_envs.append(
+                {
+                    "name": name,
+                    "valueFrom": {
+                        "secretKeyRef": {
+                            "name": source.removeprefix(sentinel),
+                            "key": "latest",
+                        }
+                    },
+                }
+            )
+        else:
             container_envs.append({"name": name, "value": source})
+
+    for index, statement in enumerate(secret_injector.iam_statements(plan)):
+        secret_id = statement["secret"]
+        slug = resource_slug(secret_id.split("/")[-1])
+        resources[f"secret-iam-{slug}-{index}"] = {
+            "type": "gcp:secretmanager:SecretIamMember",
+            "properties": {
+                "secretId": secret_id,
+                "role": statement["role"],
+                "member": (
+                    "serviceAccount:${cloud-run-service.template[0].spec[0]"
+                    ".serviceAccountName}"
+                ),
+            },
+            "options": {"dependsOn": ["${cloud-run-service}"]},
+        }
 
     if profile_env:
         existing_idx = {entry["name"]: index for index, entry in enumerate(container_envs)}

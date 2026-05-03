@@ -69,6 +69,14 @@ from skaal.types.relational import (
     RelationalRevision,
 )
 from skaal.types.schema import apply_migrations, migrate_from
+from skaal.types.secret import (
+    ResolvedSecret,
+    SecretGrant,
+    SecretProvider,
+    SecretRef,
+    SecretResolver,
+    SecretSpec,
+)
 from skaal.types.solver import (
     CandidateReport,
     Diagnosis,
@@ -139,6 +147,13 @@ __all__ = [
     "RelaxSuggestion",
     "ResourceKind",
     "Violation",
+    # secrets
+    "ResolvedSecret",
+    "SecretGrant",
+    "SecretProvider",
+    "SecretRef",
+    "SecretResolver",
+    "SecretSpec",
     # storage
     "Page",
     "SecondaryIndex",

@@ -6,9 +6,10 @@ import platform
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from skaal.deploy.backends import LOCAL_SERVICE_SPECS, DefaultExternalProvisioner, get_handler
+from skaal.deploy.backends import LOCAL_SERVICE_SPECS, get_handler
 from skaal.deploy.builders.common import resource_slug
 from skaal.deploy.config import LocalStackDeployConfig
+from skaal.deploy.secrets import LocalSecretInjector
 from skaal.types import (
     AppLike,
     DockerContainerProperties,
@@ -228,7 +229,7 @@ def _app_envs(plan: "PlanFile", *, app_slug: str) -> tuple[list[str], list[str]]
         if handler.local_service and handler.local_service not in service_dependencies:
             service_dependencies.append(handler.local_service)
 
-    for env_name, value in DefaultExternalProvisioner().env_vars(plan).items():
+    for env_name, value in LocalSecretInjector().env_vars(plan).items():
         envs[env_name] = value
 
     return [f"{name}={value}" for name, value in sorted(envs.items())], service_dependencies

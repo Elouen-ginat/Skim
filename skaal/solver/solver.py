@@ -497,6 +497,10 @@ def solve(app: "App", catalog: dict[str, Any], target: str = "generic") -> "Plan
     if target_compute_key:
         deploy_config = compute_backends.get(target_compute_key, {}).get("deploy", {})
 
+    secret_specs = {
+        name: ref.to_spec() for name, ref in app._collect_secrets().items()
+    }
+
     return PlanFile(
         app_name=app.name,
         version=1,
@@ -507,6 +511,7 @@ def solve(app: "App", catalog: dict[str, Any], target: str = "generic") -> "Plan
         compute=compute_specs,
         components=component_specs,
         patterns=pattern_specs,
+        secrets=secret_specs,
         resource_order=resource_order,
     )
 

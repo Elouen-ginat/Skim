@@ -22,6 +22,7 @@ from skaal.types import (
     RetryPolicy,
     Scale,
     SecondaryIndex,
+    SecretRef,
     Throughput,
 )
 
@@ -106,6 +107,7 @@ class Module:
         self._patterns: dict[str, Any] = {}
         self._components: dict[str, Any] = {}
         self._schedules: dict[str, Any] = {}
+        self._secrets: dict[str, SecretRef] = {}
         self._exports: set[str] = set()
         self._submodules: dict[str, Module] = {}  # namespace → mounted module
         self._before_invoke: list[BeforeInvoke] = []
@@ -260,6 +262,7 @@ class Module:
         circuit_breaker: CircuitBreaker | None = ...,
         rate_limit: RateLimitPolicy | None = ...,
         bulkhead: Bulkhead | None = ...,
+        secrets: list[SecretRef] | None = ...,
     ) -> F: ...
 
     @overload
@@ -273,6 +276,7 @@ class Module:
         circuit_breaker: CircuitBreaker | None = ...,
         rate_limit: RateLimitPolicy | None = ...,
         bulkhead: Bulkhead | None = ...,
+        secrets: list[SecretRef] | None = ...,
     ) -> Callable[[F], F]: ...
 
     def function(
@@ -285,6 +289,7 @@ class Module:
         circuit_breaker: CircuitBreaker | None = None,
         rate_limit: RateLimitPolicy | None = None,
         bulkhead: Bulkhead | None = None,
+        secrets: list[SecretRef] | None = None,
     ) -> F | Callable[[F], F]:
         """Register a compute function with optional constraints and resilience policies.
 
@@ -293,7 +298,7 @@ class Module:
             def my_func(): ...
 
         Or:
-            @app.function(compute=...)
+            @app.function(compute=..., secrets=[Secret("DB_DSN")])
             def my_func(): ...
         """
 
@@ -310,6 +315,10 @@ class Module:
             setattr(fn, "__skaal_compute__", _compute)
             if scale is not None:
                 setattr(fn, "__skaal_scale__", scale)
+            if secrets:
+                setattr(fn, "__skaal_secrets__", tuple(secrets))
+                for ref in secrets:
+                    self.secret(ref)
             self._functions[fn.__name__] = fn
             return fn
 
@@ -358,9 +367,33 @@ class Module:
         return decorator
 
     def attach(self, component: Any) -> Any:
-        """Attach an external or provisioned component to this module."""
+        """Attach an external or provisioned component to this module.
+
+        If the component carries a :class:`~skaal.types.SecretRef`
+        (e.g. ``ExternalStorage(secret=...)``) the secret is auto-declared
+        so the runtime registry resolves it without a separate
+        ``app.secret(...)`` call.
+        """
         self._components[component.name] = component
+        secret = getattr(component, "secret", None)
+        if secret is not None and isinstance(secret, SecretRef):
+            self.secret(secret)
         return component
+
+    def secret(self, ref: SecretRef) -> SecretRef:
+        """Declare a secret consumed by this module's functions and agents.
+
+        The declaration is collected into ``PlanFile.secrets`` at plan time and
+        resolved by the runtime :class:`~skaal.secrets.SecretRegistry` at boot.
+        """
+        existing = self._secrets.get(ref.name)
+        if existing is not None and existing != ref:
+            raise ValueError(
+                f"Secret {ref.name!r} re-declared with different parameters: "
+                f"{existing} vs {ref}"
+            )
+        self._secrets[ref.name] = ref
+        return ref
 
     @overload
     def schedule(
@@ -629,6 +662,32 @@ class Module:
 
         return result
 
+    def _collect_secrets(self) -> dict[str, SecretRef]:
+        """Recursively collect declared secrets from this module and submodules.
+
+        Secrets are *not* namespaced: the runtime registry keys on the
+        logical name so callers can write ``app.secrets.get("DB_DSN")``
+        regardless of which submodule declared it.  Re-declarations with
+        identical parameters are de-duplicated; conflicting declarations
+        raise.
+        """
+        out: dict[str, SecretRef] = {}
+
+        def _merge(src: dict[str, SecretRef]) -> None:
+            for name, ref in src.items():
+                existing = out.get(name)
+                if existing is not None and existing != ref:
+                    raise ValueError(
+                        f"Secret {name!r} re-declared with different parameters: "
+                        f"{existing} vs {ref}"
+                    )
+                out[name] = ref
+
+        _merge(self._secrets)
+        for sub in self._submodules.values():
+            _merge(sub._collect_secrets())
+        return out
+
     def _bind_runtime(self, runtime: Any) -> None:
         self._runtime_ref = weakref.ref(runtime)
         for submodule in self._submodules.values():
@@ -713,6 +772,7 @@ class Module:
             "patterns": list(self._patterns.keys()),
             "schedules": list(self._schedules.keys()),
             "components": list(self._components.keys()),
+            "secrets": list(self._secrets.keys()),
             "submodules": {k: v.describe() for k, v in self._submodules.items()},
             "exports": list(self._exports),
         }

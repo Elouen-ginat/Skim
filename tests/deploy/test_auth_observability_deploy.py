@@ -6,6 +6,7 @@ from skaal.deploy.builders.aws import build_pulumi_stack as build_aws_stack
 from skaal.deploy.builders.gcp import build_pulumi_stack as build_gcp_stack
 from skaal.deploy.builders.local import build_kong_config
 from skaal.plan import ComponentSpec, PlanFile
+from skaal.types.secret import SecretSpec
 
 
 def _gateway_component_config(
@@ -80,8 +81,17 @@ def test_telemetry_endpoint_env_is_injected_into_cloud_targets() -> None:
                 component_name="signoz",
                 kind="external-observability",
                 provisioned=False,
-                connection_env="OTEL_EXPORTER_OTLP_ENDPOINT",
+                secret_name="OTEL_EXPORTER_OTLP_ENDPOINT",
                 config={"provider": "signoz"},
+            )
+        },
+        secrets={
+            "OTEL_EXPORTER_OTLP_ENDPOINT": SecretSpec(
+                name="OTEL_EXPORTER_OTLP_ENDPOINT",
+                provider="env",
+                source="OTEL_EXPORTER_OTLP_ENDPOINT",
+                env="OTEL_EXPORTER_OTLP_ENDPOINT",
+                required=False,
             )
         },
     )

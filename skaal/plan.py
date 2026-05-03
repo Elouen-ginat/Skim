@@ -9,6 +9,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from skaal.types.secret import SecretSpec
+
 PLAN_FILE_NAME = "plan.skaal.lock"
 
 PatternType = Literal["event-log", "projection", "saga", "outbox"]
@@ -86,7 +88,7 @@ class ComponentSpec(BaseModel):
     kind: str  # "proxy" | "api-gateway" | "external-storage" | ...
     implementation: str | None = None  # e.g. "traefik", "kong"; None if solver selects
     provisioned: bool = True  # False for ExternalComponent subclasses
-    connection_env: str | None = None  # env var carrying the DSN (external only)
+    secret_name: str | None = None  # references PlanFile.secrets[<name>] (external only)
     config: dict[str, Any] = Field(default_factory=dict)
     reason: str = ""
 
@@ -105,6 +107,7 @@ class PlanFile(BaseModel):
     compute: dict[str, ComputeSpec] = Field(default_factory=dict)
     components: dict[str, ComponentSpec] = Field(default_factory=dict)
     patterns: dict[str, PatternSpec] = Field(default_factory=dict)
+    secrets: dict[str, SecretSpec] = Field(default_factory=dict)
     # Topological order of resources produced by the dependency graph — used
     # by deploy generators to respect collocate_with ordering at provision time.
     resource_order: list[str] = Field(default_factory=list)

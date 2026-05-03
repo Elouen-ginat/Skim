@@ -44,6 +44,19 @@ def _print_plan_table(plan_file: "PlanFile") -> None:
         for cspec in plan_file.compute.values():
             log.info("  %s: %s  (%s)", cspec.function_name, cspec.instance_type, cspec.reason)
 
+    if plan_file.secrets:
+        log.info("")
+        log.info("Secrets:")
+        for sspec in plan_file.secrets.values():
+            required = "required" if sspec.required else "optional"
+            log.info(
+                "  %s -> $%s via %s [%s]",
+                sspec.name,
+                sspec.env,
+                sspec.provider,
+                required,
+            )
+
 
 @app.callback(invoke_without_command=True)
 @cli_error_boundary

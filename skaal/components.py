@@ -17,7 +17,14 @@ import os
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, ClassVar
 
-from skaal.types import AccessPattern, Durability, Latency, RateLimitPolicy, Throughput
+from skaal.types import (
+    AccessPattern,
+    Durability,
+    Latency,
+    RateLimitPolicy,
+    SecretRef,
+    Throughput,
+)
 
 if TYPE_CHECKING:
     from skaal.schedule import Cron, Every
@@ -68,12 +75,14 @@ class ExternalComponent(ComponentBase):
     Skaal does NOT create external components. Instead it:
 
     1. Writes their spec into ``plan.skaal.lock`` as a reference.
-    2. Injects connection info into the app runtime via env vars.
+    2. Injects connection info into the app runtime via the secret subsystem.
     3. Lets the solver account for their declared latency in co-location decisions.
 
     Connection info is supplied via ``connection_string`` (literal, not recommended
-    for production) or ``connection_env`` (name of the env var / Secrets Manager
-    key that holds the DSN at deploy time).
+    for production) or ``secret`` (a typed :class:`~skaal.types.SecretRef` declaring
+    the provider that holds the DSN at deploy time).  The runtime / deploy
+    layers consume the same secret declaration: AWS Secrets Manager, GCP Secret
+    Manager, or plain env injection — see :doc:`/secrets`.
     """
 
     def __init__(
@@ -81,19 +90,19 @@ class ExternalComponent(ComponentBase):
         name: str,
         *,
         connection_string: str | None = None,
-        connection_env: str | None = None,
+        secret: SecretRef | None = None,
         latency: Latency | str | None = None,
         region: str | None = None,
     ) -> None:
         super().__init__(name)
         self.connection_string = connection_string
-        self.connection_env = connection_env
+        self.secret = secret
         self.latency = Latency(latency) if isinstance(latency, str) else latency
         self.region = region
         self.__skaal_component__.update(
             {
                 "external": True,
-                "connection_env": connection_env,
+                "secret_name": secret.name if secret else None,
                 "latency_ms": self.latency.ms if self.latency else None,
                 "region": region,
             }
@@ -279,7 +288,7 @@ class ExternalStorage(ExternalComponent):
 
         legacy_db = ExternalStorage(
             "legacy-postgres",
-            connection_env="LEGACY_DATABASE_URL",
+            secret=Secret("LEGACY_DATABASE_URL", provider="aws-secrets-manager"),
             access_pattern="transactional",
             latency="< 20ms",
         )
@@ -295,14 +304,14 @@ class ExternalStorage(ExternalComponent):
         access_pattern: AccessPattern | str = AccessPattern.TRANSACTIONAL,
         durability: Durability | str = Durability.PERSISTENT,
         connection_string: str | None = None,
-        connection_env: str | None = None,
+        secret: SecretRef | None = None,
         latency: Latency | str | None = None,
         region: str | None = None,
     ) -> None:
         super().__init__(
             name,
             connection_string=connection_string,
-            connection_env=connection_env,
+            secret=secret,
             latency=latency,
             region=region,
         )
@@ -326,7 +335,7 @@ class ExternalQueue(ExternalComponent):
 
         kafka = ExternalQueue(
             "company-kafka",
-            connection_env="KAFKA_BOOTSTRAP_SERVERS",
+            secret=Secret("KAFKA_BOOTSTRAP_SERVERS"),
             throughput="> 50000 events/s",
         )
         app.attach(kafka)
@@ -340,13 +349,13 @@ class ExternalQueue(ExternalComponent):
         *,
         throughput: Throughput | str | None = None,
         connection_string: str | None = None,
-        connection_env: str | None = None,
+        secret: SecretRef | None = None,
         region: str | None = None,
     ) -> None:
         super().__init__(
             name,
             connection_string=connection_string,
-            connection_env=connection_env,
+            secret=secret,
             region=region,
         )
         self.throughput = Throughput(throughput) if isinstance(throughput, str) else throughput
@@ -368,7 +377,7 @@ class ExternalObservability(ExternalComponent):
         prom = ExternalObservability(
             "prometheus",
             provider="prometheus",
-            endpoint_env="PROMETHEUS_PUSHGATEWAY_URL",
+            endpoint_secret=Secret("PROMETHEUS_PUSHGATEWAY_URL"),
         )
         app.attach(prom)
     """
@@ -381,12 +390,12 @@ class ExternalObservability(ExternalComponent):
         provider: str,  # "prometheus" | "grafana" | "datadog" | "otel"
         *,
         endpoint: str | None = None,
-        endpoint_env: str | None = None,
+        endpoint_secret: SecretRef | None = None,
     ) -> None:
         super().__init__(
             name,
             connection_string=endpoint,
-            connection_env=endpoint_env,
+            secret=endpoint_secret,
         )
         self.provider = provider
         self.__skaal_component__.update({"provider": provider})
@@ -452,12 +461,12 @@ class AppRef(ExternalComponent):
 
     Calls functions on a remote Skaal app via HTTP/HTTPS POST using
     ``httpx``.  The base URL is resolved from ``base_url`` (literal) or
-    ``base_url_env`` (name of the environment variable that holds the URL at
-    runtime).
+    ``base_url_secret`` (typed :class:`~skaal.types.SecretRef` whose env var
+    holds the URL at runtime).
 
     Usage::
 
-        payments = AppRef("payments", base_url_env="PAYMENTS_SERVICE_URL")
+        payments = AppRef("payments", base_url_secret=Secret("PAYMENTS_SERVICE_URL"))
         app.attach(payments)
 
         result = await payments.charge(amount=100, currency="USD")
@@ -472,22 +481,23 @@ class AppRef(ExternalComponent):
         name: str,
         *,
         base_url: str | None = None,
-        base_url_env: str | None = None,
+        base_url_secret: SecretRef | None = None,
         timeout_ms: int = 30_000,
     ) -> None:
-        super().__init__(name, connection_string=base_url, connection_env=base_url_env)
+        super().__init__(name, connection_string=base_url, secret=base_url_secret)
         self.timeout_ms = timeout_ms
         self.__skaal_component__["timeout_ms"] = timeout_ms
 
     def _resolve_base_url(self) -> str:
         if self.connection_string:
             return self.connection_string.rstrip("/")
-        if self.connection_env:
-            url = os.environ.get(self.connection_env)
+        if self.secret is not None:
+            url = os.environ.get(self.secret.env_var)
             if url:
                 return url.rstrip("/")
+        target = self.secret.env_var if self.secret else "<unset>"
         raise RuntimeError(
-            f"AppRef {self.name!r}: set base_url= or the {self.connection_env!r} env var."
+            f"AppRef {self.name!r}: set base_url= or the {target!r} env var."
         )
 
     async def call(self, fn_name: str, **kwargs: Any) -> Any:

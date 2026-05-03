@@ -125,6 +125,23 @@ class UnsatisfiableConstraints(SkaalSolverError):
 # ── Optional-extra import wrapping ────────────────────────────────────────────
 
 
+class SecretMissingError(SkaalConfigError):
+    """A required secret could not be resolved at runtime warmup.
+
+    Carries the secret ``name`` and ``provider`` so the operator knows which
+    declaration to fix.  Raised by :meth:`SecretRegistry.warmup` when a
+    secret declared with ``required=True`` resolves to ``None``.
+    """
+
+    def __init__(self, name: str, provider: str, *, detail: str | None = None) -> None:
+        self.name = name
+        self.provider = provider
+        message = f"Required secret {name!r} not found via provider {provider!r}"
+        if detail:
+            message = f"{message} ({detail})"
+        super().__init__(message)
+
+
 class MissingExtraError(SkaalError):
     """An optional dependency group is not installed.
 
@@ -180,6 +197,7 @@ __all__ = [
     "CatalogError",
     "MissingExtraError",
     "PlanError",
+    "SecretMissingError",
     "SkaalBackendError",
     "SkaalConfigError",
     "SkaalConflict",

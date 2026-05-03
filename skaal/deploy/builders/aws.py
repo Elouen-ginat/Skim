@@ -5,10 +5,11 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING, Any
 
-from skaal.deploy.backends import DefaultExternalProvisioner, get_handler
+from skaal.deploy.backends import get_handler
 from skaal.deploy.builders.apigw import add_aws_apigw_resources
 from skaal.deploy.builders.common import database_name, resource_slug
 from skaal.deploy.config import DynamoDBDeployConfig, LambdaDeployConfig, RDSPostgresDeployConfig
+from skaal.deploy.secrets import AwsSecretInjector
 from skaal.types import AppLike, PulumiStack
 
 if TYPE_CHECKING:
@@ -221,8 +222,10 @@ def build_pulumi_stack(app: AppLike, plan: "PlanFile", region: str = "us-east-1"
             f"AWS deploy target does not yet support provisioning backend {spec.backend!r} for {qualified_name!r}."
         )
 
-    for name, source in DefaultExternalProvisioner().env_vars(plan).items():
+    secret_injector = AwsSecretInjector()
+    for name, source in secret_injector.env_vars(plan).items():
         env_vars.setdefault(name, source)
+    secret_iam_statements = secret_injector.iam_statements(plan)
 
     resources["lambda-role"] = {
         "type": "aws:iam:Role",
@@ -300,6 +303,28 @@ def build_pulumi_stack(app: AppLike, plan: "PlanFile", region: str = "us-east-1"
             "properties": {"role": "${lambda-role.name}", "policyArn": _LAMBDA_VPC_EXEC_POLICY},
         }
         lambda_depends_on.append("${lambda-vpc-access-attach}")
+
+    if secret_iam_statements:
+        resources["secrets-policy"] = {
+            "type": "aws:iam:Policy",
+            "properties": {
+                "name": f"${{pulumi.stack}}-{app.name}-secrets",
+                "policy": {
+                    "fn::toJSON": {
+                        "Version": "2012-10-17",
+                        "Statement": secret_iam_statements,
+                    }
+                },
+            },
+        }
+        resources["lambda-secrets-attach"] = {
+            "type": "aws:iam:RolePolicyAttachment",
+            "properties": {
+                "role": "${lambda-role.name}",
+                "policyArn": "${secrets-policy.arn}",
+            },
+        }
+        lambda_depends_on.append("${lambda-secrets-attach}")
 
     lambda_props: dict[str, Any] = {
         "name": f"${{pulumi.stack}}-{app.name}",

@@ -32,6 +32,7 @@ class BaseRuntime(ABC):
         from skaal.runtime.auth import JwtVerifier, resolve_gateway_auth
         from skaal.runtime.middleware import wrap_handler
         from skaal.runtime.telemetry import RuntimeTelemetry, resolve_telemetry_config
+        from skaal.secrets import SecretRegistry
 
         self.app = app
         self.host = host
@@ -47,6 +48,11 @@ class BaseRuntime(ABC):
         self._patch_channels()
         self._function_cache = self._collect_functions()
         self._engines: list[Any] = []
+        self._secret_specs = {
+            name: ref.to_spec() for name, ref in app._collect_secrets().items()
+        }
+        self.secrets = SecretRegistry(self._secret_specs)
+        app.secrets = self.secrets
 
         self._invokers: dict[str, Any] = {}
         shared_invokers: dict[int, Any] = {}
@@ -199,6 +205,7 @@ class BaseRuntime(ABC):
             try:
                 if self._auth_verifier is not None and not self._auth_verifier.ready:
                     await self._auth_verifier.initialize()
+                await self.secrets.warmup()
                 await self._apply_relational_migrations()
                 await self._start_engines()
             except Exception as exc:
@@ -477,6 +484,8 @@ class BaseRuntime(ABC):
             with contextlib.suppress(Exception):
                 await backend.close()
         await self._close_extra_resources()
+        with contextlib.suppress(Exception):
+            await self.secrets.close()
         with contextlib.suppress(Exception):
             self._telemetry.shutdown()
         self.app._unbind_runtime(self)

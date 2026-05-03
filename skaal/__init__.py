@@ -33,6 +33,7 @@ from skaal.patterns import EventLog, Outbox, Projection, Saga, SagaStep
 from skaal.relational import ensure_schema as ensure_relational_schema
 from skaal.relational import open_session as open_relational_session
 from skaal.schedule import Cron, Every, Schedule, ScheduleContext
+from skaal.secrets import Secret, SecretRegistry
 from skaal.storage import Store
 from skaal.sync import run as sync_run
 from skaal.types import (
@@ -118,6 +119,9 @@ __all__ = [
     "RelationalRevision",
     "RetryPolicy",
     "SecondaryIndex",
+    # Secrets
+    "Secret",
+    "SecretRegistry",
     "TelemetryConfig",
     # Type namespace
     "types",
