@@ -61,6 +61,13 @@ from skaal.types.observability import (
     TelemetryConfig,
     TelemetryExporter,
 )
+from skaal.types.relational import (
+    RelationalMigrationOp,
+    RelationalMigrationPlan,
+    RelationalMigrationStatus,
+    RelationalMigrationStep,
+    RelationalRevision,
+)
 from skaal.types.schema import apply_migrations, migrate_from
 from skaal.types.solver import (
     CandidateReport,
@@ -135,6 +142,12 @@ __all__ = [
     # storage
     "Page",
     "SecondaryIndex",
+    # relational migrations
+    "RelationalMigrationOp",
+    "RelationalMigrationPlan",
+    "RelationalMigrationStatus",
+    "RelationalMigrationStep",
+    "RelationalRevision",
     # compute
     "Bulkhead",
     "CircuitBreaker",

@@ -6,12 +6,31 @@ import dataclasses
 import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from enum import IntEnum
+from enum import IntEnum, StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from skaal.backends.base import StorageBackend
+
+
+_BASE_STATE_DIR = Path(".skaal/migrations")
+
+
+class MigrationKind(StrEnum):
+    """The kind of migration ``skaal migrate`` is operating on.
+
+    ``DATA`` is the existing 6-stage backend swap (KV data movement).
+    ``RELATIONAL`` is Alembic-driven DDL versioning of SQLModel tables.
+    """
+
+    DATA = "data"
+    RELATIONAL = "relational"
+
+
+def state_dir(app_name: str, kind: MigrationKind) -> Path:
+    """Return the on-disk root for *kind* of migration state for *app_name*."""
+    return _BASE_STATE_DIR / app_name / kind.value
 
 
 class MigrationStage(IntEnum):
@@ -48,16 +67,16 @@ class MigrationEngine:
     """
     Manages the 6-stage migration protocol for a single storage variable.
 
-    State is persisted to .skaal/migrations/{app_name}/{variable_name}.json
+    State is persisted to .skaal/migrations/{app_name}/data/{variable_name}.json
     so it survives restarts.
     """
-
-    STATE_DIR = Path(".skaal/migrations")
 
     def __init__(self, app_name: str, variable_name: str) -> None:
         self.app_name = app_name
         self.variable_name = variable_name
-        self._state_path = self.STATE_DIR / app_name / f"{variable_name.replace('.', '__')}.json"
+        self._state_path = (
+            state_dir(app_name, MigrationKind.DATA) / f"{variable_name.replace('.', '__')}.json"
+        )
 
     def load_state(self) -> MigrationState | None:
         """Load migration state from disk. Returns None if no migration in progress."""
@@ -131,7 +150,7 @@ class MigrationEngine:
     def list_all(self) -> list[MigrationState]:
         """Return all in-progress migrations for this app."""
         states = []
-        app_dir = self.STATE_DIR / self.app_name
+        app_dir = state_dir(self.app_name, MigrationKind.DATA)
         if not app_dir.exists():
             return []
         for path in app_dir.glob("*.json"):

@@ -12,7 +12,7 @@ from skaal.cli.destroy_cmd import app as destroy_app
 from skaal.cli.diff_cmd import app as diff_app
 from skaal.cli.infra_cmd import app as infra_app
 from skaal.cli.init_cmd import app as init_app
-from skaal.cli.migrate_cmd import app as migrate_app
+from skaal.cli.migrate import app as migrate_app
 from skaal.cli.plan_cmd import app as plan_app
 from skaal.cli.run_cmd import app as run_app
 from skaal.cli.stacks_cmd import app as stacks_app

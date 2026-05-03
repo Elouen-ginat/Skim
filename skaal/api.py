@@ -49,6 +49,11 @@ if TYPE_CHECKING:
     from skaal.app import App
     from skaal.catalog.models import Catalog
     from skaal.migrate.engine import MigrationStage, MigrationState
+    from skaal.types.relational import (
+        RelationalMigrationPlan,
+        RelationalMigrationStatus,
+        RelationalRevision,
+    )
 
 __all__ = [
     # Types
@@ -76,6 +81,15 @@ __all__ = [
     "migrate_rollback",
     "migrate_status",
     "migrate_list",
+    "relational_autogenerate",
+    "relational_check",
+    "relational_current",
+    "relational_downgrade",
+    "relational_history",
+    "relational_plan_downgrade",
+    "relational_plan_upgrade",
+    "relational_stamp",
+    "relational_upgrade",
 ]
 
 # ── Types ──────────────────────────────────────────────────────────────────────
@@ -326,7 +340,7 @@ def _coerce_plan(value: PlanFile | Path | str | None) -> PlanFile:
     path = Path(value) if value is not None else Path(PLAN_FILE_NAME)
     if not path.exists():
         raise FileNotFoundError(
-            f"Plan file not found at {path}. " "Run `skaal.api.plan(app, target=...)` first."
+            f"Plan file not found at {path}. Run `skaal.api.plan(app, target=...)` first."
         )
     return PlanFile.read(path)
 
@@ -455,8 +469,7 @@ def deploy(
     resolved_dir = Path(artifacts_dir).resolve()
     if not resolved_dir.is_dir():
         raise FileNotFoundError(
-            f"Artifacts directory {resolved_dir} does not exist. "
-            "Run `skaal.api.build(...)` first."
+            f"Artifacts directory {resolved_dir} does not exist. Run `skaal.api.build(...)` first."
         )
 
     meta = read_meta(resolved_dir)
@@ -525,8 +538,7 @@ def destroy(
     resolved_dir = Path(artifacts_dir).resolve()
     if not resolved_dir.is_dir():
         raise FileNotFoundError(
-            f"Artifacts directory {resolved_dir} does not exist. "
-            "Run `skaal.api.build(...)` first."
+            f"Artifacts directory {resolved_dir} does not exist. Run `skaal.api.build(...)` first."
         )
 
     meta = read_meta(resolved_dir)
@@ -946,7 +958,12 @@ def migrate_status(
 
 def migrate_list(app_name: str | None = None) -> list["MigrationState"]:
     """Return every in-progress migration (optionally filtered to one app)."""
-    from skaal.migrate.engine import MigrationEngine, MigrationState
+    from skaal.migrate.engine import (
+        MigrationEngine,
+        MigrationKind,
+        MigrationState,
+        state_dir,
+    )
 
     if app_name is not None:
         return MigrationEngine(app_name, "").list_all()
@@ -957,13 +974,124 @@ def migrate_list(app_name: str | None = None) -> list["MigrationState"]:
 
     states: list[MigrationState] = []
     for app_dir in sorted(p for p in base_dir.iterdir() if p.is_dir()):
-        for path in sorted(app_dir.glob("*.json")):
+        data_dir = state_dir(app_dir.name, MigrationKind.DATA)
+        if not data_dir.exists():
+            continue
+        for path in sorted(data_dir.glob("*.json")):
             try:
                 data = json.loads(path.read_text())
                 states.append(MigrationState(**data))
             except Exception:  # noqa: BLE001
                 continue
     return states
+
+
+# ── relational migrations ─────────────────────────────────────────────────────
+
+
+async def relational_autogenerate(
+    app: "App",
+    *,
+    message: str,
+    backend_name: str | None = None,
+) -> dict[str, "RelationalRevision | None"]:
+    """Diff registered SQLModels against the live DB and write a new revision."""
+    from skaal.migrate import relational
+
+    return await relational.autogenerate(app, message=message, backend_name=backend_name)
+
+
+async def relational_upgrade(
+    app: "App",
+    *,
+    target: str = "head",
+    backend_name: str | None = None,
+) -> dict[str, "RelationalMigrationStatus"]:
+    """Apply pending migrations up to *target* on each selected backend."""
+    from skaal.migrate import relational
+
+    return await relational.upgrade(app, target=target, backend_name=backend_name)
+
+
+async def relational_downgrade(
+    app: "App",
+    *,
+    target: str,
+    backend_name: str | None = None,
+) -> dict[str, "RelationalMigrationStatus"]:
+    """Roll the selected backends back to *target*."""
+    from skaal.migrate import relational
+
+    return await relational.downgrade(app, target=target, backend_name=backend_name)
+
+
+async def relational_plan_upgrade(
+    app: "App",
+    *,
+    target: str = "head",
+    backend_name: str | None = None,
+) -> dict[str, "RelationalMigrationPlan"]:
+    """Render the SQL of an upgrade without applying it."""
+    from skaal.migrate import relational
+
+    return await relational.plan_upgrade(app, target=target, backend_name=backend_name)
+
+
+async def relational_plan_downgrade(
+    app: "App",
+    *,
+    target: str,
+    backend_name: str | None = None,
+) -> dict[str, "RelationalMigrationPlan"]:
+    """Render the SQL of a downgrade without applying it."""
+    from skaal.migrate import relational
+
+    return await relational.plan_downgrade(app, target=target, backend_name=backend_name)
+
+
+async def relational_current(
+    app: "App",
+    *,
+    backend_name: str | None = None,
+) -> dict[str, "RelationalMigrationStatus"]:
+    """Return live current/head/applied/pending state per backend."""
+    from skaal.migrate import relational
+
+    return await relational.current(app, backend_name=backend_name)
+
+
+async def relational_history(
+    app: "App",
+    *,
+    backend_name: str | None = None,
+) -> dict[str, list["RelationalRevision"]]:
+    """Return every revision in versions/ per backend, newest first."""
+    from skaal.migrate import relational
+
+    return await relational.history(app, backend_name=backend_name)
+
+
+async def relational_stamp(
+    app: "App",
+    *,
+    target: str,
+    backend_name: str | None = None,
+) -> dict[str, "RelationalMigrationStatus"]:
+    """Mark the alembic_version table at *target* without running migrations."""
+    from skaal.migrate import relational
+
+    return await relational.stamp(app, target=target, backend_name=backend_name)
+
+
+async def relational_check(
+    app: "App",
+    *,
+    backend_name: str | None = None,
+) -> dict[str, "RelationalMigrationPlan"]:
+    """Detect drift between the live schema and the registered SQLModels."""
+    from skaal.migrate import relational
+
+    return await relational.check(app, backend_name=backend_name)
 
 
 # ── Helpers exposed for the CLI layer ─────────────────────────────────────────

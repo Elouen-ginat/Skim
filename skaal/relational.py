@@ -79,7 +79,11 @@ def get_backend(model_cls: type) -> Any:
 
 
 async def ensure_schema(model_cls: type) -> None:
-    """Create any missing tables for *model_cls* on its wired backend."""
+    """Create any missing tables for *model_cls* on its wired backend.
+
+    First-run safety net only. For evolving schemas, see
+    :func:`skaal.api.relational_upgrade` and ``skaal migrate relational``.
+    """
     backend = get_backend(model_cls)
     await backend.ensure_relational_schema(model_cls)
 

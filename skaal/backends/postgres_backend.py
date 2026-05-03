@@ -424,6 +424,11 @@ class PostgresBackend:
         async with self._engine.begin() as conn:
             await conn.run_sync(typed_model.metadata.create_all)
 
+    async def relational_engine(self) -> Any:
+        """Return the SQLAlchemy ``AsyncEngine`` used for the relational tier."""
+        await self._ensure_relational_engine()
+        return self._engine
+
     @asynccontextmanager
     async def open_relational_session(self, model_cls: type) -> AsyncIterator[Any]:
         """Yield an AsyncSession bound to this backend's PostgreSQL engine."""

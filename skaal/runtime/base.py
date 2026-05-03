@@ -199,6 +199,7 @@ class BaseRuntime(ABC):
             try:
                 if self._auth_verifier is not None and not self._auth_verifier.ready:
                     await self._auth_verifier.initialize()
+                await self._apply_relational_migrations()
                 await self._start_engines()
             except Exception as exc:
                 self._startup_error = str(exc)
@@ -206,6 +207,12 @@ class BaseRuntime(ABC):
                 raise
             self._started = True
             self._readiness_state = "ready"
+
+    async def _apply_relational_migrations(self) -> None:
+        """Run ``upgrade head`` for backends that have a Skaal-managed Alembic project."""
+        from skaal.migrate.relational import auto_upgrade_existing
+
+        await auto_upgrade_existing(self.app)
 
     def _readiness_payload(self) -> dict[str, Any]:
         auth_ready = self._auth_verifier.ready if self._auth_verifier is not None else True

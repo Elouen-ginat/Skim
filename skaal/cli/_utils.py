@@ -21,3 +21,25 @@ def load_app(module_app: str) -> "App":
     from skaal import api
 
     return api.load_app(module_app)
+
+
+def resolve_app_ref() -> "App":
+    """Resolve and wire the configured app for runtime-aware CLI commands.
+
+    Reads ``MODULE:APP`` from CLI settings (env / pyproject), loads it, and
+    instantiates a :class:`~skaal.runtime.local.LocalRuntime` so storage
+    backends are bound to relational SQLModel classes.
+    """
+    from skaal import api
+    from skaal.cli.config import SkaalSettings
+    from skaal.runtime.local import LocalRuntime
+
+    cfg = SkaalSettings()
+    if cfg.app is None:
+        raise ValueError(
+            "missing MODULE:APP. Set 'app' in [tool.skaal] of pyproject.toml "
+            "or export SKAAL_APP=module:app."
+        )
+    skaal_app = api.resolve_app(cfg.app)
+    LocalRuntime(skaal_app)
+    return skaal_app

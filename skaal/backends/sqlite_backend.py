@@ -254,8 +254,7 @@ class SqliteBackend:
                 params.extend([sort_path, sort_path, last_key])
             else:
                 query += (
-                    " AND (json_extract(value, ?) > ? "
-                    "OR (json_extract(value, ?) = ? AND key > ?))"
+                    " AND (json_extract(value, ?) > ? OR (json_extract(value, ?) = ? AND key > ?))"
                 )
                 params.extend([sort_path, last_sort, sort_path, last_sort, last_key])
         query += " ORDER BY sort_value, key LIMIT ?"
@@ -342,6 +341,11 @@ class SqliteBackend:
         typed_model = cast(Any, model_cls)
         async with self._engine.begin() as conn:
             await conn.run_sync(typed_model.metadata.create_all)
+
+    async def relational_engine(self) -> Any:
+        """Return the SQLAlchemy ``AsyncEngine`` used for the relational tier."""
+        await self._ensure_relational_engine()
+        return self._engine
 
     @asynccontextmanager
     async def open_relational_session(self, model_cls: type) -> AsyncIterator[Any]:

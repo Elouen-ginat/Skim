@@ -1,4 +1,4 @@
-"""`skaal migrate` — advance, rollback, or check 6-stage backend migrations."""
+"""`skaal migrate data` — advance, rollback, or check 6-stage backend migrations."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from skaal.cli._errors import cli_error_boundary
 from skaal.cli._utils import get_app_name
 from skaal.migrate.engine import MigrationStage
 
-app = typer.Typer(help="Manage backend migrations.")
+app = typer.Typer(help="6-stage data-migration commands (KV / channel backend swaps).")
 log = logging.getLogger("skaal.cli")
 
 

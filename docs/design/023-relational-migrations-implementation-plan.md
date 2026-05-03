@@ -1,6 +1,6 @@
 # ADR 023 — Relational Migrations Beyond `create_all`
 
-**Status:** Proposed
+**Status:** Implemented
 **Date:** 2026-05-02
 **Related:** [user_gaps.md §B.3](../user_gaps.md#b3-relational-tier-skaalrelationalpy), [user_gaps.md "Top of list" #6](../user_gaps.md), [skaal/relational.py](../../skaal/relational.py), [skaal/backends/sqlite_backend.py](../../skaal/backends/sqlite_backend.py), [skaal/backends/postgres_backend.py](../../skaal/backends/postgres_backend.py), [skaal/migrate/engine.py](../../skaal/migrate/engine.py), [skaal/cli/migrate_cmd.py](../../skaal/cli/migrate_cmd.py), [ADR 004](004-six-stage-migration.md), [ADR 007](007-schema-versioning.md)
 

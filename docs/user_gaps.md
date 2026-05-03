@@ -23,7 +23,7 @@ ADR 014 removed public HTTP routing/streaming from the "what Skaal should build 
 3. **`skaal init` / project scaffolding + `skaal dev` watch mode** — the pieces now exist only partially; Skaal still lacks a first-class zero-config `init` → `dev` onboarding path. P0 for adoption. ([§A.1](#a1-cli-zero-config-and-dev-loop), [ADR 020](./design/020-skaal-init-and-dev-implementation-plan.md))
 4. **Solver-failure error messages with closest-match suggestions** — today an unsatisfiable plan surfaces as a Z3 stack trace. P0 for first-time users. ([§A.4](#a4-error-messages-and-validation))
 5. **Catalog overrides per environment** (dev / staging / prod) without copy-pasting whole TOML files. P1 but hits everyone past the prototype stage. ([§A.5](#a5-catalog-ergonomics), [ADR 022](./design/022-catalog-overrides-implementation-plan.md))
-6. **Relational migrations beyond `create_all`** — any team past first deploy will need schema versioning and rollback. P0. ([§B.3](#b3-relational-tier-skaalrelationalpy))
+6. ~~**Relational migrations beyond `create_all`**~~ — landed in [ADR 023](./design/023-relational-migrations-implementation-plan.md): Alembic-driven `skaal migrate relational` with `autogenerate`, `upgrade`, `downgrade`, `current`, `history`, `check`, `stamp` and a typed Python API.
 7. **Secret injection at deploy / runtime** — there is still no Skaal-level Secrets Manager / Secret Manager surface. P0. ([§B.6](#b6-compute--functions))
 8. **Examples ladder and testing story** — the examples still do not cover agents, schedules, patterns, or test fixtures. P1. ([§A.2](#a2-testing-story), [§A.8](#a8-examples-dont-progress-and-miss-common-patterns))
 9. **Backend-native cursor/index optimization** — the new `Store[T]` surface is present, but the built-in backends still materialize pages/index queries rather than mapping to native cursor or secondary-index primitives. P1 scalability gap. ([§B.2](#b2-kv-store-and-storage-tiers))
@@ -223,7 +223,7 @@ Update: ADR 015 landed a first coherent `Store[T]` surface for cursor pagination
 
 | Want                                       | Today                                                                                                       | Sev |
 | ------------------------------------------ | ----------------------------------------------------------------------------------------------------------- | --- |
-| Migrations beyond `create_all` (Alembic)   | `ensure_schema()` calls SQLAlchemy `create_all`. No version table, no diff, no rollback. ADR 004's six-stage flow is for KV migrations, not relational schema migrations. | **P0** for any team past first deploy |
+| Migrations beyond `create_all` (Alembic)   | Landed in ADR 023: `skaal migrate relational {autogenerate,upgrade,downgrade,current,history,check,stamp}`, `--dry-run` SQL renderer, drift detection, multi-backend Alembic projects under `.skaal/migrations/{app}/relational/{backend}/`, and an opt-out runtime auto-apply. | resolved |
 | Joins                                      | Available via the yielded SQLModel `AsyncSession` — works, but undocumented.                                | P2  |
 | Raw SQL escape hatch                       | `session.exec(text("..."))` works but is undocumented.                                                      | P2  |
 | Read replicas                              | None.                                                                                                       | P1  |
